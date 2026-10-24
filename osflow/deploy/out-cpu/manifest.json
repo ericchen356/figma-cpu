@@ -1,13 +1,17 @@
 {
   "stats": {
     "gates": 2285,
-    "wires": 2295,
+    "wires": 2288,
     "cases": 128,
     "groups": 30,
-    "dispatchStored": 3271,
+    "dispatchStored": 3301,
     "worstTick": 324,
     "meanTick": 96,
-    "stateNets": 316
+    "stateNets": 316,
+    "fastGroups": 60,
+    "worstFast": 40,
+    "perInstruction": 253,
+    "instructionsPerEvent": 2
   },
   "names": {
     "frame": "Silicon CPU · runs in Present (gate level)",
@@ -30,31 +34,31 @@
     {
       "file": "01-vars.js",
       "step": "vars",
-      "chars": 18691,
-      "note": "2295 wire variables and the tick counter"
+      "chars": 18663,
+      "note": "2288 wire variables and the tick counter"
     },
     {
       "file": "02-frame.js",
       "step": "frame",
-      "chars": 49326,
+      "chars": 49410,
       "note": "the Present frame and the CPU panel"
     },
     {
       "file": "03-react.js",
       "step": "react",
-      "chars": 51840,
+      "chars": 51963,
       "note": "reactions of /step: step"
     },
     {
       "file": "04-react.js",
       "step": "react",
-      "chars": 9853,
+      "chars": 53960,
       "note": "reactions of /instruction: instruction"
     },
     {
       "file": "05-react.js",
       "step": "react",
-      "chars": 9828,
+      "chars": 9823,
       "note": "reactions of /run: run"
     },
     {
@@ -78,19 +82,19 @@
     {
       "file": "09-react.js",
       "step": "react",
-      "chars": 51904,
+      "chars": 96132,
       "note": "reactions of the frame: step, instruction"
     },
     {
       "file": "10-react.js",
       "step": "react",
-      "chars": 51942,
+      "chars": 98115,
       "note": "reactions of @running A: tick/0, pause"
     },
     {
       "file": "11-react.js",
       "step": "react",
-      "chars": 51943,
+      "chars": 98116,
       "note": "reactions of @running B: tick/1, pause"
     },
     {

@@ -11,6 +11,7 @@ import { flatten, netId } from "../../../silicon/src/netlist/flatten";
 import type { FlatNetlist } from "../../../silicon/src/netlist/types";
 import { RefSim } from "../../../silicon/src/sim/reference";
 import { typeRange } from "./dag";
+import { pokesFor, type RegisterValues } from "./load";
 import type { RegInfo, Synth } from "./synthesize";
 
 export class GateMachine {
@@ -47,6 +48,19 @@ export class GateMachine {
   /** Back to power-on, as a new machine starts (without flattening and compiling again). */
   reset(): void {
     this.sim = this.boot();
+  }
+
+  /** Boots the machine settled at the register values `vars` instead of power-on, as if it had
+   * powered on there: powerOn() with pokesFor(syn, vars), the inputs at 0. codec.ts's stateVars()
+   * gives the values for an editor state. reset() still goes back to power-on. */
+  load(vars: RegisterValues): void {
+    const init = powerOn(this.net, pokesFor(this.syn, vars));
+    if (this.schedule) this.sim = new FastSim(this.net, this.schedule, init);
+    else {
+      const ref = new RefSim(this.net);
+      ref.v.set(init);
+      this.sim = ref;
+    }
   }
 
   /** Fires one event: EVT gets its code and the given input variables their values (the other

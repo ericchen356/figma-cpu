@@ -8,12 +8,19 @@
 // any tick only the gates that the current control state can reach do anything. So each
 // (opcode, T-state) pair gets its own specialized tick (deploy/tick.ts: the opcode and T bits tied,
 // constants folded through the gates, only the logic that can load a register kept): 22 to 324
-// gate evaluations instead of 4,200. A Step copies the seven dispatch bits, then runs one
-// single-block IF per distinct tick body, each judged on that copy (Figma keeps only an IF and an
-// ELSE of a CONDITIONAL, and rejects an IF inside an IF). A latch whose enable still depends on
-// the data (a conditional jump, the OUT port) is written as its gate equation, Q = D·EN + Q·¬EN.
-// Run and Instruction clock the CPU with two overlays whose timers each run a tick and swap in
-// the other, until HALT (or, for Instruction, T back at 0).
+// gate evaluations instead of 4,200. A tick clears RAN, then runs one single-block IF per distinct
+// tick body, each judged on the live dispatch bits and on RAN, which the body that runs sets (Figma
+// keeps only an IF and an ELSE of a CONDITIONAL, and rejects an IF inside an IF). A latch whose
+// enable still depends on the data (a conditional jump, the OUT port) is written as its gate
+// equation, Q = D·EN + Q·¬EN.
+//
+// Instruction runs the CPU to the end of its instruction in one click; Run clocks it with two
+// overlays whose timers each run a batch of instructions and swap in the other, until HALT. Their
+// ticks are faster than Step's: Figma's time goes to variable writes (about 0.3 ms each, against
+// 0.03 ms for an IF judged false, and 8 ms for each timer event), so gates are folded into the
+// expressions that read them instead of being written, a flip-flop is written once (its slave)
+// instead of twice, a heavy tick is split by the bits of the mux it spends its writes on, and the
+// IFs are laid out by T-state, so one event runs whole instructions with no bookkeeping writes.
 import { assemble, PROGRAMS, RAM_BYTES } from "../../silicon/src/isa";
 import { cpuNetlist, PROBES, ramBit } from "../../silicon/src/cpu";
 import { powerOn } from "../../silicon/src/compile";
@@ -34,9 +41,23 @@ export interface CpuGenerated {
     worstTick: number;
     meanTick: number;
     stateNets: number;
+    /** Run's tick bodies: their IFs (an instruction judges them all), the longest body, the most
+     * actions an instruction runs, and instructions per timer event. */
+    fastGroups: number;
+    worstFast: number;
+    perInstruction: number;
+    instructionsPerEvent: number;
   };
   net: FlatNetlist;
   wireOf: Map<number, number>;
+  /** Each (opcode, T-state)'s Step body, and its Run body or bodies (one per value of the bits it
+   * is split on). */
+  ticks: Array<{
+    op: number;
+    t: number;
+    full: PlanAction[];
+    fast: Array<{ extra: Array<[number, 0 | 1]>; actions: PlanAction[] }>;
+  }>;
   names: {
     frame: string;
     root: string;
@@ -56,16 +77,16 @@ const FRAME = "Silicon CPU · runs in Present (gate level)";
 const ROOT = "cpu";
 const CHART = "gate map";
 const PREFIX = "c/";
-// a panel wire beyond the netlist: 1 while a run stops at the end of the instruction (Instruction),
-// 0 while it runs to HALT (Run)
-const MODE = -100;
-// panel wires holding the dispatch bits (opcode, T) as they were when the tick began: Figma keeps
-// only an if and an else of a CONDITIONAL, so the dispatch is one single-block IF per body, and
-// every IF must judge the same pre-tick state while the bodies before it rewrite the real bits
-const SNAP = [-101, -102, -103, -104, -105, -106, -107];
-// Run and Instruction open a small overlay whose timer runs one tick and swaps in its twin, whose
+// a panel wire beyond the netlist. Figma keeps only an IF and an ELSE of a CONDITIONAL, so a Step is
+// one single-block IF per body. RAN is cleared before them and set by the body that runs: the IFs
+// after it (judged on a state that body already changed) are off, so exactly the IF of the pre-tick
+// state runs.
+const RAN = -101;
+// Run opens a small overlay whose timer runs a batch of instructions and swaps in its twin, whose
 // timer runs the next: Figma's prototype engine clocks the CPU until the overlay closes itself
 const RUN = ["running A", "running B"] as const;
+/** The most actions one event may run (the viewer runs them recursively; see deploy/README.md). */
+export const EVENT_BUDGET = 600;
 const TIMEOUT = 0.001;
 const LOADS = ["count", "mul", "fib"] as const;
 const COLORS: Record<string, string> = {
@@ -91,7 +112,7 @@ const TYPE_CODE: Record<string, string> = {
 const LAMP = { size: 6, pitch: 8, perRow: 44, pad: 10, top: 26 };
 
 export function generateCpu(
-  o: { maxChunk?: number; limit?: number } = {},
+  o: { maxChunk?: number; limit?: number; fold?: number; share?: number } = {},
 ): CpuGenerated {
   // chunks are loaded into the Figma tab from files (deploy/README.md), so they may be large
   const maxChunk = o.maxChunk ?? 400000;
@@ -122,7 +143,7 @@ export function generateCpu(
   used.delete(NET1);
   const ids = [...used].sort((a, b) => a - b);
   const wireOf = new Map(ids.map((id, i) => [id, i]));
-  [MODE, ...SNAP].forEach((id, i) => wireOf.set(id, ids.length + i));
+  wireOf.set(RAN, ids.length);
   const unitOf = (id: number) => {
     const d = net.driver[id];
     return d < 0 ? "io" : net.gates[d].path.split("/")[0];
@@ -134,11 +155,9 @@ export function generateCpu(
     return i;
   };
   const units = ids.map((id) => unitIdx(unitOf(id)));
-  for (let i = 0; i <= SNAP.length; i++) units.push(unitIdx("panel"));
+  units.push(unitIdx("panel"));
   const init = initOf.mul;
-  const initBits =
-    ids.map((id) => (init[id] ? "1" : "0")).join("") +
-    "0".repeat(1 + SNAP.length);
+  const initBits = ids.map((id) => (init[id] ? "1" : "0")).join("") + "0";
   const b36 = (n: number) => n.toString(36);
   const w = (id: number) => {
     const i = wireOf.get(id);
@@ -196,25 +215,87 @@ export function generateCpu(
   };
   const reset = net.aliases.get("RESET")!;
 
-  const bodies = new Map<string, Array<[number, number]>>();
+  // Two sets of tick bodies. Step's evaluates every gate a tick needs, each into its own wire, so
+  // every lamp it touches shows the tick. Run's and Instruction's are the same logic, faster: a gate
+  // is folded into the expressions that read it (tick.ts `fold` and `share`), a flip-flop commits
+  // straight into its slave (`direct`: Step's masters hold through their slaves, so the masters a
+  // run leaves behind never matter), and a heavy tick whose cost is a mux over register or RAM bits
+  // is specialized on the bits that select it (the RAM address for a store, the register fields for
+  // a register write), one body per value, so the mux folds away.
+  const marBits = [0, 1, 2, 3].map((i) => bit(PROBES.MAR.name, i));
+  const irLow = [0, 1, 2, 3].map((i) => bit(PROBES.IR.name, i));
+  const keep = new Set(
+    net.ports.filter((p) => /^SEG_/.test(p.name)).flatMap((p) => p.nets),
+  );
+  // past these, the writes saved are few and the expressions grow fast (osflow/deploy/README.md)
+  const fold = o.fold ?? 12;
+  const share = o.share ?? 64;
+  type Case = { op: number; t: number; extra: Array<[number, 0 | 1]> };
+  const plan = (c: Case, fast: boolean) => {
+    const ties = new Map<number, 0 | 1>([[reset, 0]]);
+    opBits.forEach((id, b) => ties.set(id, ((c.op >> b) & 1) as 0 | 1));
+    tBits.forEach((id, b) => ties.set(id, ((c.t >> b) & 1) as 0 | 1));
+    for (const [id, v] of c.extra) ties.set(id, v);
+    return tickPlan(
+      net,
+      lm,
+      fast
+        ? { ties, refresh, fold, share, keep, direct: true }
+        : { ties, refresh, heldBySlave: true },
+    ).actions;
+  };
+  const variants = (op: number, t: number, bits: number[]): Case[] =>
+    Array.from({ length: 1 << bits.length }, (_, v) => ({
+      op,
+      t,
+      extra: bits.map((id, b): [number, 0 | 1] => [
+        id,
+        ((v >> b) & 1) as 0 | 1,
+      ]),
+    }));
+  const SPECIALIZE_GAIN = 40; // writes a tick must save to be split by the bits of its mux
+  const full = new Map<string, Case[]>();
+  const fast = new Map<string, Case[]>();
+  const addBody = (into: Map<string, Case[]>, c: Case, list: PlanAction[]) => {
+    const code = acts(list);
+    if (!into.has(code)) into.set(code, []);
+    into.get(code)!.push(c);
+  };
   let worstTick = 0;
   let sumTick = 0;
+  let worstFast = 0;
+  const ticks: CpuGenerated["ticks"] = [];
   for (let op = 0; op < 16; op++)
     for (let t = 0; t < 8; t++) {
-      const ties = new Map<number, 0 | 1>([[reset, 0]]);
-      opBits.forEach((id, b) => ties.set(id, ((op >> b) & 1) as 0 | 1));
-      tBits.forEach((id, b) => ties.set(id, ((t >> b) & 1) as 0 | 1));
-      const list = tickPlan(net, lm, { ties, refresh }).actions;
+      const c: Case = { op, t, extra: [] };
+      const list = plan(c, false);
       worstTick = Math.max(worstTick, list.length);
       sumTick += list.length;
-      const code = acts(list);
-      if (!bodies.has(code)) bodies.set(code, []);
-      bodies.get(code)!.push([op, t]);
+      addBody(full, c, list);
+      let best = [{ c, list: plan(c, true) }];
+      for (const bits of [marBits, irLow]) {
+        const split = variants(op, t, bits).map((v) => ({
+          c: v,
+          list: plan(v, true),
+        }));
+        const cost = (xs: typeof best) =>
+          Math.max(...xs.map((x) => x.list.length));
+        if (cost(split) + SPECIALIZE_GAIN <= cost(best)) best = split;
+      }
+      for (const x of best) {
+        worstFast = Math.max(worstFast, x.list.length);
+        addBody(fast, x.c, x.list);
+      }
+      ticks.push({
+        op,
+        t,
+        full: list,
+        fast: best.map((x) => ({ extra: x.c.extra, actions: x.list })),
+      });
     }
 
-  // the dispatch: one IF per group of cases that share a body, each condition a gate expression of
-  // the snapshot of the dispatch bits
-  const snapOf = new Map([...opBits, ...tBits].map((id, i) => [id, SNAP[i]]));
+  // a dispatch: one IF per group of cases that share a body, each condition a gate expression of
+  // the live dispatch bits and a guard
   const lit = (id: number, v: number): Expr => (v ? ref(id) : not(ref(id)));
   const andAll = (xs: Expr[]): Expr =>
     xs.length === 1
@@ -227,33 +308,75 @@ export function generateCpu(
     xs.length === 1
       ? xs[0]
       : or(orAll(xs.slice(0, xs.length >> 1)), orAll(xs.slice(xs.length >> 1)));
-  const tIs = (t: number) =>
-    andAll(tBits.map((id, b) => lit(snapOf.get(id)!, (t >> b) & 1)));
-  const caseIs = (op: number, t: number) =>
+  const caseIs = (c: Case, withOp: boolean) =>
     andAll([
-      ...opBits.map((id, b) => lit(snapOf.get(id)!, (op >> b) & 1)),
-      ...tBits.map((id, b) => lit(snapOf.get(id)!, (t >> b) & 1)),
+      ...(withOp ? opBits.map((id, b) => lit(id, (c.op >> b) & 1)) : []),
+      ...tBits.map((id, b) => lit(id, (c.t >> b) & 1)),
+      ...c.extra.map(([id, v]) => lit(id, v)),
     ]);
-  const groups = [...bodies.entries()]
-    .map(([code, cases]) => {
-      const terms: Expr[] = [];
-      for (let t = 0; t < 8; t++) {
-        const ops = cases.filter((c) => c[1] === t).map((c) => c[0]);
-        if (ops.length === 16) terms.push(tIs(t));
-        else for (const op of ops) terms.push(caseIs(op, t));
+  const ifsOf = (
+    bodies: Map<string, Case[]>,
+    guard: Expr,
+    setsRan: boolean,
+  ) => {
+    const groups = [...bodies.entries()].map(([code, cases]) => {
+      // cases that differ only in the opcode, all 16 of them, need no opcode bits
+      const byRest = new Map<string, Case[]>();
+      for (const c of cases) {
+        const k = `${c.t}|${c.extra.map(([id, v]) => `${id}=${v}`).join(",")}`;
+        if (!byRest.has(k)) byRest.set(k, []);
+        byRest.get(k)!.push(c);
       }
-      return { code, cases, cond: ex(orAll(terms)) };
-    })
-    .filter((g) => g.code.length > 0)
-    .sort((a, b) => b.cases.length - a.cases.length);
-  const dispatch = [
-    ...[...snapOf].map(([id, snap]) => `${w(snap)}:=${w(id)},T`),
-    ...groups.map((g) => `?${g.cond}{${g.code}}`),
-  ].join(";");
-  const dispatchStored = groups.reduce(
-    (n, g) => n + g.code.split(";").length + 1,
-    0,
-  );
+      const terms = [...byRest.values()].flatMap((cs) =>
+        cs.length === 16
+          ? [caseIs(cs[0], false)]
+          : cs.map((c) => caseIs(c, true)),
+      );
+      return { code, cases, cond: orAll(terms) };
+    });
+    groups.sort((x, y) => y.cases.length - x.cases.length);
+    const ran = setsRan ? `${w(RAN)}:T;` : "";
+    return {
+      count: groups.length,
+      code: groups
+        .map(
+          (g) =>
+            `?${ex(and(guard, g.cond))}{${ran}${g.code ? `${g.code};` : ""}@inc:cpu/ticks}`,
+        )
+        .join(";"),
+      stored: groups.reduce((n, g) => n + g.code.split(";").length + 2, 0),
+    };
+  };
+  const stepIfs = ifsOf(full, not(ref(RAN)), true);
+  // Run's and Instruction's ticks, by T-state: slot j holds the IFs of the bodies at T = j, guarded
+  // by HALTED = 0. A body moves T on (to j + 1, or to 0 when its instruction ends), so no later IF
+  // of its slot holds, and the slots after the end of the instruction find T = 0: the eight slots in
+  // order run the CPU to the end of its instruction, with no RAN to keep.
+  const halted = net.aliases.get(PROBES.HALTED.name)!;
+  const slots = Array.from({ length: 8 }, (_, j) => {
+    const at = new Map<string, Case[]>();
+    for (const [code, cases] of fast) {
+      const cs = cases.filter((c) => c.t === j);
+      if (cs.length) at.set(code, cs);
+    }
+    const worst = Math.max(
+      ...ticks
+        .filter((tk) => tk.t === j)
+        .flatMap((tk) => tk.fast.map((f) => f.actions.length)),
+    );
+    return { ...ifsOf(at, not(ref(halted)), false), worst };
+  });
+  const instruction = slots.map((s) => s.code).join(";");
+  // executed actions: each slot judges its IFs and runs at most one body and its counter write
+  const perInstruction = slots.reduce((n, s) => n + s.count + s.worst + 1, 0);
+  // a Run event also shows the counter and closes or swaps
+  const instructionsPerEvent = Math.floor((EVENT_BUDGET - 3) / perInstruction);
+  if (instructionsPerEvent < 1)
+    throw new Error(
+      `an instruction runs up to ${perInstruction} actions, past the event budget`,
+    );
+  const groups = [...full.keys()];
+  const dispatchStored = stepIfs.stored;
 
   // ---------- reset and program loading: every latch to its power-on value ----------
   // only latch outputs hold state (each tick recomputes the gates it reads, the latches' own inner
@@ -590,7 +713,7 @@ export function generateCpu(
           1,
         ],
         [
-          `${net.gates.length} gates · ${ids.length} wires (one boolean variable each) · a clock tick is one flat dispatch on the control state: ${Math.round(sumTick / 128)} gate evaluations on average, ${worstTick} at most · no plugin`,
+          `${net.gates.length} gates · ${ids.length} wires (one boolean variable each) · Step: one tick, every gate it needs (${Math.round(sumTick / 128)} on average, ${worstTick} at most) · Run: ${instructionsPerEvent} instructions an event, gates folded into gate expressions, flip-flops written once (${worstFast} writes at most a tick) · no plugin`,
           PAD,
           64,
           13,
@@ -636,15 +759,16 @@ export function generateCpu(
     "the Present frame and the CPU panel",
   );
 
-  // reactions. Step (Space) runs one tick. Run and
-  // Instruction (Enter) open the first running overlay; each overlay's timer runs one tick, then
-  // closes the overlay if the CPU has halted (or, for Instruction, T is back at 0) and otherwise
-  // swaps in its twin, whose timer runs the next tick. Clicking the pill closes it (pause).
-  // one tick: the dispatch, then the counter and its text
-  const tick = `${dispatch};@inc:cpu/ticks;@show:cpu/ticksText:cpu/ticks:ticks `;
-  const halted = w(net.aliases.get(PROBES.HALTED.name)!);
-  const tZero = tBits.map((id) => `!${w(id)}`);
-  const done = `|${halted},&${w(MODE)},&${tZero[0]},&${tZero[1]},${tZero[2]}`;
+  // Reactions. Step (Space) runs one tick of the every-gate bodies. Instruction (Enter) runs the
+  // eight T-state slots once: the CPU to the end of its instruction. Run opens the first running
+  // overlay; each overlay's timer runs the slots for as many instructions as fit in one event's
+  // action budget, then closes the overlay if the CPU has halted and otherwise swaps in its twin,
+  // whose timer runs the next ones. Clicking the pill closes it (pause).
+  const show = "@show:cpu/ticksText:cpu/ticks:ticks ";
+  const perEvent = Array.from(
+    { length: instructionsPerEvent },
+    () => instruction,
+  ).join(";");
   type Assign = [string, Array<[string, number[] | null, string, null]>];
   const assigns: Assign[] = [
     ["/step", [["c", null, "step", null]]],
@@ -670,14 +794,15 @@ export function generateCpu(
     ]),
   ];
   const runs: Record<string, string> = {
-    step: tick,
-    instruction: `${w(MODE)}:T;@open:${RUN[0]}`,
-    run: `${w(MODE)}:F;@open:${RUN[0]}`,
+    step: `${w(RAN)}:F;${stepIfs.code};${show}`,
+    instruction: `${instruction};${show}`,
+    run: `@open:${RUN[0]}`,
     pause: "@close",
     ...Object.fromEntries(
       RUN.map((_, i) => [
         `tick/${i}`,
-        `${tick};?${done}{@close}{@swap:${RUN[1 - i]}}`,
+        // a condition must be an expression, not a bare variable (plan's eq would simplify to one)
+        `${perEvent};${show};?${ex({ eq: [ref(halted), { const: 1 }] })}{@close}{@swap:${RUN[1 - i]}}`,
       ]),
     ),
     ...Object.fromEntries(LOADS.map((p) => [`load/${p}`, load(p)])),
@@ -740,9 +865,14 @@ export function generateCpu(
       worstTick,
       meanTick: Math.round(sumTick / 128),
       stateNets: latchNets.length,
+      fastGroups: slots.reduce((n, s) => n + s.count, 0),
+      worstFast,
+      perInstruction,
+      instructionsPerEvent,
     },
     net,
     wireOf,
+    ticks,
     names: {
       frame: FRAME,
       root: ROOT,

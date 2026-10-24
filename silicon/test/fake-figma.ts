@@ -588,6 +588,16 @@ export class FakeFigma {
     }
     return f;
   }
+  /** Like Figma: an image from encoded bytes (PNG/JPEG/GIF signatures checked), referenced by hash. */
+  images = new Map<string, Uint8Array>();
+  createImage(bytes: Uint8Array) {
+    const sig = (...b: number[]) => b.every((v, i) => bytes[i] === v);
+    if (!(bytes instanceof Uint8Array) || !(sig(0x89, 0x50, 0x4e, 0x47) || sig(0xff, 0xd8) || sig(0x47, 0x49, 0x46)))
+      throw new Error("createImage: Image type is unsupported");
+    const hash = `img${this.images.size}`;
+    this.images.set(hash, bytes);
+    return { hash };
+  }
   /** Every node on every page (test helper). */
   allNodes(): FakeNode[] {
     return this.root.children.flatMap((p) => [p, ...p.findAll()]);
