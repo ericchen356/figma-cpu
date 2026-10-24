@@ -284,3 +284,37 @@ The canvas should show rect.asm caught half-way through drawing the red rectangl
 
 - Running the CPU never needs MCP; it's a normal plugin in Figma desktop. MCP is only how an agent drives the file remotely.
 - Without MCP, the REST API with a personal access token can still _read_ the file and render screenshots (Full seat: 10 Tier-1 calls/min, even on Starter). It can't edit designs.
+
+### Stage 5b — Verified in Figma desktop by computer use (no MCP calls)
+
+With MCP blocked, an agent ran the real plugin the way a person would. It used `orca computer` for screenshots and Chrome's accessibility tree, JXA `CGEvent` clicks for the Figma canvas and plugin iframe, and System Events keystrokes for Quick Actions.
+
+1. **Read-only token.** Chrome → Figma → Settings → Security → _Generate new token_: `figmacpu-readonly` with `file_content:read` and `file_metadata:read`, expiring in 7 days. The agent read the token from the accessibility tree through a redacting filter and wrote it straight to `~/.figma_token` (mode 600), so it was never printed. `GET /v1/files/l2JmsK7AEQkfo3Cvx67NgN` returned **HTTP 200**.
+2. **Import and run the plugin.** Figma desktop → ⌘/ → _Import plugin from manifest…_ → `plugin/manifest.json` → ⌘/ → **FigmaCPU** → the panel reports `ready`, bound to Machine v2.
+3. **Watch mode, `count.asm`.** "17 bytes loaded", then one **Step**. The canvas shows:
+   - PC `0003` with its bit lamps;
+   - IR `10` / **LDI**;
+   - the EXEC and CLK lamps on;
+   - a green outline on register A;
+   - decoder row `10` lit;
+   - RAM cells 0000–0002 tinted as reads;
+   - TICK counting in IO.
+
+   ![watch step](docs/stages/stage-5-watch-step.png)
+
+4. **Turbo mode, `rect.asm`.** 140 bytes; it halts after **55,560 instructions** in under 4 s. The preview shows the artboard and the three rectangles exactly as programmed, and the ALU reads `CMP FF FF → 00` with Z lit.
+
+   ![turbo rect](docs/stages/stage-5-turbo-rect.png)
+
+5. **Turbo mode, `bounce.asm`.** **About 290–298k instructions/s inside Figma's plugin sandbox**, 6× the PRD target. The `dev/screen` image fill animates live on the canvas.
+
+   ![turbo bounce](docs/stages/stage-5-turbo-bounce.png)
+
+6. **Server-side render via REST** (`GET /v1/images`, no MCP). The machine state persisted in the document: ![machine after rect.asm](docs/stages/stage-5-machine-rect.png)
+
+**Bug found → handed to the plugin owner (Stage 6):** after a Turbo run halts, the canvas `dev/screen` can keep a stale frame ([evidence](docs/stages/stage-5-screen-stale-frame-bug.png): half-drawn artboard). If a PNG is still in flight when the run stops, the final frame is skipped and nothing re-syncs once the PNG lands. The fix is to call `screen.sync(cpu, …)` again after `screen.onPng(...)`.
+
+**Gotchas:**
+
+- Figma desktop exposes no accessibility tree, and Orca's focus check rejects its keyboard and coordinate input. JXA `CGEventPost` (clicks and drags) plus System Events keystrokes work. Before typing, confirm that Quick Actions actually opened. Stray letters on the canvas act as tool shortcuts.
+- macOS requires a human to grant Accessibility and Screen Recording to the computer-use helper once.
