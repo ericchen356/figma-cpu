@@ -45,7 +45,7 @@ describe("calibration against the real CPU", () => {
   const model = cpuNetlistFor(BASE);
 
   it("the base configuration builds exactly the real CPU (same gates, nets, order)", () => {
-    expect(model.gates.length).toBe(2285);
+    expect(model.gates.length).toBe(2296);
     expect(model.gates).toEqual(real.gates);
     expect(model.netNames).toEqual(real.netNames);
     expect(model.ports).toEqual(real.ports);
@@ -58,9 +58,9 @@ describe("calibration against the real CPU", () => {
     expect(gatesByBlock(model)).toEqual(blocks);
   });
 
-  it("estimate() of the base matches the real plan: 2,287 variables, 3,860 actions, 11 events per tick", () => {
+  it("estimate() of the base matches the real plan: 2,298 variables, 3,855 actions, 11 events per tick", () => {
     const r = estimate(BASE);
-    expect(r).toMatchObject({ gates: 2285, variables: 2287, plan: { actionsPerTick: 3860, eventsPerTick: 11 }, isa: "v1" });
+    expect(r).toMatchObject({ gates: 2296, variables: 2298, plan: { actionsPerTick: 3855, eventsPerTick: 11 }, isa: "v1" });
     expect(r.blocks.ram).toBe(808);
   });
 
@@ -68,7 +68,7 @@ describe("calibration against the real CPU", () => {
     const base = countLayers(buildLibrary(BASE)).total;
     expect(base).toBe(countLayers(cpuLibrary()).total);
     expect(await drawnLayers(cpuLibrary())).toBe(base);
-    expect(base).toBe(72333);
+    expect(base).toBe(72553);
     const v2 = buildLibrary({ ...V2_ALL, registers: 8, addrBits: 5 });
     expect(await drawnLayers(v2)).toBe(countLayers(v2).total);
   });
@@ -161,6 +161,6 @@ describe("CLI wrapper", () => {
     expect(out).toMatchObject({ gates: want.gates, layers: want.layers, variables: want.variables, plan: want.plan });
     const t = spawnSync(process.execPath, ["tools/cost-model.mjs", "--sweep", "4..5"], { cwd: SILICON, encoding: "utf8" });
     expect(t.status, t.stderr).toBe(0);
-    expect(t.stdout).toContain("| 16 | v1 | 2285 | 808 |");
+    expect(t.stdout).toContain("| 16 | v1 | 2296 | 808 |");
   });
 });

@@ -297,10 +297,10 @@ describe("auditBuild: each failure mode fires", () => {
 });
 
 describe("expectedFrom", () => {
-  it("counts the CPU's gates and wires like plan() does (2,285 gates, 2,287 wires)", () => {
+  it("counts the CPU's gates and wires like plan() does (2,296 gates, 2,298 wires)", () => {
     const e = expectedFrom(cpuNetlist());
-    expect(Object.values(e.gates).reduce((a, b) => a + b, 0)).toBe(2285);
-    expect(e.wires).toBe(2287);
+    expect(Object.values(e.gates).reduce((a, b) => a + b, 0)).toBe(2296);
+    expect(e.wires).toBe(2298);
   });
 });
 
@@ -313,7 +313,7 @@ describe.skipIf(!existsSync(DUMP))("auditBuild on the real legacy dump", () => {
     const ms = Date.now() - t0;
     expect(ms).toBeLessThan(30_000);
     expect(a.gates.matches).toBe(true);
-    expect(a.gates.drawnTotal).toBe(2285);
+    expect(a.gates.drawnTotal).toBe(2296);
     expect(a.ready).toBe(false);
     expect(a.legacy).toBe(true);
     expect(a.verdict).toMatch(/^REBUILD needed: /);
@@ -325,8 +325,8 @@ describe.skipIf(!existsSync(DUMP))("auditBuild on the real legacy dump", () => {
     expect(a.reactions.run.hops).toEqual({ "CPU · Run A": 3863, "CPU · Run B": 3863 });
     expect(failed(a)).toEqual(["step", "run", "reset:CPU · Control", "reset:CPU · Step", "events", "bind:mem"]);
     expect(["gates", "frames", "flows", "bind:gates", "bind:panel", "variables"].map((id) => check(a, id).status)).toEqual(Array(6).fill("pass"));
-    expect(a.bindings.gates.bound).toBe(2285);
-    expect(a.variables.wires).toBe(2287);
+    expect(a.bindings.gates.bound).toBe(2296);
+    expect(a.variables.wires).toBe(2298);
     expect(last(a.text.split("\n"))).toMatch(/^VERDICT: REBUILD needed: /);
   });
 });

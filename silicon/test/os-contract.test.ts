@@ -111,9 +111,9 @@ describe("image loader (src/os/image.ts)", () => {
     ]);
     const dbNowhere = loadImage({ ...SIMPLE, regions: [REGIONS[0]] }, "start: JMP start\n.org 11\n.db ';'");
     expect(dbNowhere.errors[0].msg).toBe("line 3: .db byte at 11 is outside every region; .db bytes must be in a data region");
-    const codeInData = loadImage({ ...SIMPLE, regions: REGIONS }, "start: JMP 10\n.org 10\nNOT R1");
+    const codeInData = loadImage({ ...SIMPLE, regions: REGIONS }, "start: JMP 10\n.org 10\nMOV R1, R2");
     expect(codeInData.errors.map((x) => x.msg)).toEqual([
-      'line 3: instruction byte at 10 ("NOT R1") is in data region "data"; it must be in a code region',
+      'line 3: instruction byte at 10 ("MOV R1, R2") is in data region "data"; it must be in a code region',
     ]);
   });
 

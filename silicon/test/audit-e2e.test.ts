@@ -57,16 +57,16 @@ describe("auditBuild on a file built by the plugin (fake Figma)", () => {
     expect(a.text.split("\n").pop()).toBe("VERDICT: READY to present");
   });
 
-  it("sees both Reset chains going home, the Run loop, 2,285 bound gates, 128 MEM lamps and 2,287 wires", () => {
+  it("sees both Reset chains going home, the Run loop, 2,296 bound gates, 128 MEM lamps and 2,298 wires", () => {
     const [ctl, step] = a.reactions.resets;
     expect([ctl.home, ctl.chunked, ctl.hops, ctl.exits.length > 0]).toEqual(["CPU · Control", true, ["CPU · Reset A", "CPU · Reset B"], true]);
     expect([step.home, step.chunked, step.hops, step.exits.length > 0]).toEqual(["CPU · Step", true, ["CPU · Reset A (Step)", "CPU · Reset B (Step)"], true]);
     expect(Math.max(ctl.click, ctl.worstHop, step.worstHop)).toBeLessThanOrEqual(400);
     expect(Object.keys(a.reactions.run.hops).sort()).toEqual(["CPU · Run A", "CPU · Run B"]);
     expect(a.reactions.step.every((s) => s.worst <= 400)).toBe(true);
-    expect(a.bindings.gates).toMatchObject({ instances: 2285, bound: 2285 });
+    expect(a.bindings.gates).toMatchObject({ instances: 2296, bound: 2296 });
     expect(a.bindings.mem.bound).toBe(128);
-    expect(a.variables.wires).toBe(2287);
+    expect(a.variables.wires).toBe(2298);
     expect(a.variables.roles.running).toHaveLength(1);
     expect(a.variables.roles.resetPhase).toHaveLength(1);
     expect(a.variables.roles.phase).toHaveLength(1);
