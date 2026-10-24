@@ -236,3 +236,51 @@ Then in Figma desktop: Plugins → Development → Import plugin from manifest �
 - The plugin uses `documentAccess: "dynamic-page"`, so pages must be loaded with `page.loadAsync()`. `figma.on("documentchange")` would need `loadAllPagesAsync`; `PageNode.on("nodechange")` doesn't.
 - Our own fill/stroke writes also fire `nodechange`. The handler only reacts to `characters` or `name` changes on table text layers (and to created or deleted rows), so a running CPU doesn't keep reloading its own table.
 - Figma smooths scaled image fills, which would blur pixel art. The PNG is upscaled 6× (768×576, exactly the `dev/screen` size) before it reaches Figma.
+
+---
+
+## Stage 5 — End-to-end check inside Figma, without clicking (tag: `stage-5`)
+
+**Goal:** prove the runner on the _real_ file from the terminal. The check binds to Machine v2, reads the opcode table off the canvas, and runs `rect.asm` on the table-driven CPU. It then freezes on a pixel store mid-draw, renders that EXEC phase onto the machine, and paints VRAM onto `dev/screen`.
+
+**Inputs:** the Machine v2 page (Stage 2) and the runner code (Stage 4).
+
+**Figma work:** `[MCP]` **None executed yet.** Figma rejected the `use_figma` call because the MCP tool-call limit was used up.
+
+| Seat          | Starter plan | Professional / Education | Organization    | Enterprise      |
+| ------------- | ------------ | ------------------------ | --------------- | --------------- |
+| View / Collab | 20 per month | 20 per month             | 20 per month    | 20 per month    |
+| Full / Dev    | 20 per month | 200/day, 10/min          | 200/day, 15/min | 600/day, 20/min |
+
+Three Claude sessions shared one Starter allowance.
+
+**Code:**
+
+- [`plugin/src/png.ts`](plugin/src/png.ts): a minimal PNG encoder (8-bit indexed, nearest-neighbor upscale, stored deflate). It's for places with no `<canvas>`. Tested with Node's `zlib.inflateSync`.
+- [`plugin/verify/verify.ts`](plugin/verify/verify.ts): binds to Machine v2, reads the table, runs `rect.asm`, renders the snapshot, and paints the screen. It returns a JSON report with bind status, table errors, a timed full run (IPS inside Figma's sandbox), the snapshot's VRAM write, render times and PNG size.
+- [`plugin/verify/build.mjs`](plugin/verify/build.mjs):
+  1. assembles `rect.asm` in Node;
+  2. picks the snapshot cycle (≈700 red pixels drawn);
+  3. bundles everything into `dist/verify-use-figma.js` (~22k chars, under the 50k `use_figma` limit).
+
+**Reproduce:**
+
+```bash
+git checkout stage-5
+cd plugin && npm install && node verify/build.mjs
+../tools/run-in-figma.sh dist/verify-use-figma.js "Verify the FigmaCPU runner"
+```
+
+**Verify (expected):**
+
+- `"bind":"ok"`
+- `"table":{"instructions":29,"errors":[]}`
+- `"snapshot":{"op":"ST","wrote":[{"kind":"w","addr":"0x8…"}]}`
+- `"screen":{"pngBytes":≈443000}`
+
+The canvas should show rect.asm caught half-way through drawing the red rectangle.
+
+**Gotchas:**
+
+- Running the CPU never needs MCP; it's a normal plugin in Figma desktop. MCP is only how an agent drives the file remotely.
+- Without MCP, the REST API with a personal access token can still _read_ the file and render screenshots (Full seat: 10 Tier-1 calls/min, even on Starter). It can't edit designs.
