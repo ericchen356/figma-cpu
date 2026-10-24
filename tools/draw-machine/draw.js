@@ -1,11 +1,17 @@
-// Draws the FigmaCPU v2 machine onto a "Machine v2" page.
-// SPEC (opcodes + palette + memory map) is injected by build.mjs.
+// Draws the FigmaCPU v2 machine onto a page (default "Machine v2"; build.mjs --page <name>).
+// SPEC (opcodes + palette + memory map + control signals) is injected by build.mjs.
 // Every node the plugin binds to follows the naming contract in PRD §4.2.
 // Re-running is safe: if the machine already exists nothing is touched,
 // unless FORCE_REDRAW is true (then only the frames this script owns are replaced).
 
 const FORCE_REDRAW =
   typeof __FORCE_REDRAW__ !== "undefined" ? __FORCE_REDRAW__ : false;
+const TARGET_PAGE =
+  typeof __TARGET_PAGE__ !== "undefined" ? __TARGET_PAGE__ : "Machine v2";
+
+// The datapath internals block sits between the top blocks and the buses;
+// everything below it moves down by SHIFT.
+const SHIFT = 360;
 
 const C = {
   bg: "#141414",
@@ -249,11 +255,11 @@ function drawAlu(M, Lamp) {
     bold: true,
     color: C.active,
   });
-  text(alu, "l1", "IN 1", 16, 100, { size: 14, bold: true, color: C.dim });
+  text(alu, "l1", "A LATCH", 16, 100, { size: 14, bold: true, color: C.dim });
   text(alu, "cpu/alu/in1", "00", 120, 90, { size: 32, mono: true });
-  text(alu, "l2", "IN 2", 16, 154, { size: 14, bold: true, color: C.dim });
+  text(alu, "l2", "BUS IN", 16, 154, { size: 14, bold: true, color: C.dim });
   text(alu, "cpu/alu/in2", "00", 120, 144, { size: 32, mono: true });
-  text(alu, "l3", "OUT", 16, 214, { size: 14, bold: true, color: C.dim });
+  text(alu, "l3", "Y LATCH", 16, 214, { size: 14, bold: true, color: C.dim });
   text(alu, "cpu/alu/out", "00", 120, 200, {
     size: 40,
     mono: true,
@@ -272,18 +278,18 @@ function drawAlu(M, Lamp) {
 function drawBuses(M) {
   // taps first so the buses render on top of them
   const taps = [
-    ["control", 340, 610, 40],
-    ["registers", 1060, 610, 140],
-    ["alu", 1780, 610, 140],
-    ["decoder", 640, 830, 40],
-    ["ram/addr", 1400, 730, 140],
-    ["ram/data", 1700, 830, 40],
+    ["control", 340, 610, 40 + SHIFT],
+    ["registers", 1060, 610, 140 + SHIFT],
+    ["alu", 1780, 610, 140 + SHIFT],
+    ["decoder", 640, 830 + SHIFT, 40],
+    ["ram/addr", 1400, 730 + SHIFT, 140],
+    ["ram/data", 1700, 830 + SHIFT, 40],
   ];
   for (const [n, x, y, h] of taps)
     rect(M, `cpu/bus/tap/${n}`, x, y, 10, h, C.bus, 2);
   const buses = [
-    ["cpu/bus/addr", "ADDRESS BUS · 16-bit", "0000", 650],
-    ["cpu/bus/data", "DATA BUS · 8-bit", "00", 750],
+    ["cpu/bus/addr", "ADDRESS BUS · 16-bit", "0000", 650 + SHIFT],
+    ["cpu/bus/data", "DATA BUS · 8-bit", "00", 750 + SHIFT],
   ];
   for (const [name, label, val, y] of buses) {
     const f = frame(M, name, 40, y, 2040, 80, { radius: 12 });
@@ -294,7 +300,7 @@ function drawBuses(M) {
 }
 
 function drawDecoder(M) {
-  const b = frame(M, "cpu/decoder", 40, 870, 1240, 1100);
+  const b = frame(M, "cpu/decoder", 40, 870 + SHIFT, 1240, 1100);
   blockLabel(
     b,
     "DECODER · OPCODE TABLE — the CPU's logic. Edit the micro-ops to rewire it.",
@@ -382,7 +388,7 @@ function cellGrid(parent, prefix, rows, y0) {
 }
 
 function drawRam(M) {
-  const b = frame(M, "mem/ram", 1320, 870, 760, 1100);
+  const b = frame(M, "mem/ram", 1320, 870 + SHIFT, 760, 1100);
   blockLabel(b, "RAM · window follows PC");
   text(b, "mem/ram/base", "base 0000", 560, 12, {
     size: 15,
@@ -443,8 +449,40 @@ function drawIo(M) {
   });
 }
 
+function smallReg(parent, name, label, x, w, value) {
+  const f = frame(parent, name, x, 44, w, 96, { fill: C.cell, radius: 10 });
+  text(f, "label", label, 12, 8, { size: 13, bold: true, color: C.dim });
+  text(f, "value", value, 12, 34, { size: 36, mono: true, bold: true });
+  return f;
+}
+
+// Stage 2b (PRD §6.3–6.4): MAR/MDR, operand latches, T-state counter, control-signal lamps.
+function drawInternals(M, Lamp) {
+  const b = frame(M, "cpu/internal", 40, 650, 2040, 330);
+  blockLabel(
+    b,
+    "DATAPATH · latches · T-state counter · control signals (Watch mode lights the signals of each T-state)",
+  );
+  smallReg(b, "cpu/reg/MAR", "MAR · mem address", 16, 250, "0000");
+  smallReg(b, "cpu/reg/MDR", "MDR · mem data", 282, 170, "00");
+  smallReg(b, "cpu/latch/OPR", "OPR · reg byte", 468, 170, "00");
+  smallReg(b, "cpu/latch/T", "T · imm8", 654, 170, "00");
+  smallReg(b, "cpu/latch/W", "W · imm16", 840, 250, "0000");
+
+  const ts = frame(b, "cpu/tstate", 1110, 44, 914, 96, { fill: C.cell, radius: 10 });
+  text(ts, "label", "T-STATE", 12, 8, { size: 13, bold: true, color: C.dim });
+  text(ts, "value", "—", 12, 34, { size: 36, mono: true, bold: true });
+  for (let t = 0; t < SPEC.signals.maxTStates; t++)
+    lampLabel(Lamp, ts, `cpu/tstate/T${t}`, `T${t}`, 120 + (t % 9) * 88, t < 9 ? 10 : 52, 84);
+
+  SPEC.signals.signals.forEach((s, i) => {
+    const f = lampLabel(Lamp, b, `cpu/sig/${s.name}`, s.name, 16 + (i % 9) * 224, 156 + Math.floor(i / 9) * 40, 216);
+    if (s.drives) f.findOne((n) => n.name === "label").fills = solid(C.busOn, 0.75);
+  });
+}
+
 function drawFutureSlot(M) {
-  const b = frame(M, "slot/future/figma-app", 2120, 1290, 808, 680, {
+  const b = frame(M, "slot/future/figma-app", 2120, 1290, 808, 680 + SHIFT, {
     fill: "#1A1A1A",
     stroke: "#555555",
     dash: [16, 10],
@@ -471,10 +509,10 @@ function drawFutureSlot(M) {
 async function drawMachine() {
   await loadFonts();
 
-  let page = figma.root.children.find((p) => p.name === "Machine v2");
+  let page = figma.root.children.find((p) => p.name === TARGET_PAGE);
   if (!page) {
     page = figma.createPage();
-    page.name = "Machine v2";
+    page.name = TARGET_PAGE;
   }
   await figma.setCurrentPageAsync(page);
   await page.loadAsync();
@@ -488,7 +526,7 @@ async function drawMachine() {
     existing.forEach((n) => n.remove());
   }
 
-  const comps = frame(page, "Components v2", 0, 2120, 600, 260, {
+  const comps = frame(page, "Components v2", 0, 2120 + SHIFT, 600, 260, {
     fill: C.bg,
     stroke: null,
   });
@@ -506,7 +544,7 @@ async function drawMachine() {
   comps.resize(Math.max(600, RegisterSet.x + RegisterSet.width + 60), 260);
   compArea.resize(comps.width - 32, 210);
 
-  const M = frame(page, "Machine v2", 0, 0, 2968, 2010, {
+  const M = frame(page, "Machine v2", 0, 0, 2968, 2010 + SHIFT, {
     fill: C.bg,
     stroke: null,
     radius: 0,
@@ -525,7 +563,7 @@ async function drawMachine() {
   text(
     M,
     "legend",
-    "Yellow lamp = bit set   ·   Green outline = active this cycle   ·   Orange = bus driven   ·   v1 (prototype-variable CPU) lives on Page 1",
+    "Yellow lamp = bit set   ·   Green = loaded / active this T-state   ·   Orange = bus driven   ·   Run it with the FigmaCPU plugin (plugin/manifest.json)",
     40,
     92,
     { size: 15, color: C.dim },
@@ -535,6 +573,7 @@ async function drawMachine() {
   drawControl(M, Lamp);
   drawRegisters(M, RegisterSet);
   drawAlu(M, Lamp);
+  drawInternals(M, Lamp);
   drawDecoder(M);
   drawRam(M);
   drawScreen(M);
@@ -543,5 +582,5 @@ async function drawMachine() {
 
   figma.viewport.scrollAndZoomIntoView([M]);
   const named = M.findAll((n) => /^(cpu|mem|dev)\//.test(n.name)).length;
-  return `Drew Machine v2 (${M.id}) with ${named} contract-named nodes on page ${page.id}`;
+  return `Drew Machine v2 (${M.id}) with ${named} contract-named nodes on page "${page.name}" (${page.id})`;
 }
