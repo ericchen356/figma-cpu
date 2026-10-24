@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audit, expandGates, levelOf, parseRest, worstCase, type RestAction, type RestNode } from "../src/audit/audit";
+import { audit, eventWorst, events, expandGates, levelOf, parseRest, worstCase, type RestAction, type RestNode } from "../src/audit/audit";
 
 const set = (n = 1): RestAction[] => Array.from({ length: n }, () => ({ type: "SET_VARIABLE" }));
 let id = 0;
@@ -26,6 +26,32 @@ describe("worstCase / levelOf", () => {
   });
   it("levels: ≤ cap ok, below 2001 risky, 2001+ crash", () => {
     expect([levelOf(400, 400), levelOf(401, 400), levelOf(2000, 400), levelOf(2001, 400)]).toEqual(["ok", "risky", "risky", "crash"]);
+  });
+});
+
+describe("eventWorst (apply()'s chunk dispatcher)", () => {
+  const eq = (v: string, k: number) => ({ type: "EXPRESSION", value: { expressionFunction: "EQUALS", expressionArguments: [{ type: "VARIABLE_ALIAS", value: { type: "VARIABLE_ALIAS", id: v } }, { type: "FLOAT", value: k }] } });
+  const kase = (v: string, k: number, actions: RestAction[]): RestAction => ({ type: "CONDITIONAL", conditionalBlocks: [{ condition: eq(v, k), actions }] });
+  const setTo = (v: string): RestAction => ({ type: "SET_VARIABLE", variableId: v });
+
+  it("counts exclusive `if now == k` cases as K plus the costliest one, like apply()'s 1 + K + chunk", () => {
+    const ev = [...set(1), kase("now", 0, set(300)), kase("now", 1, set(380)), kase("now", 2, set(10))];
+    expect(worstCase(ev)).toBe(1 + 301 + 381 + 11); // the old rule sums every branch
+    expect(eventWorst(ev)).toBe(1 + 3 + 380);
+  });
+  it("nested in a Run hop's conditional too", () => {
+    const hop: RestAction = { type: "CONDITIONAL", conditionalBlocks: [{ actions: [kase("now", 0, set(200)), kase("now", 1, set(200)), { type: "NODE", destinationId: "1:2" }] }, { actions: set(2) }] };
+    expect(eventWorst([hop])).toBe(1 + 2 + 200 + 1);
+  });
+  it("sums when the cases are not provably exclusive", () => {
+    expect(eventWorst([kase("a", 0, set(5)), kase("b", 1, set(5))])).toBe(12); // different variables
+    expect(eventWorst([kase("a", 0, set(5)), kase("a", 0, set(5))])).toBe(12); // the same k twice
+    expect(eventWorst([kase("a", 0, [...set(4), setTo("a")]), kase("a", 1, set(5))])).toBe(6 + 6); // case 0 writes a: case 1 may run too
+    expect(eventWorst([kase("a", 0, set(5)), kase("a", 1, [...set(4), setTo("a")])])).toBe(2 + 5); // the last case may write it
+  });
+  it("is worstCase for plain lists and else-blocks", () => {
+    const cond: RestAction = { type: "CONDITIONAL", conditionalBlocks: [{ actions: set(3) }, { actions: set(5) }] };
+    expect(eventWorst([...set(2), cond])).toBe(worstCase([...set(2), cond]));
   });
 });
 
@@ -68,6 +94,11 @@ describe("audit", () => {
     const a = audit(mk(10), { AND: 2, XOR: 1, NOT: 1 }, 400, "cell/TOP");
     expect(a.gates.matches).toBe(false);
     expect(a.gates.diffs).toEqual(["XOR: drawn 2, code 1"]);
+  });
+  it("events name the top-level frame each reaction sits in", () => {
+    const btn = node("button/Reset", "FRAME", { interactions: [{ trigger: { type: "ON_CLICK" }, actions: set(2) }] });
+    const page = node("Silicon", "CANVAS", { children: [node("CPU · Control", "FRAME", { children: [node("row", "FRAME", { children: [btn] })] })] });
+    expect(events({ roots: [page], components: {} }, 400)).toEqual([{ node: "button/Reset", frame: "CPU · Control", trigger: "ON_CLICK", actions: 2, worst: 2, level: "ok" }]);
   });
   it("an empty page is not 'matching'", () => {
     expect(audit({ roots: [], components: {} }, expected, 400, "cell/TOP").gates.matches).toBe(false);

@@ -11,11 +11,25 @@ export interface RestNode {
   type: string;
   componentId?: string;
   children?: RestNode[];
-  interactions?: Array<{ trigger?: { type?: string }; actions?: RestAction[] }>;
+  interactions?: RestInteraction[];
+  /** Variable bindings, e.g. `{ visible: { type: "VARIABLE_ALIAS", id: "VariableID:1:2" } }`. */
+  boundVariables?: Record<string, unknown>;
+  /** CANVAS only: the prototype flows (▶ Present). */
+  flowStartingPoints?: Array<{ nodeId: string; name: string }>;
+}
+export interface RestInteraction {
+  trigger?: { type?: string; timeout?: number };
+  actions?: RestAction[];
 }
 export interface RestAction {
   type: string;
-  conditionalBlocks?: Array<{ actions?: RestAction[] }>;
+  conditionalBlocks?: Array<{ condition?: unknown; actions?: RestAction[] }>;
+  /** NODE actions: the frame navigated to. */
+  destinationId?: string | null;
+  navigation?: string;
+  /** SET_VARIABLE actions. */
+  variableId?: string;
+  variableValue?: unknown;
 }
 export interface AuditInput {
   /** The page(s) or frame(s) to audit. */
@@ -47,6 +61,54 @@ export function worstCase(actions: readonly RestAction[] | undefined): number {
   return n;
 }
 
+/** `if v == k` with no else: one case of apply()'s chunk dispatcher (v a variable, k a number literal). */
+function dispatchCase(a: RestAction): { v: string; k: number } | null {
+  if (a.type !== "CONDITIONAL" || a.conditionalBlocks?.length !== 1) return null;
+  const c = a.conditionalBlocks[0].condition as { type?: string; value?: { expressionFunction?: string; expressionArguments?: Array<{ type?: string; value?: unknown }> } } | undefined;
+  const e = c?.type === "EXPRESSION" ? c.value : undefined;
+  if (e?.expressionFunction !== "EQUALS" || e.expressionArguments?.length !== 2) return null;
+  const [x, y] = e.expressionArguments;
+  const alias = (x?.value as { type?: string; id?: unknown } | undefined) ?? undefined;
+  const v = alias?.type === "VARIABLE_ALIAS" && typeof alias.id === "string" ? alias.id : x?.type === "VARIABLE_ALIAS" && typeof (x as { id?: unknown }).id === "string" ? ((x as { id: string }).id) : undefined;
+  return v && typeof y?.value === "number" ? { v, k: y.value } : null;
+}
+const writesVar = (acts: readonly RestAction[] | undefined, v: string): boolean =>
+  (acts ?? []).some((a) => a.variableId === v || (a.conditionalBlocks ?? []).some((b) => writesVar(b.actions, v)));
+
+/** Actions one event can execute, knowing apply()'s chunk dispatcher: consecutive `if v == k` cases on the same
+ * variable with distinct k are mutually exclusive (one runs), so a run of K of them costs K (each condition) plus
+ * the costliest case, not their sum. A case whose block writes v ends its run (a later case could then fire too, so
+ * those are summed). Anything else counts as in `worstCase`. This is the budget apply() checks (1 + K + chunk). */
+export function eventWorst(actions: readonly RestAction[] | undefined): number {
+  const acts = actions ?? [];
+  let n = 0;
+  for (let i = 0; i < acts.length; ) {
+    const c = dispatchCase(acts[i]);
+    if (c) {
+      const ks = new Set<number>();
+      let max = 0;
+      let j = i;
+      for (; j < acts.length; j++) {
+        const d = dispatchCase(acts[j]);
+        if (!d || d.v !== c.v || ks.has(d.k)) break;
+        ks.add(d.k);
+        const blk = acts[j].conditionalBlocks![0].actions;
+        max = Math.max(max, eventWorst(blk));
+        if (writesVar(blk, c.v)) {
+          j++;
+          break;
+        }
+      }
+      n += ks.size + max;
+      i = j;
+      continue;
+    }
+    const a = acts[i++];
+    n += a.type === "CONDITIONAL" ? 1 + Math.max(0, ...(a.conditionalBlocks ?? []).map((b) => eventWorst(b.actions))) : 1;
+  }
+  return n;
+}
+
 export type Level = "ok" | "risky" | "crash";
 /** ≤ cap fine (the viewer survived 501); up to 2000 unproven; ≥ 2001 it died. */
 export function levelOf(worst: number, cap: number): Level {
@@ -55,6 +117,8 @@ export function levelOf(worst: number, cap: number): Level {
 
 export interface EventReport {
   node: string;
+  /** Top-level frame (child of the page) the reacting layer sits in, or the layer itself. */
+  frame?: string;
   trigger: string;
   actions: number;
   worst: number;
@@ -69,14 +133,15 @@ function walk(n: RestNode, f: (n: RestNode) => void) {
 /** Every reaction in the roots: buttons and frames with interactions. */
 export function events(input: AuditInput, cap: number): EventReport[] {
   const out: EventReport[] = [];
-  for (const r of input.roots)
-    walk(r, (n) => {
-      for (const i of n.interactions ?? []) {
-        const worst = worstCase(i.actions);
-        if (!worst) continue;
-        out.push({ node: n.name, trigger: i.trigger?.type ?? "?", actions: i.actions?.length ?? 0, worst, level: levelOf(worst, cap) });
-      }
-    });
+  const visit = (n: RestNode, top: RestNode | undefined) => {
+    for (const i of n.interactions ?? []) {
+      const worst = eventWorst(i.actions);
+      if (!worst) continue;
+      out.push({ node: n.name, frame: (top ?? n).name, trigger: i.trigger?.type ?? "?", actions: i.actions?.length ?? 0, worst, level: levelOf(worst, cap) });
+    }
+    for (const c of n.children ?? []) visit(c, top ?? (n.type === "CANVAS" || n.type === "DOCUMENT" ? undefined : n));
+  };
+  for (const r of input.roots) visit(r, undefined);
   return out;
 }
 

@@ -77,6 +77,33 @@ $("c-reset").onclick = () => {
 $<HTMLSelectElement>("tps").onchange = () => {
   if (clockRunning) post({ type: "clock", action: "run", tps: tps() });
 };
+
+// ---------- input byte (memory-mapped at RAM[14], see plugin/src/devices.ts) ----------
+
+const inByte = $<HTMLInputElement>("in-byte");
+function sendInput(value: number) {
+  post({ type: "input", value });
+  $("in-last").textContent = hex(value, 2);
+}
+for (let k = 0; k < 16; k++) {
+  const b = document.createElement("button");
+  b.textContent = hex(k, 1);
+  b.title = `send ${hex(k, 2)}`;
+  b.onclick = () => sendInput(k);
+  $("keypad").appendChild(b);
+}
+function sendTyped() {
+  const t = inByte.value.trim();
+  if (/^[0-9a-f]{1,2}$/i.test(t)) {
+    inByte.style.borderColor = "";
+    sendInput(parseInt(t, 16));
+  } else inByte.style.borderColor = "var(--err)";
+}
+$("in-send").onclick = sendTyped;
+inByte.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendTyped();
+});
+
 src.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && checkAsm()) post({ type: "load", source: src.value });
 });

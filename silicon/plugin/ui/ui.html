@@ -240,6 +240,22 @@
       .flags span.on {
         color: var(--on);
       }
+      .keypad {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 4px;
+        margin-top: 6px;
+      }
+      .keypad button {
+        padding: 4px 0;
+        font: 600 12px var(--mono);
+      }
+      input.byte {
+        width: 44px;
+        padding: 4px 6px;
+        font-family: var(--mono);
+        text-transform: uppercase;
+      }
       .verdict {
         margin-top: 8px;
         font: 12px/1.4 var(--mono);
@@ -355,6 +371,15 @@
       </div>
       <div class="regs" id="regs"></div>
       <div class="flags" id="flags" style="margin-top: 6px"></div>
+      <div class="row" style="margin-top: 10px">
+        <span class="label">input byte @ RAM[14]</span>
+        <span class="grow"></span>
+        <input id="in-byte" class="byte" maxlength="2" placeholder="00" spellcheck="false" />
+        <button id="in-send">Send</button>
+        <span id="in-last" class="pill mono">--</span>
+      </div>
+      <div class="keypad" id="keypad"></div>
+      <div class="hint">The plugin writes the byte into RAM[14] at the next tick (no extra gates); programs read it with <span class="mono">LD Rd, [14]</span>. Try "echo" or "keypad".</div>
     </div>
 
     <div class="card">

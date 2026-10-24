@@ -9,7 +9,9 @@ export type ToMain =
   | { type: "compile"; source: string; flat?: boolean; runDelayMs?: number; maxActionsPerEvent?: number }
   | { type: "load"; source: string }
   | { type: "clock"; action: "step" | "run" | "pause" | "reset"; tps?: number; source?: string }
-  | { type: "verify"; source: string; maxTicks?: number };
+  | { type: "verify"; source: string; maxTicks?: number }
+  /** Input byte (0–255) for the memory-mapped input register RAM[IN_ADDR] (devices.ts). */
+  | { type: "input"; value: number };
 
 export type LogLevel = "info" | "ok" | "error";
 

@@ -24,6 +24,7 @@ import { apply, type ApplyOptions, bindVisible, plan, type PlanOptions, type Pro
 import { loadFonts } from "../../src/prototype/draw";
 import { buildStepFrame, child, dismantleStepFrame, findCell, liftCells, restore, setFlow, STEP_FRAME } from "./canvas";
 import { type ClockSession, PluginClock, type VarRef } from "./clock";
+import { DeviceBus, IN_ADDR } from "./devices";
 import type { BuildStats, CompileStats, DocStatus, LogLevel, ToMain, ToUi } from "./messages";
 import { ensureFrontPanel, findFrontPanel, panelLits } from "./panel";
 import { AsmFailed, assembleOrThrow, powerOnWith, programName, verifyAgainstModel, type VerifyResult } from "./program";
@@ -108,6 +109,8 @@ export class SiliconApp {
   private busy: string | null = null;
   private session: Session | null = null;
   readonly clock: PluginClock;
+  /** Input byte at RAM[IN_ADDR], poked by the plugin clock at the next tick boundary. */
+  readonly devices = new DeviceBus();
   private readonly now: () => number;
   private readonly breathe: () => Promise<void>;
 
@@ -121,7 +124,7 @@ export class SiliconApp {
     this.clock = new PluginClock(
       () => this.clockSession(),
       (status) => this.post({ type: "clock", status }),
-      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`) },
+      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`), devices: this.devices },
     );
   }
 
@@ -151,6 +154,12 @@ export class SiliconApp {
         case "verify":
           await this.task("Verify", () => this.verify(msg.source, msg.maxTicks));
           return;
+        case "input": {
+          this.devices.input(msg.value);
+          const h = msg.value.toString(16).toUpperCase().padStart(2, "0");
+          this.log("info", `input ${h} → RAM[${IN_ADDR}]${this.clock.isRunning ? "" : " (applied at the next Step / Run)"}`);
+          return;
+        }
         case "clock":
           if (msg.action === "pause") {
             this.clock.pause();

@@ -42,3 +42,29 @@ Reset (2,289) and both Run hops (3,863) are single events far past 2,001, so **r
 
 Everything above is tested in Node against a fake Figma API and the Figma action emulator. Not yet seen in the real
 viewer: the chunked Step/Reset hop chain, the MEM lamp bindings, and the plugin clock's write rate.
+
+## Verify the first run from outside
+
+After a teammate runs **Build hardware → Compile** in Figma desktop, read the file back (same REST call as above, the
+silicon page's id) and run `npm run audit -- page.json` (add `--json` for the structured result). It prints one ✓/✗
+line per check and ends with `VERDICT: READY to present` (exit 0) or `VERDICT: REBUILD needed: …` (exit 1):
+
+| Check | Passes when |
+|---|---|
+| gates | the gates under `cell/CPU` equal the code's 2,285, by type |
+| frames / flows | Control, Run A/B, `CPU · Step` exist (+ Reset A/B and Reset A/B (Step) when Reset is chunked); ▶ Present has flows on Control and `CPU · Step` (matched by node, the flow's name does not matter) |
+| Step | each `button/Step` is one click, ≤ cap, no navigation |
+| Run loop | Run → Run A; Run A ⇄ Run B by AFTER_TIMEOUT; both can exit to Control; each hop ≤ cap |
+| Reset on Control / on CPU · Step | the click starts a chain through Reset hop frames of its own flow only, every hop ≤ cap, every hop frame can reach the button's own frame (no cycle without an exit), and nothing exits anywhere else. A single click over the cap = the old unchunked build: rebuild |
+| every event | all reactions in the page ≤ cap |
+| bindings | 2,285 gate `lit` layers bound; every front panel lamp bound, in the component and each instance; the 128 MEM lamps `lamp/ram/row<N>/b<M>/Q` bound (unbound ones are named) |
+| variables | distinct variables bound to lit layers = the code's 2,287 wires, all written by some reaction; control variables are named from how reactions use them |
+
+Event cost: a chunked Step is `now := phase` then K exclusive `if now == k` cases, so one click costs 1 + K + its biggest
+chunk (≤ 394 at cap 400), not the sum of all chunks. The old `worstCase` rule summed them and would have called every
+chunked rebuild a crash; `eventWorst` counts it the way `apply()` budgets it.
+
+A plugin-built file (fake Figma, `test/audit-e2e.test.ts`) audits READY: Step ≤ 394, Run hops ≤ 396, both Reset chains
+return home, 2,295 variables = 2,287 wires + 8 control. Eric's legacy file audits REBUILD (Step 3,861, Reset 2,289, Run hops
+3,863) and also has **no MEM matrix**: Compile reuses an existing `Silicon · Front panel`, so **delete that component
+before Compile** (or the MEM check stays ✗).
