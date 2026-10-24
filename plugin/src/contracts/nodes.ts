@@ -43,7 +43,7 @@ export type IoName = "MOUSE_X" | "MOUSE_Y" | "MOUSE_BTN" | "KEY" | "TICK" | "RAN
 
 // Every node the binder must resolve. Used by bind() to fail loudly with the missing names.
 export function requiredNames(): string[] {
-  const out: string[] = [N.pc, N.sp, N.ir, N.hl, N.clock, N.cycles, N.busAddr, N.busData, N.decoderTable, N.screen];
+  const out: string[] = [N.pc, N.sp, N.ir, N.hl, N.clock, N.cycles, N.busAddr, N.busData, N.decoderTable, N.screen, N.ramBase, N.pinBase];
   REGS.forEach((r) => out.push(N.reg(r)));
   FLAGS.forEach((f) => out.push(N.flag(f)));
   (["FETCH", "DECODE", "EXEC"] as Phase[]).forEach((p) => out.push(N.phase(p)));
