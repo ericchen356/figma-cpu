@@ -209,6 +209,11 @@ export function generate(o: GenOptions = {}): Generated {
     .map((n, i) => `${w(n)}:=${b36(hover.x[i])},T`)
     .join(";");
   const LEAD = hover.x.length;
+  // a hover stores the pointer's column: "pointer/<c>" alone, or before a run (the pen's stroke)
+  const store = (c: number) =>
+    hover.x.map((k, i) => `${b36(k)}:${(c >> i) & 1 ? "T" : "F"}`).join(";");
+  for (let c = 0; c < 1 << hover.x.length; c++)
+    runs.set(`pointer/${c}`, store(c));
   const continued = new Map<string, number>(); // run → its number of events
   const overlays: Array<{ t: string; n: string; w: number; h: number }> = [];
   const then = (run: string, k: number) => `then ${run} ${k}`;
@@ -316,7 +321,8 @@ export function generate(o: GenOptions = {}): Generated {
   const compact = (s: NodeSpec): unknown => {
     uiNodes++;
     if (isCell(s)) {
-      // "pointer/<column>": the cell stores its column in the hover (its row takes the click)
+      // "pointer/<column>" alone: the cell stores its column in the hover (its row takes the click;
+      // a cell that takes its own click, or paints, is an ordinary layer)
       const [c, r = null] = s
         .reactions![0].run.slice("pointer/".length)
         .split(",")
@@ -379,7 +385,11 @@ export function generate(o: GenOptions = {}): Generated {
             TRIG[r.trigger.on],
             r.trigger.on === "key" ? r.trigger.codes : null,
             r.run,
-            r.run.startsWith("click/") ? lead : null,
+            r.run.startsWith("click/")
+              ? lead
+              : r.pointer !== undefined
+                ? store(r.pointer)
+                : null,
           ];
         },
       );

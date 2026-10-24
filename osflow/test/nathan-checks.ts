@@ -198,15 +198,18 @@ export function structureErrors(b: Built): string[] {
       const acts = n.reactions.find(
         (x) => triggerOf(x.trigger) === specTrigger(r),
       )?.actions;
-      if (!r.run.startsWith("pointer/")) {
+      const c = r.run.startsWith("pointer/")
+        ? Number(r.run.slice("pointer/".length))
+        : r.pointer;
+      if (c === undefined) {
         stores(r.run, acts);
         continue;
       }
-      const c = Number(r.run.slice("pointer/".length));
+      // a hover stores the pointer's column, alone or before its run (the pen's stroke)
       same(
         "hover stores",
         JSON.stringify(
-          acts?.map((a) =>
+          acts?.slice(0, hover.length).map((a) =>
             a.type === "SET_VARIABLE"
               ? [name(a.variableId), a.variableValue?.value]
               : a.type,
@@ -214,6 +217,8 @@ export function structureErrors(b: Built): string[] {
         ),
         JSON.stringify(hover.map((v, i) => [name(v), ((c >> i) & 1) === 1])),
       );
+      if (r.pointer !== undefined) stores(r.run, acts?.slice(hover.length));
+      else same("hover actions", acts?.length, hover.length);
     }
     const kids = s.children ?? [];
     if (kids.length !== n.children.length)
@@ -565,15 +570,16 @@ export function session(
       return byKey ? "key" : "button";
     };
     const design = (name: string) => find(editor, "design", `button/${name}`);
-    // a per-slot button is a pick tree of them: the one showing
-    const slotButton = (name: string) => () => click(pickedLeaf(design(name)));
+    // a per-slot control (button, swatch) is a pick tree of them: the one showing
+    const slotLeaf = (n: FakeNode | null) => (n?.children.some((c) => c.name.startsWith("pick/")) ? pickedLeaf(n) : n);
+    const slotButton = (name: string) => () => click(slotLeaf(design(name)));
     switch (ev.k) {
       case "tool":
         return keyOr(TOOL_CODES[ev.t], () =>
           click(find(editor, "toolbar", `tool/${TOOL_NAMES[ev.t]}`)),
         );
       case "fill":
-        click(find(editor, "design", `color/${ev.c}`));
+        click(slotLeaf(find(editor, "design", `color/${ev.c}`)));
         return "";
       case "select":
         click(find(editor, "layers", `row/${ev.slot}`));
@@ -590,19 +596,29 @@ export function session(
           throw new Error(
             `the click layers showing are ${sets.map((s) => s.name).join(", ") || "none"}, expected ${want}`,
           );
-        const row = find(sets[0], `row/${ev.y}`)!;
+        // a per-slot set (the drop) is a pick tree of copies: the one showing
+        const slots = find(sets[0], "slots");
+        const holder = slots ? pickedLeaf(slots) : sets[0];
+        if (!holder) throw new Error(`${want}: no single slot copy shows`);
+        const row = find(holder, `row/${ev.y}`)!;
         const cell = find(row, `cell/${ev.x}`)!;
-        // a cell holds only its hover, so a click on it goes to its row
+        // a per-cell set (the pick-up) has the cell take the click, its column built in; in a
+        // per-row set a cell holds only its hover, so a click on it goes to its row
+        const own = cell.reactions.some(
+          (r) => triggerOf(r.trigger) === "ON_CLICK",
+        );
         if (
+          !own &&
           cell.reactions.map((r) => triggerOf(r.trigger)).join() !==
-          "MOUSE_ENTER"
+            "MOUSE_ENTER"
         )
           throw new Error(`${cell.name} holds more than a MOUSE_ENTER`);
         // the pointer enters a cell only when it moves to another one: the hover column stays
+        // (also across a change of the set showing, as after a pick-up)
         if (at?.x === ev.x && at.y === ev.y) repeats++;
         else fire(one(cell, "MOUSE_ENTER"));
         at = { x: ev.x, y: ev.y };
-        fire(one(row, "ON_CLICK"));
+        fire(one(own ? cell : row, "ON_CLICK"));
         return "";
       }
       case "handle": {
@@ -633,9 +649,7 @@ export function session(
       case "back":
         return keyOr(219, slotButton("backward"));
       case "nudge":
-        return keyOr(ARROW_CODES[ev.dir], () =>
-          click(design(ARROW_BUTTONS[ev.dir])),
-        );
+        return keyOr(ARROW_CODES[ev.dir], slotButton(ARROW_BUTTONS[ev.dir]));
       case "esc":
         press(27);
         return "";
