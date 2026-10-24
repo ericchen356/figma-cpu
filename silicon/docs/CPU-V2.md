@@ -99,6 +99,9 @@ Instruction byte unchanged: `[7:4] opcode · [3:2] Rd · [1:0] Rs`; LDI / LD / S
 Memory-mapped IO at the top of memory, so no opcode is spent on IO: **OUT = top** (as now), **IN = top − 1**, **BANK =
 top − 2** (only with 8 registers). At 64 bytes: OUT 63, IN 62, stack starts at 61 and grows down.
 
+> v1 has since gained pointers: `0xA LDR Rd,[Rs]` (was NOT) and `0xE STR Rs,[Rd]` (was JN), see
+> [POINTERS.md](POINTERS.md). The table below compares against the v1 from before that change.
+
 What changes against `src/isa/spec.ts`, explicitly:
 
 | v1 | v2 | Why |
