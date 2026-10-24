@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #141414; --card: #1b1b1b; --cell: #262626; --line: #2e2e2e;
+    --text: #e8e8e8; --dim: #8c8c8c; --on: #f5c542; --active: #2bd67b; --amber: #f59e0b; --bad: #ff5a5a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.4 Inter, system-ui, sans-serif; }
+  .mono, textarea, select, input { font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, monospace; }
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; }
+  .pill { padding: 2px 8px; border-radius: 999px; background: var(--cell); color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .pill.ok { color: var(--active); }
+  .pill.bad { color: var(--bad); }
+  .caption { font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--dim); text-transform: uppercase; margin: 12px 0 6px; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  select, input { background: var(--cell); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  textarea { width: 100%; height: 150px; resize: vertical; background: var(--cell); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; tab-size: 8; }
+  button { background: var(--cell); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  button:hover { border-color: #444; }
+  button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+  button.active { border-color: var(--active); color: var(--active); }
+  #asm div { font-size: 11px; margin-top: 4px; }
+  .ok { color: var(--active); } .err { color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  #regs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 8px; }
+  .reg { background: var(--cell); border-radius: 6px; padding: 4px 6px; }
+  .reg .label { color: var(--dim); font-size: 10px; display: block; }
+  .reg b { font: 600 16px "JetBrains Mono", ui-monospace, monospace; }
+  #flags span { display: inline-block; width: 22px; text-align: center; margin-right: 4px; border-radius: 4px; background: var(--cell); color: var(--dim); }
+  #flags span.on { color: var(--bg); background: var(--on); }
+  #sigs { color: var(--amber); min-height: 32px; word-break: break-word; }
+  .screen-wrap { position: relative; }
+  #screen { width: 100%; image-rendering: pixelated; background: #000; border-radius: 6px; display: block; outline: none; cursor: crosshair; touch-action: none; }
+  #screen:focus { box-shadow: 0 0 0 1px var(--active); }
+  #cursor { position: absolute; display: none; border: 1px solid var(--active); pointer-events: none; }
+  #cursor.down { background: rgba(43, 214, 123, .35); }
+  #fatal { display: none; color: var(--bad); white-space: pre-wrap; margin-top: 10px; }
+  .hint, #diag { color: var(--dim); font-size: 11px; }
+  input[type=range] { padding: 0; flex: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Leila CPU</h1>
+    <span id="table" class="pill">table: —</span>
+    <span id="state" class="pill">loading</span>
+  </header>
+
+  <div class="row">
+    <select id="program"></select>
+    <button id="loadrun" class="primary">▶ Load &amp; run</button>
+    <button id="load" title="Ctrl+Enter">Assemble &amp; load</button>
+    <button id="reset">Reset</button>
+  </div>
+  <div id="hint" class="hint" style="margin-top:6px"></div>
+  <div class="caption">Program · assembled with the opcode table on the canvas</div>
+  <textarea id="src" spellcheck="false"></textarea>
+  <div id="asm"></div>
+
+  <div class="caption">Clock</div>
+  <div class="row">
+    <button id="stept">Step T-state</button>
+    <button id="stepi">Step instr</button>
+    <button id="watch">▶ Watch</button>
+    <button id="turbo">⏩ Turbo</button>
+    <button id="pause">Pause</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="hint">Watch speed</span>
+    <input id="hz" type="range" min="1" max="30" value="4" />
+    <span id="hzv" class="mono">4 Hz</span>
+    <span class="hint" style="margin-left:8px">Pinned RAM</span>
+    <input id="pin" value="4000" size="5" class="mono" />
+  </div>
+
+  <div class="caption">Screen · draw here with the mouse · click it, then type to send KEY</div>
+  <div class="screen-wrap">
+    <canvas id="screen" tabindex="0"></canvas>
+    <div id="cursor"></div>
+  </div>
+  <div id="diag" class="mono" style="margin-top:6px"></div>
+
+  <div class="caption">Machine</div>
+  <div class="card">
+    <div id="pc" class="mono">—</div>
+    <div id="regs"></div>
+    <div class="row" style="margin-top:8px; justify-content: space-between">
+      <div id="flags"></div>
+      <div id="counts" class="mono hint"></div>
+    </div>
+    <div id="sigs" class="mono" style="margin-top:6px">—</div>
+  </div>
+
+  <div id="fatal"></div>
+  <!-- SCRIPT -->
+</body>
+</html>
