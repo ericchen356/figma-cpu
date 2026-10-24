@@ -187,3 +187,52 @@ cd plugin && npm install && npm test
 - `bounce.asm` paints a 128×96 background first. That's about 50k instructions before frame 1, so tests and Watch mode need patience there (use Turbo).
 - TypeScript 7 no longer auto-includes `@types`/`@figma` type roots, so `tsconfig.json` lists `"types": ["@figma/plugin-typings", "node"]` explicitly.
 - `npm install` warns that esbuild's postinstall script is not in `allowScripts`. The binary still resolves through its optional dependency, so the build works anyway.
+
+---
+
+## Stage 4 — The runner plugin: canvas as "physics" (tag: `stage-4`)
+
+**Goal:** a Figma plugin that binds to the drawn machine and reads the opcode table **off the canvas**. It runs programs in Watch mode (every FETCH / DECODE / EXEC phase animated) or Turbo mode (flat out, synced once per frame), and draws VRAM onto the screen node.
+
+**Inputs:** the Machine v2 page (Stage 2) and the core (Stage 3).
+
+**Figma work:** none drawn. This stage drives what Stage 2 drew.
+
+**Code:**
+
+- [`plugin/src/binder.ts`](plugin/src/binder.ts): finds every PRD §4.2 name inside the `Machine v2` frame and reports missing ones by name. It loads fonts and reads `cpu/decoder/table → row/* → op | mnem | fmt | micro`.
+- [`plugin/src/render.ts`](plugin/src/render.ts): diffed writes, so only changed text, fills and strokes touch the document.
+  - Highlights: the active register gets a green outline, the bus wires turn orange, the decoder row and ALU light up, and RAM cells are tinted for read / write / PC.
+  - The RAM window follows PC.
+- [`plugin/src/screen.ts`](plugin/src/screen.ts):
+  1. VRAM goes to the UI.
+  2. The UI draws it with a nearest-neighbor 6× upscale and encodes a PNG.
+  3. `figma.createImage` turns that into the `dev/screen` image fill.
+
+  Only one PNG is in flight at a time, and Turbo sends at most ~7 per second.
+
+- [`plugin/src/persist.ts`](plugin/src/persist.ts): machine state is saved into the file's `pluginData` (as base64 runs of non-zero memory), so **the Figma file holds the computer's state**.
+- [`plugin/src/main.ts`](plugin/src/main.ts):
+  - the Watch/Turbo clock loop;
+  - `TICK` at about 30 Hz;
+  - re-reads the opcode table on every Assemble.
+  - **Live rewiring:** `page.on("nodechange")` watches the table's text layers and reloads the table 250 ms after you edit a cell, even mid-run.
+- [`plugin/ui/`](plugin/ui/): program picker, editor (⌘↵ assembles), Step / Run / Reset, Watch ↔ Turbo, speed slider, register readout, a clickable/typeable 128×96 preview (mouse and keys go to IO), palette swatches, and the pinned-window address.
+- [`plugin/build.mjs`](plugin/build.mjs): esbuild bundles `dist/code.js` and inlines the UI into `dist/ui.html`. `.asm` files are bundled as text.
+
+**Reproduce:**
+
+```bash
+git checkout stage-4
+cd plugin && npm install && npm run build
+```
+
+Then in Figma desktop: Plugins → Development → Import plugin from manifest → `plugin/manifest.json` → run **FigmaCPU**.
+
+**Verify:** `npm run typecheck` and `npm run build` are clean. In Figma the panel says _"Opcode table read from canvas: 29 instructions."_
+
+**Gotchas:**
+
+- The plugin uses `documentAccess: "dynamic-page"`, so pages must be loaded with `page.loadAsync()`. `figma.on("documentchange")` would need `loadAllPagesAsync`; `PageNode.on("nodechange")` doesn't.
+- Our own fill/stroke writes also fire `nodechange`. The handler only reacts to `characters` or `name` changes on table text layers (and to created or deleted rows), so a running CPU doesn't keep reloading its own table.
+- Figma smooths scaled image fills, which would blur pixel art. The PNG is upscaled 6× (768×576, exactly the `dev/screen` size) before it reaches Figma.

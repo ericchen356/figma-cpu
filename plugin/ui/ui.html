@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg: #141414;
+        --panel: #1e1e1e;
+        --cell: #262626;
+        --line: #2e2e2e;
+        --text: #e8e8e8;
+        --dim: #8c8c8c;
+        --green: #2bd67b;
+        --yellow: #f5c542;
+        --red: #ff5c5c;
+        --mono: "Roboto Mono", ui-monospace, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          12px/1.4 Inter,
+          system-ui,
+          sans-serif;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        margin-top: 10px;
+      }
+      .label {
+        color: var(--dim);
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+        color: var(--text);
+        background: var(--cell);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 6px 10px;
+      }
+      button {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover {
+        border-color: #555;
+      }
+      button.primary {
+        background: var(--green);
+        border-color: var(--green);
+        color: #0b2a19;
+      }
+      button.on {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      textarea {
+        width: 100%;
+        height: 230px;
+        margin-top: 8px;
+        resize: vertical;
+        background: #111;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+        font: 12px/1.45 var(--mono);
+        tab-size: 8;
+      }
+      #status {
+        font-family: var(--mono);
+        color: var(--dim);
+      }
+      #status.ok {
+        color: var(--green);
+      }
+      #status.bad {
+        color: var(--red);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 4px;
+        margin-top: 8px;
+      }
+      .reg {
+        background: var(--cell);
+        border-radius: 6px;
+        padding: 4px 6px;
+      }
+      .reg b {
+        display: block;
+        color: var(--dim);
+        font-size: 10px;
+      }
+      .reg span {
+        font: 600 14px var(--mono);
+      }
+      .flag {
+        color: var(--dim);
+      }
+      .flag.on {
+        color: var(--green);
+      }
+      canvas#screen {
+        display: block;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        margin-top: 8px;
+        background: #000;
+        border-radius: 6px;
+        image-rendering: pixelated;
+        cursor: crosshair;
+        outline: none;
+      }
+      canvas#screen:focus {
+        box-shadow: 0 0 0 2px var(--green);
+      }
+      #palette {
+        display: grid;
+        grid-template-columns: repeat(16, 1fr);
+        gap: 3px;
+        margin-top: 6px;
+      }
+      #palette div {
+        height: 16px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      #messages {
+        font: 11px/1.5 var(--mono);
+        white-space: pre-wrap;
+        color: var(--dim);
+        max-height: 120px;
+        overflow: auto;
+      }
+      #messages .err {
+        color: var(--red);
+      }
+      #messages .ok {
+        color: var(--green);
+      }
+      input[type="range"] {
+        flex: 1;
+        padding: 0;
+      }
+      #pin {
+        width: 70px;
+        font-family: var(--mono);
+      }
+      #fatal {
+        display: none;
+        color: var(--red);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row between">
+      <h1>FigmaCPU v2</h1>
+      <span id="status">booting…</span>
+    </div>
+
+    <div id="fatal" class="panel"></div>
+
+    <div class="panel">
+      <div class="row between">
+        <span class="label">Program</span>
+        <div class="row">
+          <select id="programs"></select>
+          <button id="example">Open</button>
+        </div>
+      </div>
+      <textarea id="editor" spellcheck="false"></textarea>
+      <div class="row" style="margin-top: 8px">
+        <button id="assemble" class="primary">Assemble &amp; Load</button>
+        <span id="asm" style="color: var(--dim)"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <button id="step">Step</button>
+        <button id="run">Run ▶</button>
+        <button id="reset">Reset</button>
+        <span style="flex: 1"></span>
+        <button id="watch" class="on">Watch</button>
+        <button id="turbo">Turbo</button>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <span class="label">Watch speed</span>
+        <input id="hz" type="range" min="1" max="20" value="4" />
+        <span id="hzv" style="font-family: var(--mono); width: 42px">4 Hz</span>
+      </div>
+      <div class="grid" id="regs"></div>
+      <div
+        class="row between"
+        style="margin-top: 6px; font-family: var(--mono)"
+      >
+        <span
+          ><span class="flag" id="fZ">Z</span>
+          <span class="flag" id="fC">C</span>
+          <span class="flag" id="fN">N</span></span
+        >
+        <span id="cycles" style="color: var(--dim)">0 cycles</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row between">
+        <span class="label">Screen 128×96 · click, drag, type</span>
+        <button id="focus">Show machine</button>
+      </div>
+      <canvas id="screen" width="384" height="288" tabindex="0"></canvas>
+      <div id="palette"></div>
+      <div class="row" style="margin-top: 8px">
+        <span class="label">Pinned RAM window @</span>
+        <input id="pin" value="4000" />
+        <button id="reloadTable">Re-read opcode table</button>
+      </div>
+    </div>
+
+    <div class="panel" id="messages"></div>
+    <!-- SCRIPT -->
+  </body>
+</html>
