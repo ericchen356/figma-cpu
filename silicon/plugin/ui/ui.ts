@@ -238,10 +238,14 @@ function showStatus(s: DocStatus) {
   $("s-page").textContent = s.page ? `on: ${s.page}` : "Nothing built yet. Start with Build hardware.";
 }
 
+/** The task whose progress bar is mid-way, so an error can mark it failed instead of leaving it stuck. */
+let activeProgress: string | null = null;
+
 function progress(task: string, done: number, total: number, label: string) {
   const bar = $(`${task}-bar`);
   const text = $(`${task}-prog`);
   if (!bar || !text) return;
+  activeProgress = done >= total ? null : task;
   bar.style.width = `${total ? Math.round((100 * done) / total) : 0}%`;
   text.textContent = done >= total ? "done" : `${done}/${total} · ${label}`;
 }
@@ -279,6 +283,11 @@ window.onmessage = (e: MessageEvent) => {
       return;
     case "log":
       log(m.text, m.level === "error" ? "err" : m.level === "ok" ? "ok" : "");
+      if (m.level === "error" && activeProgress) {
+        const text = $(`${activeProgress}-prog`);
+        if (text) text.textContent = "✗ failed (see the log below)";
+        activeProgress = null;
+      }
       return;
     case "busy": {
       const b = $("busy");

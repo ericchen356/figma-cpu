@@ -82,7 +82,8 @@ export function digitsIncrement(digitIds: string[], textIds: string[], i = 0): A
 export const onClick = (): Trigger => ({ type: "ON_CLICK" });
 export const mouseDown = (delay = 0): Trigger => ({ type: "MOUSE_DOWN", delay });
 export const mouseUp = (delay = 0): Trigger => ({ type: "MOUSE_UP", delay });
-export const mouseEnter = (delay = 0): Trigger => ({ type: "MOUSE_ENTER", delay, deprecatedVersion: false });
+// The typings require `deprecatedVersion`, but real Figma rejects it ("Unrecognized key: deprecatedVersion").
+export const mouseEnter = (delay = 0): Trigger => ({ type: "MOUSE_ENTER", delay }) as Trigger;
 /** Key codes are JS keyCodes (Space 32, A–Z 65–90). */
 export const keyDown = (keyCodes: number[]): Trigger => ({ type: "ON_KEY_DOWN", device: "KEYBOARD", keyCodes });
 /** `timeout` in milliseconds (developers.figma.com: "stored in milliseconds"). */

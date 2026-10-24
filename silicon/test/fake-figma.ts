@@ -414,17 +414,32 @@ export class FakeNode {
   /** Like Figma: validates the actions' variables and destinations, then stores a copy. */
   async setReactionsAsync(reactions: Reaction[]) {
     if (this.inInstance) throw new Error("setReactionsAsync on a layer inside an instance is not supported by the fake");
-    for (const r of reactions) {
+    // Keys real Figma accepts per trigger type; anything else fails validation there ("Unrecognized key").
+    const TRIGGER_KEYS: Record<string, string[]> = {
+      ON_CLICK: ["type"], ON_HOVER: ["type"], ON_PRESS: ["type"], ON_DRAG: ["type"],
+      AFTER_TIMEOUT: ["type", "timeout"],
+      MOUSE_UP: ["type", "delay"], MOUSE_DOWN: ["type", "delay"], MOUSE_ENTER: ["type", "delay"], MOUSE_LEAVE: ["type", "delay"],
+      ON_KEY_DOWN: ["type", "device", "keyCodes"], ON_MEDIA_HIT: ["type", "mediaHitTime"], ON_MEDIA_END: ["type"],
+    };
+    for (const [i, r] of reactions.entries()) {
+      const t = r.trigger as unknown as Record<string, unknown> | null;
+      if (t) {
+        const allowed = TRIGGER_KEYS[String(t.type)];
+        if (!allowed) throw new Error(`in setReactionsAsync: unknown trigger type ${String(t.type)}`);
+        for (const k of Object.keys(t)) if (!allowed.includes(k)) throw new Error(`in setReactionsAsync: Property "reactions" failed validation: Unrecognized key: "${k}" at [${i}].trigger`);
+      }
       if (r.trigger?.type === "AFTER_TIMEOUT" && this.parent?.type !== "PAGE") throw new Error("AFTER_TIMEOUT only works on top-level frames");
-      const check = (acts: readonly Action[]) => {
+      const check = (acts: readonly Action[], inBlock = false) => {
         for (const a of acts) {
+          // Real Figma rejects a CONDITIONAL inside another conditional's block.
+          if (inBlock && a.type === "CONDITIONAL") throw new Error('in setReactionsAsync: Unrecognized key "conditionalBlocks" (nested CONDITIONAL)');
           if (a.type === "SET_VARIABLE" && !this.api.variableById.has(a.variableId!)) throw new Error(`SET_VARIABLE on unknown variable ${a.variableId}`);
           if (a.type === "NODE") {
             const dest = this.api.nodeById(a.destinationId!);
             if (!dest) throw new Error(`navigate to unknown node ${a.destinationId}`);
             if (dest.parent?.type !== "PAGE") throw new Error(`navigate to ${dest.name}, which is not a top-level frame`);
           }
-          if (a.type === "CONDITIONAL") for (const b of a.conditionalBlocks) check(b.actions);
+          if (a.type === "CONDITIONAL") for (const b of a.conditionalBlocks) check(b.actions, true);
         }
       };
       check(r.actions ?? []);
