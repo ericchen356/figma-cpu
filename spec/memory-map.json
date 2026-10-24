@@ -1,0 +1,14 @@
+{
+  "program": { "start": "0x0000", "end": "0x3FFF" },
+  "ram": { "start": "0x4000", "end": "0x7EFF" },
+  "stackTop": "0x7F00",
+  "vram": { "start": "0x8000", "end": "0xAFFF", "width": 128, "height": 96 },
+  "io": {
+    "MOUSE_X": "0xF000",
+    "MOUSE_Y": "0xF001",
+    "MOUSE_BTN": "0xF002",
+    "KEY": "0xF003",
+    "TICK": "0xF004",
+    "RAND": "0xF005"
+  }
+}

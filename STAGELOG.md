@@ -36,3 +36,46 @@ An 8-bit CPU built inside Figma, one reproducible stage at a time.
 
 - Prototype variables can _hold_ CPU state, but executing anything needs a conditional branch for every opcode × memory slot. That stops scaling at about 16 words, and the v1 interactions were never wired.
 - That limit is the reason for v2: keep the CPU's **logic on the canvas** (as a micro-op table) and move only the "physics" into a plugin.
+
+---
+
+## Stage 1 — One spec to rule them all   (tag: `stage-1`)
+
+**Goal:** a single machine-readable definition of the ISA, palette and memory map. The canvas drawing, the assembler and the tests are all generated from or checked against it.
+
+**Inputs:** PRD §6 (ISA) and §8 (memory map).
+
+**Figma work:** none. This stage feeds Stage 2.
+
+**Prompts used:** *"start drawing the entire cpu out try to one shot the PRD. CREATE A PLAN TO ONESHOT THE PRD CPU SPECS"* → the approved plan locked the open questions:
+- palette = PICO-8;
+- v2 goes on a new page;
+- registers are encoded as `rd<<4 | rs`;
+- a fixed micro-op vocabulary.
+
+**Code:**
+- [`spec/opcodes.json`](spec/opcodes.json): 29 opcodes, each with `op | mnem | fmt | micro`.
+- [`spec/palette.json`](spec/palette.json)
+- [`spec/memory-map.json`](spec/memory-map.json)
+
+**Micro-op vocabulary** (the only behavior written in code; everything else is data on the canvas):
+
+| micro-op | meaning |
+|---|---|
+| `REG` | read the register byte: `rd = b>>4`, `rs = b&15` |
+| `IMM8` / `IMM16` | read an immediate into `T` / `W` (little-endian) |
+| `SET r T` · `COPY r r` | register writes |
+| `LOAD r HL\|W` · `STORE r HL\|W` | memory access |
+| `SETHL W` · `INCHL` | the H:L pointer |
+| `ALU op r [r]` | ADD SUB AND OR XOR CMP INC DEC SHL SHR |
+| `JUMP W [Z\|NZ\|C\|NC\|N\|NN]` | control flow |
+| `PUSH r` · `POP r` · `PUSHPC` · `POPPC` | stack |
+| `HALT` | stop |
+
+FETCH (`IR ← mem[PC]; PC++`) runs before every instruction.
+
+**Reproduce:** `git checkout stage-1 && cat spec/opcodes.json`
+
+**Verify:** `node -e "console.log(require('./spec/opcodes.json').opcodes.length)"` prints `29`.
+
+**Gotchas:** register operands are packed into one byte, so every register instruction has a fixed size. That keeps the two-pass assembler trivial.

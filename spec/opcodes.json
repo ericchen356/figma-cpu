@@ -1,0 +1,63 @@
+{
+  "registers": ["A", "B", "C", "D", "H", "L"],
+  "formats": {
+    "-": "no operands",
+    "r": "1 byte: rd<<4",
+    "r,r": "1 byte: rd<<4 | rs",
+    "r,i8": "1 byte reg (rd<<4), 1 byte immediate",
+    "r,a16": "1 byte reg (rd<<4), 2 bytes address (little-endian)",
+    "i16": "2 bytes immediate (little-endian)",
+    "a16": "2 bytes address (little-endian)"
+  },
+  "opcodes": [
+    { "op": "00", "mnem": "NOP", "fmt": "-", "micro": "" },
+    { "op": "01", "mnem": "HLT", "fmt": "-", "micro": "HALT" },
+    {
+      "op": "10",
+      "mnem": "LDI",
+      "fmt": "r,i8",
+      "micro": "REG; IMM8; SET rd T"
+    },
+    { "op": "11", "mnem": "MOV", "fmt": "r,r", "micro": "REG; COPY rd rs" },
+    { "op": "12", "mnem": "LD", "fmt": "r", "micro": "REG; LOAD rd HL" },
+    { "op": "13", "mnem": "ST", "fmt": "r", "micro": "REG; STORE rd HL" },
+    {
+      "op": "14",
+      "mnem": "LDA",
+      "fmt": "r,a16",
+      "micro": "REG; IMM16; LOAD rd W"
+    },
+    {
+      "op": "15",
+      "mnem": "STA",
+      "fmt": "r,a16",
+      "micro": "REG; IMM16; STORE rd W"
+    },
+    { "op": "16", "mnem": "LHL", "fmt": "i16", "micro": "IMM16; SETHL W" },
+    { "op": "20", "mnem": "ADD", "fmt": "r,r", "micro": "REG; ALU ADD rd rs" },
+    { "op": "21", "mnem": "SUB", "fmt": "r,r", "micro": "REG; ALU SUB rd rs" },
+    { "op": "22", "mnem": "AND", "fmt": "r,r", "micro": "REG; ALU AND rd rs" },
+    { "op": "23", "mnem": "OR", "fmt": "r,r", "micro": "REG; ALU OR rd rs" },
+    { "op": "24", "mnem": "XOR", "fmt": "r,r", "micro": "REG; ALU XOR rd rs" },
+    { "op": "25", "mnem": "CMP", "fmt": "r,r", "micro": "REG; ALU CMP rd rs" },
+    { "op": "26", "mnem": "INC", "fmt": "r", "micro": "REG; ALU INC rd" },
+    { "op": "27", "mnem": "DEC", "fmt": "r", "micro": "REG; ALU DEC rd" },
+    { "op": "28", "mnem": "SHL", "fmt": "r", "micro": "REG; ALU SHL rd" },
+    { "op": "29", "mnem": "SHR", "fmt": "r", "micro": "REG; ALU SHR rd" },
+    { "op": "2A", "mnem": "INHL", "fmt": "-", "micro": "INCHL" },
+    { "op": "30", "mnem": "JMP", "fmt": "a16", "micro": "IMM16; JUMP W" },
+    { "op": "31", "mnem": "JZ", "fmt": "a16", "micro": "IMM16; JUMP W Z" },
+    { "op": "32", "mnem": "JNZ", "fmt": "a16", "micro": "IMM16; JUMP W NZ" },
+    { "op": "33", "mnem": "JC", "fmt": "a16", "micro": "IMM16; JUMP W C" },
+    { "op": "34", "mnem": "JNC", "fmt": "a16", "micro": "IMM16; JUMP W NC" },
+    {
+      "op": "35",
+      "mnem": "CALL",
+      "fmt": "a16",
+      "micro": "IMM16; PUSHPC; JUMP W"
+    },
+    { "op": "36", "mnem": "RET", "fmt": "-", "micro": "POPPC" },
+    { "op": "40", "mnem": "PUSH", "fmt": "r", "micro": "REG; PUSH rd" },
+    { "op": "41", "mnem": "POP", "fmt": "r", "micro": "REG; POP rd" }
+  ]
+}
