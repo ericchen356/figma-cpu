@@ -1,0 +1,272 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg: #141414;
+        --card: #1e1e1e;
+        --cell: #262626;
+        --stroke: #2e2e2e;
+        --text: #e8e8e8;
+        --dim: #8c8c8c;
+        --on: #f5c542;
+        --active: #2bd67b;
+        --bus: #f59e0b;
+        --err: #ff5a5f;
+        --mono: "Roboto Mono", ui-monospace, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--text);
+        font: 12px/1.4 Inter, system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 10px;
+        padding: 10px;
+        margin-top: 10px;
+      }
+      .label {
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .pill {
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: var(--cell);
+        color: var(--dim);
+      }
+      .pill.ok {
+        color: var(--active);
+      }
+      .pill.bad {
+        color: var(--err);
+      }
+      select,
+      input,
+      textarea,
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--cell);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+      }
+      select,
+      input {
+        padding: 4px 6px;
+      }
+      textarea {
+        width: 100%;
+        height: 210px;
+        margin-top: 8px;
+        padding: 8px;
+        font: 12px/1.45 var(--mono);
+        resize: vertical;
+        tab-size: 8;
+        white-space: pre;
+      }
+      button {
+        padding: 6px 10px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover {
+        border-color: var(--dim);
+      }
+      button.primary {
+        background: var(--active);
+        color: #0b1a12;
+        border-color: var(--active);
+      }
+      button.run {
+        border-color: var(--active);
+        color: var(--active);
+      }
+      button.turbo {
+        border-color: var(--bus);
+        color: var(--bus);
+      }
+      button.active {
+        background: var(--active);
+        color: #0b1a12;
+      }
+      .grow {
+        flex: 1;
+      }
+      .msgs {
+        margin-top: 6px;
+        font: 11px/1.4 var(--mono);
+        color: var(--dim);
+        max-height: 72px;
+        overflow: auto;
+      }
+      .msgs .err {
+        color: var(--err);
+      }
+      .msgs .ok {
+        color: var(--active);
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .regs {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .reg {
+        background: var(--cell);
+        border-radius: 6px;
+        padding: 4px 6px;
+      }
+      .reg b {
+        display: block;
+        font: 600 16px var(--mono);
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      .flags span {
+        margin-right: 6px;
+        color: var(--dim);
+      }
+      .flags span.on {
+        color: var(--on);
+      }
+      .sigs {
+        font: 11px/1.5 var(--mono);
+        color: var(--bus);
+        min-height: 17px;
+      }
+      canvas#screen {
+        display: block;
+        width: 384px;
+        height: 288px;
+        margin: 8px auto 0;
+        image-rendering: pixelated;
+        border-radius: 4px;
+        border: 1px solid var(--stroke);
+        background: #000;
+        cursor: crosshair;
+        outline: none;
+      }
+      canvas#screen:focus {
+        border-color: var(--active);
+      }
+      .screenwrap {
+        position: relative;
+      }
+      #cursor {
+        display: none;
+        position: absolute;
+        pointer-events: none;
+        border: 1px solid var(--bus);
+        box-sizing: border-box;
+      }
+      #cursor.down {
+        background: rgba(245, 158, 11, 0.5);
+      }
+      .hint {
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 6px;
+      }
+      #fatal {
+        display: none;
+        color: var(--err);
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row between">
+      <h1>FigmaCPU</h1>
+      <span id="table" class="pill">reading table…</span>
+    </div>
+    <div id="fatal" class="card"></div>
+
+    <div class="card">
+      <div class="row">
+        <span class="label">Program</span>
+        <select id="program" class="grow"></select>
+        <button id="load" class="primary">Assemble &amp; load</button>
+      </div>
+      <textarea id="src" spellcheck="false"></textarea>
+      <div id="asm" class="msgs"></div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <button id="reset">⟲ Reset</button>
+        <button id="stept">Step T-state</button>
+        <button id="stepi">Step instr</button>
+        <button id="watch" class="run">▶ Watch</button>
+        <button id="turbo" class="turbo">⏩ Turbo</button>
+        <button id="pause">⏸ Pause</button>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <span class="label">Watch speed</span>
+        <input id="hz" type="range" min="1" max="30" value="4" class="grow" />
+        <span id="hzv" class="mono">4 Hz</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <span class="mono" id="pc">PC 0000 · IR 00 NOP</span>
+        <span id="state" class="pill">idle</span>
+      </div>
+      <div class="regs" id="regs"></div>
+      <div class="row between" style="margin-top: 8px">
+        <span class="flags" id="flags"></span>
+        <span class="mono" id="counts"></span>
+      </div>
+      <div class="label" style="margin-top: 8px">Control signals this T-state</div>
+      <div class="sigs" id="sigs">—</div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <span class="label">Screen · click to focus, then mouse &amp; keys go to IO</span>
+        <span class="row"><span class="label">Pin</span><input id="pin" class="mono" size="5" value="4000" /></span>
+      </div>
+      <div class="screenwrap">
+        <canvas id="screen" width="128" height="96" tabindex="0"></canvas>
+        <div id="cursor"></div>
+      </div>
+      <div class="hint mono" id="diag">IO mouse — · screen frames —</div>
+      <div class="hint">
+        The canvas in Figma is the real machine; this panel is just the clock and the keyboard. Edit a micro-op in the
+        DECODER table and the CPU changes immediately.
+      </div>
+    </div>
+    <!-- SCRIPT -->
+  </body>
+</html>
