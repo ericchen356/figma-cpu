@@ -1,0 +1,780 @@
+{
+ "name": "cpu/decoder/table",
+ "type": "FRAME",
+ "children": [
+  {
+   "name": "header",
+   "type": "TEXT",
+   "characters": "OP"
+  },
+  {
+   "name": "header",
+   "type": "TEXT",
+   "characters": "MNEM"
+  },
+  {
+   "name": "header",
+   "type": "TEXT",
+   "characters": "FMT"
+  },
+  {
+   "name": "header",
+   "type": "TEXT",
+   "characters": "MICRO-OPS"
+  },
+  {
+   "name": "row/00",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "00"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "NOP"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "-"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "\u2014"
+    }
+   ]
+  },
+  {
+   "name": "row/01",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "01"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "HLT"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "-"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "HALT"
+    }
+   ]
+  },
+  {
+   "name": "row/10",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "10"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "LDI"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,i8"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; IMM8; SET rd T"
+    }
+   ]
+  },
+  {
+   "name": "row/11",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "11"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "MOV"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; COPY rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/12",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "12"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "LD"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; LOAD rd HL"
+    }
+   ]
+  },
+  {
+   "name": "row/13",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "13"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "ST"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; STORE rd HL"
+    }
+   ]
+  },
+  {
+   "name": "row/14",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "14"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "LDA"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; IMM16; LOAD rd W"
+    }
+   ]
+  },
+  {
+   "name": "row/15",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "15"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "STA"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; IMM16; STORE rd W"
+    }
+   ]
+  },
+  {
+   "name": "row/16",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "16"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "LHL"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "i16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; SETHL W"
+    }
+   ]
+  },
+  {
+   "name": "row/20",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "20"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "ADD"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU ADD rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/21",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "21"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "SUB"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU SUB rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/22",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "22"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "AND"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU AND rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/23",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "23"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "OR"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU OR rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/24",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "24"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "XOR"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU XOR rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/25",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "25"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "CMP"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r,r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU CMP rd rs"
+    }
+   ]
+  },
+  {
+   "name": "row/26",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "26"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "INC"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU INC rd"
+    }
+   ]
+  },
+  {
+   "name": "row/27",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "27"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "DEC"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU DEC rd"
+    }
+   ]
+  },
+  {
+   "name": "row/28",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "28"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "SHL"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU SHL rd"
+    }
+   ]
+  },
+  {
+   "name": "row/29",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "29"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "SHR"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; ALU SHR rd"
+    }
+   ]
+  },
+  {
+   "name": "row/2A",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "2A"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "INHL"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "-"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "INCHL"
+    }
+   ]
+  },
+  {
+   "name": "row/30",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "30"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "JMP"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; JUMP W"
+    }
+   ]
+  },
+  {
+   "name": "row/31",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "31"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "JZ"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; JUMP W Z"
+    }
+   ]
+  },
+  {
+   "name": "row/32",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "32"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "JNZ"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; JUMP W NZ"
+    }
+   ]
+  },
+  {
+   "name": "row/33",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "33"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "JC"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; JUMP W C"
+    }
+   ]
+  },
+  {
+   "name": "row/34",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "34"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "JNC"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; JUMP W NC"
+    }
+   ]
+  },
+  {
+   "name": "row/35",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "35"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "CALL"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "a16"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "IMM16; PUSHPC; JUMP W"
+    }
+   ]
+  },
+  {
+   "name": "row/36",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "36"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "RET"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "-"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "POPPC"
+    }
+   ]
+  },
+  {
+   "name": "row/40",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "40"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "PUSH"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; PUSH rd"
+    }
+   ]
+  },
+  {
+   "name": "row/41",
+   "type": "FRAME",
+   "children": [
+    {
+     "name": "op",
+     "type": "TEXT",
+     "characters": "41"
+    },
+    {
+     "name": "mnem",
+     "type": "TEXT",
+     "characters": "POP"
+    },
+    {
+     "name": "fmt",
+     "type": "TEXT",
+     "characters": "r"
+    },
+    {
+     "name": "micro",
+     "type": "TEXT",
+     "characters": "REG; POP rd"
+    }
+   ]
+  }
+ ]
+}
