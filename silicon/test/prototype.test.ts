@@ -10,6 +10,7 @@ import { define } from "../src/hdl/builder";
 import { flatten, netId } from "../src/netlist/flatten";
 import { type FlatNetlist, GATE_TYPES, evalGate, type Library } from "../src/netlist/types";
 import { apply } from "../src/prototype/apply";
+import { applyPerChunk } from "../src/prototype/apply-per-chunk";
 import { runFigmaActions, type FigmaValue } from "../src/prototype/emulate";
 import { aliasData, boolData, conditional, exprData, figmaActions, increment, navigate, nestedConditional, toFigmaActions, worstCase } from "../src/prototype/figma-actions";
 import { initialState, interpret, interpretChunked, runPlanActions } from "../src/prototype/interpret";
@@ -543,6 +544,13 @@ class FakeFigma {
 const asApi = (f: FakeFigma) => f as unknown as PluginAPI;
 const onClick = (n: FNode) => n.reactions.find((r) => r.trigger?.type === "ON_CLICK")!.actions!;
 const afterTimeout = (n: FNode) => n.reactions.find((r) => r.trigger?.type === "AFTER_TIMEOUT")!;
+
+/** Of stacked nodes (applyPerChunk's one Step button per phase), the one the viewer shows. */
+const shown = (nodes: readonly FNode[], vals: ReadonlyMap<string, unknown>): FNode => {
+  const on = nodes.filter((n) => (n.boundVariables.visible ? vals.get(n.boundVariables.visible.id) === true : n.visible));
+  if (on.length !== 1) throw new Error(`${on.length} of ${nodes.length} stacked "${nodes[0]?.name}" shown`);
+  return on[0];
+};
 const last = <T>(xs: readonly T[]) => xs[xs.length - 1];
 
 // ---------- the spike, built against the fake API ----------
@@ -1164,4 +1172,110 @@ describe("the real CPU (default cap)", () => {
     expect([...vals]).toEqual([...f.values()]);
     console.log(`[reset] CPU: ${res.chunks} events per tick (≤ ${Math.max(...res.chunking!.perEvent)} actions), ${res.resetChunks} events per reset (≤ ${Math.max(...res.resetChunking!.perEvent)} actions)`);
   });
+});
+
+// ---------- applyPerChunk ----------
+
+describe("applyPerChunk(): one reaction per chunk", () => {
+  it("Step = one chunk; K Steps = one tick ≡ FastSim; one reaction per chunk; reset", async () => {
+    const f = new FakeFigma();
+    const net = flatten(testLib(), "ACC4");
+    const sched = compile(net);
+    const init = powerOn(net);
+    const p = plan(net, sched, { initial: init, gate: true, maxActionsPerEvent: 60 });
+    const res = await applyPerChunk(asApi(f), p, {});
+    expect(res.chunks).toBe(p.chunking!.chunks.length);
+    expect(res.chunks).toBeGreaterThan(1);
+    expect(res.actionsPerStep + 2).toBeLessThanOrEqual(60);
+    const vals = f.values();
+    // one stacked Step button per phase; only the current phase's is visible
+    expect(res.buttons.steps.length).toBe(res.chunks);
+    const visible = (n: FrameNode) => vals.get((n as unknown as FNode).boundVariables.visible.id);
+    const step = () => {
+      const shown = res.buttons.steps.filter(visible);
+      expect(shown.length).toBe(1);
+      return onClick(shown[0] as unknown as FNode);
+    };
+    const fast = new FastSim(net, sched, init);
+    const phase = res.phase!.id;
+    for (let t = 1; t <= 12; t++) {
+      for (let k = 0; k < res.chunks; k++) {
+        expect(vals.get(phase)).toBe(k);
+        expect(runFigmaActions(step(), vals)).toBeLessThanOrEqual(res.actionsPerStep);
+      }
+      fast.tick();
+      for (const v of p.variables) expect(vals.get(res.varIds.get(v.net)!), `tick ${t} ${v.name}`).toBe(fast.v[v.net] === 1);
+      expect(vals.get(res.ticks.id)).toBe(t);
+      expect(vals.get(res.tickText!.id)).toBe(String(t));
+    }
+    // no reaction holds more than one chunk (Figma times out validating the whole tick)
+    for (const n of [...res.buttons.steps, ...res.frames.runs] as unknown as FNode[])
+      for (const r of n.reactions) expect(worstCase(r.actions ?? [])).toBeLessThanOrEqual(res.actionsPerStep + 2);
+    // a half-done tick, then Reset: everything back to power-on, phase 0
+    runFigmaActions(step(), vals);
+    runFigmaActions(onClick(res.buttons.reset as unknown as FNode), vals);
+    expect([...vals]).toEqual([...f.values()]);
+    // the tick text is a STRING bound to the frame's text; flows: one, no duplicate
+    const t = (res.frames.control as unknown as FNode).findAll((n) => n.name === "ticks" && !!n.boundVariables.characters)[0];
+    expect(f.vars.get(t.boundVariables.characters.id)?.resolvedType).toBe("STRING");
+    expect(f.currentPage.flowStartingPoints).toEqual([{ nodeId: res.frames.control.id, name: p.name }]);
+  });
+
+  it("the Run loop runs one chunk per hop and stops on HALTED mid-tick", async () => {
+    const lib = counterLib();
+    define(lib, "HALTER", { in: { CLK: 1 }, out: { Q: 4, HALTED: 1 } }, (b) => {
+      const q = b.use("COUNTER4", { CLK: b.in1("CLK") }, "c").Q;
+      q.forEach((qi, i) => b.BUF(qi, b.out("Q")[i]));
+      b.AND(q[0], q[1], b.out1("HALTED"));
+    });
+    const net = flatten(lib, "HALTER");
+    const p = plan(net, compile(net), { initial: powerOn(net), halt: "HALTED", maxActionsPerEvent: 30 });
+    const f = new FakeFigma();
+    const res = await applyPerChunk(asApi(f), p, {});
+    const vals = f.values();
+    let at = res.frames.control.id;
+    const hooks = { navigate: (d: string | null) => void (at = d!) };
+    runFigmaActions(onClick(res.buttons.run as unknown as FNode), vals, hooks);
+    let hops = 0;
+    for (; hops < 100 && at !== res.frames.control.id; hops++)
+      expect(runFigmaActions(afterTimeout(f.nodes.get(at)!).actions!, vals, hooks)).toBeLessThanOrEqual(30);
+    expect(at).toBe(res.frames.control.id);
+    expect(vals.get(res.ticks.id)).toBe(3);
+    expect(hops).toBe(3 * res.chunks + 1); // HALTED is seen at the next hop, which stops instead
+  });
+
+  it("tickDisplay 'digits' counts in STRING digits within the event budget", async () => {
+    const net = counterNetlist();
+    const p = plan(net, compile(net), { initial: powerOn(net), maxActionsPerEvent: 80 });
+    const f = new FakeFigma();
+    const res = await applyPerChunk(asApi(f), p, { tickDisplay: "digits" });
+    expect(res.tickText).toBeUndefined();
+    const vals = f.values();
+    const step = () => onClick(shown(res.buttons.steps as unknown as FNode[], vals));
+    for (let i = 0; i < 123 * res.chunks; i++) expect(runFigmaActions(step(), vals)).toBeLessThanOrEqual(80 - 2);
+    const digit = (i: number) => vals.get(f.varNamed(p.name, `ctl/digitText/${i}`).id);
+    expect([3, 2, 1, 0].map(digit).join("")).toBe("0123");
+  });
+});
+
+describe("applyPerChunk() on the real CPU", () => {
+  it("ptrout: clicking the visible Step button counts OUT 7 → 0 and halts; no reaction holds more than one chunk", async () => {
+    const net = cpuNetlist();
+    const p = plan(net, compile(net, { inputs: [] }), { initial: powerOnWith(net, assemble(PROGRAMS.ptrout).bytes), name: "CPU", halt: PROBES.HALTED.name });
+    const f = new FakeFigma();
+    const res = await applyPerChunk(asApi(f), p, {});
+    expect(res.chunks).toBe(11);
+    for (const n of [...res.buttons.steps, ...res.frames.runs] as unknown as FNode[])
+      for (const r of n.reactions) expect(worstCase(r.actions ?? [])).toBeLessThanOrEqual(res.actionsPerStep + 2);
+    const vals = f.values();
+    const bit = (name: string) => (vals.get(res.varIds.get(netId(net, name))!) ? 1 : 0);
+    const out = () => [0, 1, 2, 3, 4, 5, 6, 7].reduce((s, i) => s | (bit(`OUT[${i}]`) << i), 0);
+    const seen: number[] = [];
+    for (let click = 0; click < 200 * 11 && !(bit(PROBES.HALTED.name) && vals.get(res.phase!.id) === 0); click++) {
+      runFigmaActions(onClick(shown(res.buttons.steps as unknown as FNode[], vals)), vals);
+      if (seen[seen.length - 1] !== out()) seen.push(out());
+    }
+    expect(seen).toEqual([0, 7, 6, 5, 4, 3, 2, 1, 0]);
+    expect(bit(PROBES.HALTED.name)).toBe(1);
+  }, 120_000);
 });

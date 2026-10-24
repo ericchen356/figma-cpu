@@ -53,6 +53,7 @@ export {
 } from "./figma-actions";
 export { evalVariableData, type FigmaValue, runFigmaActions } from "./emulate";
 export { apply, type ApplyOptions, type ApplyResult, type ApplyRuntime } from "./apply";
+export { applyPerChunk, type PerChunkOptions, type PerChunkResult } from "./apply-per-chunk";
 export {
   asmListing,
   cpuPrograms,
