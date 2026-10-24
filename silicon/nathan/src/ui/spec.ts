@@ -14,7 +14,7 @@ import {
   STATE_NETS,
 } from "../hw/layout";
 import { GRID_H, GRID_W } from "../model/reference";
-import { clickRun } from "../react/catalog";
+import { clickRun, HOTSPOT_GRAIN } from "../react/catalog";
 
 /** PICO-8, same as spec/palette.json and os-ui. */
 export const PALETTE_HEX = [
@@ -327,7 +327,8 @@ function layerBox(k: number): NodeSpec {
 }
 
 const HANDLE = 12;
-/** Selection outline and the four resize handles of a layer, above the click layers. */
+/** Selection outline and the four resize handles of a layer, above the click layers. Its handles
+ * run the reactions made for slot `k` (the overlay only shows while `k` is selected). */
 function overlayBox(k: number): NodeSpec {
   const handle = (corner: string, code: number): NodeSpec =>
     frame(`handle/${corner}`, {
@@ -336,7 +337,7 @@ function overlayBox(k: number): NodeSpec {
       fill: COLOR.text,
       stroke: COLOR.accent,
       strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}` }],
+      reactions: [{ trigger: { on: "click" }, run: `handle/${code}@${k}` }],
     });
   const handleRow = (a: NodeSpec, b: NodeSpec): NodeSpec =>
     frame("handles", {
@@ -375,37 +376,47 @@ function selection(): NodeSpec {
 
 // ---------- the canvas: grid, layers, click layers, overlays ----------
 
-/** One set of click layers: a row of cells per canvas row. Hovering a cell stores its column; the
- * row takes the click (a click on a cell goes to its row, the cell having no click of its own) and
- * runs the reaction made for that row. */
+/** One set of click layers: a row of cells per canvas row. In a per-row set, hovering a cell stores
+ * its column and the row takes the click (a click on a cell goes to its row, the cell having no
+ * click of its own), running the reaction made for that row. In a per-cell set each cell takes its
+ * own click, with its column built in, so it needs no hover. A per-slot set is 8 stacked copies
+ * picked by the selection register's bits, like the per-slot buttons. */
 function hotspotSet(i: number): NodeSpec {
-  const rows: NodeSpec[] = [];
-  for (let r = 0; r < GRID_H; r++)
-    rows.push(
+  const grain = HOTSPOT_GRAIN[i];
+  const rows = (sel: number): NodeSpec[] =>
+    Array.from({ length: GRID_H }, (_, r) =>
       frame(`row/${r}`, {
         x: 0,
         y: r * CELL,
         w: CANVAS_W,
         h: CELL,
-        reactions: [{ trigger: { on: "click" }, run: clickRun(i, r) }],
+        ...(grain === "cell" ? {} : { reactions: [{ trigger: { on: "click" as const }, run: clickRun(i, r, 0, sel) }] }),
         children: Array.from({ length: GRID_W }, (_, c) =>
           frame(`cell/${c}`, {
             x: c * CELL,
             y: 0,
             w: CELL,
             h: CELL,
-            reactions: [{ trigger: { on: "enter" }, run: `pointer/${c}` }],
+            reactions:
+              grain === "cell"
+                ? [{ trigger: { on: "click" }, run: clickRun(i, r, c) }]
+                : [{ trigger: { on: "enter" }, run: `pointer/${c}` }],
           }),
         ),
       }),
     );
+  const level = (name: string, children: NodeSpec[]): NodeSpec =>
+    frame(name, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, children });
   return frame(`hot/${HOT[i]}`, {
     x: 0,
     y: 0,
     w: CANVAS_W,
     h: CANVAS_H,
     visibleNet: bit(SCREEN_NETS.hot, i),
-    children: rows,
+    children:
+      grain === "row@sel"
+        ? [{ ...pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => level(`sel/${k}`, rows(k))), name: "slots" }]
+        : rows(0),
   });
 }
 
@@ -573,19 +584,27 @@ function leftPanel(): NodeSpec {
 function rightPanel(): NodeSpec {
   const sw = 40;
   const gap = 8;
-  const swatches = Array.from({ length: PALETTE_SIZE }, (_, c) =>
-    frame(`color/${c}`, {
-      x: 16 + (c % 4) * (sw + gap),
-      y: 112 + Math.floor(c / 4) * (sw + gap),
+  // One swatch per value of the selection register, stacked and picked by its bits (like the
+  // per-slot buttons): the one showing runs the fill reaction made for the selected slot.
+  const swatch = (c: number, k: number): NodeSpec =>
+    frame(`sel/${k}`, {
+      x: 0,
+      y: 0,
       w: sw,
       h: sw,
       radius: 4,
       fill: PALETTE_HEX[c],
       stroke: COLOR.line,
       strokeWeight: 1,
-      reactions: [{ trigger: { on: "click" }, run: `fill/${c}` }],
-    }),
-  );
+      reactions: [{ trigger: { on: "click" }, run: `fill/${c}@${k}` }],
+    });
+  const level = (n: string, children: NodeSpec[]): NodeSpec => frame(n, { x: 0, y: 0, w: sw, h: sw, children });
+  const swatches = Array.from({ length: PALETTE_SIZE }, (_, c) => ({
+    ...pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => swatch(c, k)),
+    name: `color/${c}`,
+    x: 16 + (c % 4) * (sw + gap),
+    y: 112 + Math.floor(c / 4) * (sw + gap),
+  }));
   return frame("design", {
     x: UI_W - RIGHT_W,
     y: TOP_H,
@@ -731,7 +750,7 @@ function arrangeButtons(): NodeSpec[] {
     }),
   );
   arrows.forEach(([n, t, run], i) =>
-    out.push(pushButton(n, t, 16 + i * 56, 446, 52, run)),
+    out.push(slotButton(n, t, 16 + i * 56, 446, 52, run)),
   );
   return out;
 }
@@ -849,18 +868,18 @@ export const KEYS: Array<{ codes: number[]; run: string }> = [
   // one key per reaction: Figma reads a keyCodes list as a chord (all held at once)
   { codes: [46], run: "delete" },
   { codes: [8], run: "delete" },
-  { codes: [37], run: "nudge/0" },
-  { codes: [39], run: "nudge/1" },
-  { codes: [38], run: "nudge/2" },
-  { codes: [40], run: "nudge/3" },
   { codes: [27], run: "esc" },
 ];
 
-/** The shortcuts of the per-slot Arrange buttons: D, [ and ]. */
+/** The shortcuts of the per-slot controls: D, [ and ], and the arrow keys (nudge). */
 export const SLOT_KEYS = [
   { code: 68, run: "dup" },
   { code: 219, run: "back" },
   { code: 221, run: "fwd" },
+  { code: 37, run: "nudge/0" },
+  { code: 39, run: "nudge/1" },
+  { code: 38, run: "nudge/2" },
+  { code: 40, run: "nudge/3" },
 ] as const;
 
 /** Those shortcuts, like the buttons: one reaction per slot, on a stack of 8 small layers picked by

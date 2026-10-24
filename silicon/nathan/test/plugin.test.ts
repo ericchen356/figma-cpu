@@ -259,9 +259,10 @@ describe("CPU NATHAN plugin, end to end", () => {
     expect(os?.type).toBe("os");
     const stats = os!.type === "os" ? os!.stats : null!;
     expect(stats.missing).toBe(0);
-    // 4 canvas click sets × 10 rows, 46 controls, and Duplicate / Bring forward / Send backward for
-    // each of the 8 slots
-    expect(stats.reactions).toBe(4 * 10 + 46 + 3 * 8);
+    // canvas clicks: pick-up per cell (14 × 10), draw per row (10), drop per row and slot (10 × 8),
+    // drag-span per row (10); then 22 controls (tools, layer rows, eyes, Delete, Esc), and for each
+    // of the 8 slots: 16 swatches, 4 handles, 4 nudges, Duplicate / Bring forward / Send backward
+    expect(stats.reactions).toBe(14 * 10 + 10 + 10 * 8 + 10 + 22 + (16 + 4 + 4 + 3) * 8);
     const p = page(fig)!;
     const present = kid(p, PRESENT)!;
     expect(present).not.toBeNull();
@@ -323,7 +324,9 @@ describe("CPU NATHAN plugin, end to end", () => {
     });
     expect(mixed.map((n) => n.name)).toEqual([]);
     const hover = all.filter(({ r }) => r.trigger?.type === "MOUSE_ENTER");
-    expect(hover).toHaveLength(4 * 14 * 10); // every cell of every click set
+    // every cell of the per-row click sets (draw, drag-span) and of the 8 slot copies of the drop
+    // set; the per-cell pick-up set needs no hover (each cell has its column built in)
+    expect(hover).toHaveLength((1 + 8 + 1) * 14 * 10);
     expect(all.filter(({ r }) => r.trigger?.type === "MOUSE_DOWN")).toEqual([]);
     // every control is one event of at most 700 actions: no reaction needs the overlays
     const c = events(fig, 700);
@@ -334,7 +337,7 @@ describe("CPU NATHAN plugin, end to end", () => {
     );
     expect(warm).toHaveLength(1);
     expect(size(warm[0].actions ?? [])).toBeLessThanOrEqual(700);
-    // shortcuts: on each frame, and D [ ] on the 8 key layers the selection picks, one per slot
+    // shortcuts: on each frame, and D [ ] and the arrows on the 8 key layers the selection picks, one per slot
     const codes = (rs: readonly Reaction[]) =>
       rs
         .flatMap((r) =>
@@ -344,7 +347,7 @@ describe("CPU NATHAN plugin, end to end", () => {
     for (const name of [PRESENT, MACHINE, CIRCUIT]) {
       const f = kid(page(fig)!, name)!;
       expect(codes(f.reactions), name).toEqual([
-        8, 27, 37, 38, 39, 40, 46, 70, 79, 82, 86,
+        8, 27, 46, 70, 79, 82, 86,
       ]);
       const leaves = reactionsUnder(f)
         .filter(({ node }) => /^keys\/\d$/.test(node.name))
@@ -355,7 +358,7 @@ describe("CPU NATHAN plugin, end to end", () => {
       );
       for (const leaf of slots)
         expect(codes(leaf.reactions), `${name} ${leaf.name}`).toEqual([
-          68, 219, 221,
+          37, 38, 39, 40, 68, 219, 221,
         ]);
     }
   });
@@ -416,7 +419,7 @@ describe("CPU NATHAN plugin, end to end", () => {
     ).toEqual([]);
     expect(
       present.reactions.filter((r) => r.trigger?.type === "ON_KEY_DOWN"),
-    ).toHaveLength(11);
+    ).toHaveLength(7);
     const r = await s.app.selftest(200, 7);
     expect(r.text).toMatch(/^✓/);
     expect(s.errors()).toEqual([]);

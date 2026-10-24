@@ -73,17 +73,50 @@ const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
 
 /** Hotspot set names in `hot` bit order. */
 export const HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
-/** The reaction a click on canvas row `row` of hotspot set `set` runs. */
-export const clickRun = (set: number, row: number) =>
-  `${HOTSPOT_REACTIONS[set]}/${row}`;
 
-export const CLICK_SPECS: ReactionSpec[] = HOTSPOT_SETS.flatMap((h) =>
-  Array.from({ length: R.GRID_H }, (_, y) => ({
-    ...h,
-    name: `${h.name}/${y}`,
-    ties: { ...h.ties, PY: y },
-    event: (rnd: (n: number) => number): Ev => ({ k: "click", x: rnd(R.GRID_W), y }),
-  })),
+/** How finely each hotspot set's reactions are made, in `hot` bit order:
+ * - "row": one reaction per canvas row (PY folded; the column comes from the hover);
+ * - "cell": one per cell (PX folded too, so the pick-up's 8-layer hit test compares against
+ *   constants): worst 754 → 588 actions, mean 579 → 420;
+ * - "row@sel": one per row and value of the selection register (the drop's move unit writes only
+ *   the selected record): 518 → 333.
+ * Drawing clicks (idle-create, drag-span) stay per row: finer grains don't pay off there. */
+export const HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row"] as const;
+
+/** The reaction a click on canvas row `row` (column `col` for a per-cell set, selected slot `sel`
+ * for a per-slot one) of hotspot set `set` runs. */
+export const clickRun = (set: number, row: number, col = 0, sel = 0) =>
+  `${HOTSPOT_REACTIONS[set]}/${row}` +
+  (HOTSPOT_GRAIN[set] === "cell" ? `/${col}` : "") +
+  (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
+
+export const CLICK_SPECS: ReactionSpec[] = HOTSPOT_SETS.flatMap((h, set) =>
+  Array.from({ length: R.GRID_H }, (_, y): ReactionSpec[] => {
+    const grain = HOTSPOT_GRAIN[set];
+    if (grain === "cell")
+      return Array.from({ length: R.GRID_W }, (_, x) => ({
+        ...h,
+        name: clickRun(set, y, x),
+        ties: { ...h.ties, PY: y, PX: x },
+        event: (): Ev => ({ k: "click", x, y }),
+      }));
+    if (grain === "row@sel")
+      return Array.from({ length: LAYERS }, (_, sel) => ({
+        ...h,
+        name: clickRun(set, y, 0, sel),
+        ties: { ...h.ties, PY: y },
+        given: { sel },
+        event: (rnd: (n: number) => number): Ev => ({ k: "click", x: rnd(R.GRID_W), y }),
+      }));
+    return [
+      {
+        ...h,
+        name: clickRun(set, y),
+        ties: { ...h.ties, PY: y },
+        event: (rnd: (n: number) => number): Ev => ({ k: "click", x: rnd(R.GRID_W), y }),
+      },
+    ];
+  }).flat(),
 );
 
 export function reactionSpecs(): ReactionSpec[] {
@@ -95,13 +128,19 @@ export function reactionSpecs(): ReactionSpec[] {
       valid: always,
       event: () => ({ k: "tool", t }),
     });
+  // Fill, the resize handles and nudge act on the selected layer: one reaction per value of the
+  // selection register (the swatch, handle, arrow button and arrow key showing are the ones made for
+  // it). With the slot known, reading and writing the selected record's 8-way muxes fold away:
+  // nudge 349 → 154 actions, a handle 240 → 105, a swatch 128 → 70.
   for (let c = 0; c < PALETTE_SIZE; c++)
-    out.push({
-      name: `fill/${c}`,
-      ties: { EVT: EV.FILL, ARG: c },
-      valid: always,
-      event: () => ({ k: "fill", c }),
-    });
+    for (let sel = 0; sel < LAYERS; sel++)
+      out.push({
+        name: `fill/${c}@${sel}`,
+        ties: { EVT: EV.FILL, ARG: c },
+        given: { sel },
+        valid: always,
+        event: () => ({ k: "fill", c }),
+      });
   for (let k = 0; k < LAYERS; k++) {
     out.push({
       name: `select/${k}`,
@@ -117,19 +156,23 @@ export function reactionSpecs(): ReactionSpec[] {
     });
   }
   for (let c = 0; c < 4; c++)
-    out.push({
-      name: `handle/${c}`,
-      ties: { EVT: EV.HANDLE, ARG: c },
-      valid: (s) => s.selected !== null,
-      event: () => ({ k: "handle", corner: c }),
-    });
+    for (let sel = 0; sel < LAYERS; sel++)
+      out.push({
+        name: `handle/${c}@${sel}`,
+        ties: { EVT: EV.HANDLE, ARG: c },
+        given: { sel },
+        valid: (s) => s.selected !== null,
+        event: () => ({ k: "handle", corner: c }),
+      });
   for (let d = 0; d < 4; d++)
-    out.push({
-      name: `nudge/${d}`,
-      ties: { EVT: EV.NUDGE, ARG: d },
-      valid: always,
-      event: () => ({ k: "nudge", dir: d }),
-    });
+    for (let sel = 0; sel < LAYERS; sel++)
+      out.push({
+        name: `nudge/${d}@${sel}`,
+        ties: { EVT: EV.NUDGE, ARG: d },
+        given: { sel },
+        valid: always,
+        event: () => ({ k: "nudge", dir: d }),
+      });
   out.push({
     name: "delete",
     ties: { EVT: EV.DELETE },
