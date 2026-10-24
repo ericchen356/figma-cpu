@@ -1,3 +1,7 @@
 node_modules/
 plugin/dist/
 .DS_Store
+os-ui/dist/
+silicon/plugin/dist/
+silicon/cli/dist/
+.gstack/

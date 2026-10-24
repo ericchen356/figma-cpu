@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Figma OS — editor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <nav class="nav-rail" id="rail"></nav>
+
+      <aside class="left-panel">
+        <div class="file-head">
+          <div class="file-line">
+            <b id="title" data-rename="title" title="Rename file"></b>
+            <span class="ibtn" data-menu="file" title="Edit file menu"
+              ><i data-icon="chevDown"></i></span>
+            <span
+              class="ibtn push"
+              data-cmd="toggle-ui"
+              title="Minimize UI (⌘\)"
+              ><i data-icon="sidebar"></i></span>
+          </div>
+          <span class="drafts" data-menu="file">Drafts</span>
+        </div>
+        <div class="panel-body" id="left"></div>
+      </aside>
+
+      <main class="canvas">
+        <button class="restore-ui" data-cmd="toggle-ui" title="Show UI (⌘\)">
+          <i data-icon="sidebar"></i>
+        </button>
+        <div class="ruler-x"></div>
+        <div class="ruler-y"></div>
+        <div class="artboard" id="artboard"><div id="layers"></div></div>
+        <nav class="toolbar" id="toolbar"></nav>
+      </main>
+
+      <aside class="right-panel">
+        <div class="user-row">
+          <div class="user-btn" data-menu="user" title="You">
+            <div class="avatar">N</div>
+            <div class="chev">
+              <i data-icon="chevDown"></i>
+            </div>
+          </div>
+          <div class="user-actions">
+            <button class="btn-present" data-cmd="present" title="Present">
+              <i data-icon="play"></i><i data-icon="chevDown" class="caret"></i>
+            </button>
+            <button class="btn-share">Share</button>
+          </div>
+        </div>
+        <div class="panel-body" id="right"></div>
+      </aside>
+    </div>
+    <div class="menu" id="menu" hidden></div>
+    <div class="menu" id="submenu" hidden></div>
+    <div class="modal actions-modal" id="actions" hidden>
+      <div class="palette-box">
+        <input
+          id="actions-input"
+          placeholder="Search actions…"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <div id="actions-list"></div>
+      </div>
+    </div>
+    <div class="present" id="present" hidden></div>
+    <div class="modal" id="share" hidden>
+      <div class="dialog">
+        <h3>Share</h3>
+        <p class="muted">
+          Anyone with this link opens the file view-only, exactly like the
+          preview below.
+        </p>
+        <div class="link-row">
+          <input id="share-link" readonly spellcheck="false" /><button
+            id="share-copy"
+            class="primary"
+          >
+            Copy link
+          </button>
+        </div>
+        <div class="share-preview">
+          <iframe id="share-frame" title="Shared view"></iframe>
+        </div>
+        <div class="dialog-btns">
+          <span class="muted" id="share-msg"></span
+          ><button id="share-close">Done</button>
+        </div>
+      </div>
+    </div>
+    <script src="dist/app.js"></script>
+  </body>
+</html>

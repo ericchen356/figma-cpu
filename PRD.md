@@ -12,6 +12,18 @@ An 8-bit computer drawn on the Figma canvas — registers, ALU, buses, decoder, 
 
 > **Scope for this hackathon: the CPU only.** The "mini Figma running on the CPU" is Phase 2 (§15). The canvas reserves a slot for it, but no work goes into it until the CPU MVP ships.
 
+## 1.5 Current goal: build order (read this first)
+
+We are still on the **accuracy** phase: matching Figma OS to Figma exactly. The build order is fixed:
+
+1. **Figma OS in plain TypeScript, run locally on the Mac, no Figma.** `os-ui/` is the editor (layers, tools, selection, properties) as ordinary TypeScript in the browser: `cd os-ui && npm run build && python3 -m http.server 5173`, then open http://localhost:5173/index.html. `npm test` runs its checks.
+2. **Match the CPU spec, still in TypeScript.** The OS must fit the CPU's limits (`spec/*.json`, `os-ui/src/cost.ts`, `OS-DESIGN.md`), and the gate-level CPU (`silicon/`, `cd silicon && npm run cpu -- mul`) must match its spec tick for tick. Accuracy first.
+3. **Only then replace the TypeScript with Figma graphs.** The OS becomes variables + prototype interactions, with no code at run time (`os/loader`, `os/editor-mock`, `os/visualizer`), checked against the TypeScript version.
+
+Do not start step 3 until steps 1 and 2 pass locally.
+
+---
+
 ## 2. Goals / non-goals
 
 **Goals**

@@ -1,0 +1,2128 @@
+/* Inter, the Figma editor's UI font: a variable font (100-900), bundled locally (SIL OFL, see fonts/). */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+/* Values measured from the live Figma editor (dark theme): computed colors, radii and type. */
+:root {
+  --font: "Inter", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --bg: #1e1e1e;
+  --panel: #2c2c2c;
+  --panel-2: #383838;
+  --line: #444;
+  --text: #fff;
+  --muted: #ffffffb2;
+  --dim: #ffffff80;
+  --accent: #0c8ce9;
+  --accent-bg: #394360;
+  --radius: 5px;
+}
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  /* Figma sets body copy at 11px/16px, weight 450 (regular) and 550 (medium), with a hair of tracking. */
+  font: 450 11px/16px var(--font);
+  letter-spacing: 0.055px;
+  font-feature-settings: "calt", "liga";
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+input {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  outline: 0;
+  width: 100%;
+  min-width: 0;
+  user-select: text;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 57px 240px 1fr 241px;
+  grid-template-rows: 1fr;
+  width: 100vw;
+  height: 100vh;
+  min-width: 1220px;
+  min-height: 640px;
+}
+
+/* No header: the file name sits at the top of the left panel, and the user, Present and Share
+   controls sit at the top of the right panel, as in Figma's own editor. */
+.left-panel,
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+}
+.user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 12px;
+  flex: none;
+}
+.user-btn {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.user-btn .chev {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.user-btn:hover .chev {
+  color: var(--text);
+}
+.logo {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+.logo img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+.file {
+  display: flex;
+  gap: 6px;
+  color: var(--muted);
+}
+.file b {
+  color: var(--text);
+  font-weight: 500;
+}
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #3a9a4a;
+  display: grid;
+  place-items: center;
+  font-weight: 550;
+}
+.btn-share {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  font: 550 11px/16px var(--font);
+}
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px 2px 8px;
+  border-radius: 4px;
+}
+.zoom:hover {
+  background: #ffffff14;
+  color: var(--text);
+}
+.zoom svg {
+  width: 12px;
+  height: 12px;
+}
+
+.left-panel {
+  background: var(--panel);
+  border-right: 1px solid #000;
+}
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-weight: 550;
+}
+.section-title .count {
+  color: var(--dim);
+  font-weight: 400;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  cursor: default;
+}
+.row:hover {
+  background: #ffffff0d;
+}
+.row .grow {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .muted {
+  color: var(--muted);
+}
+.row.selected {
+  background: var(--accent-bg);
+}
+.row.active-page {
+  background: var(--panel-2);
+}
+.row .vis {
+  color: var(--dim);
+  cursor: pointer;
+}
+.indent-1 {
+  padding-left: 28px;
+}
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+.empty {
+  color: var(--dim);
+  padding: 8px 12px;
+}
+
+.canvas {
+  position: relative;
+  background: var(--page-bg, var(--bg));
+  overflow: hidden;
+}
+.ruler-x {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 20px;
+  border-bottom: 1px solid #000;
+  background: var(--panel);
+}
+.ruler-y {
+  position: absolute;
+  inset: 20px auto 0 0;
+  width: 20px;
+  border-right: 1px solid #000;
+  background: var(--panel);
+}
+.frame-label {
+  position: absolute;
+  left: calc(100px + var(--px, 0px));
+  top: calc(54px + var(--py, 0px));
+  color: var(--muted);
+}
+.artboard {
+  position: absolute;
+  left: calc(100px + var(--px, 0px));
+  top: calc(76px + var(--py, 0px));
+  background: #fff;
+  touch-action: none;
+  background-image:
+    linear-gradient(#0000001a 1px, transparent 1px),
+    linear-gradient(90deg, #0000001a 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+}
+#layers {
+  position: absolute;
+  inset: 0;
+}
+[data-tool="rect"] .artboard,
+[data-tool="ellipse"] .artboard,
+[data-tool="frame"] .artboard {
+  cursor: crosshair;
+}
+[data-tool="move"] .artboard {
+  cursor: default;
+}
+.layer {
+  position: absolute;
+}
+.layer.frame {
+  outline: 1px solid #0003;
+}
+/* Hovering a row in Layers outlines that layer on the canvas. */
+.layer.hover {
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 14px 4px #0d99ffcc;
+  z-index: 1;
+}
+.sel {
+  position: absolute;
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
+.handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #fff;
+  border: 1px solid var(--accent);
+  pointer-events: auto;
+}
+.handle.nw {
+  left: -5px;
+  top: -5px;
+  cursor: nwse-resize;
+}
+.handle.ne {
+  right: -5px;
+  top: -5px;
+  cursor: nesw-resize;
+}
+.handle.sw {
+  left: -5px;
+  bottom: -5px;
+  cursor: nesw-resize;
+}
+.handle.se {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
+}
+.size-tag {
+  position: absolute;
+  left: 50%;
+  bottom: -26px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--panel);
+  border-radius: 10px;
+  border: 1px solid #000;
+  box-shadow: 0 4px 12px #0008;
+}
+.tool {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tool:hover {
+  background: var(--panel-2);
+}
+.tool.active {
+  background: var(--accent);
+}
+.tool.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.hint {
+  position: absolute;
+  left: 32px;
+  bottom: 80px;
+  color: var(--dim);
+}
+
+.right-panel {
+  background: var(--panel);
+  border-left: 1px solid #000;
+}
+.ptabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.ptabs [data-tab] {
+  padding: 4px 8px;
+  border-radius: var(--radius);
+}
+.ptabs .on {
+  font-weight: 550;
+  background: var(--panel-2);
+}
+.ptabs .off {
+  color: var(--muted);
+}
+.ptabs .zoom {
+  margin-left: auto;
+}
+.props-block {
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.props-block h4 {
+  font-size: 11px;
+  font-weight: 550;
+  padding: 4px 0 8px;
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  height: 28px;
+  padding: 0 8px;
+}
+.field:focus-within {
+  border-color: var(--accent);
+}
+.field i {
+  font-style: normal;
+  color: var(--dim);
+  width: 10px;
+}
+.fill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+.fill-row .hex,
+.fill-row .pct {
+  background: var(--bg);
+  border-radius: 5px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+}
+.fill-row .hex {
+  flex: 1;
+}
+.fill-row .pct {
+  width: 52px;
+}
+.palette {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+}
+.sw {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  border: 1px solid #0006;
+  cursor: pointer;
+}
+.sw.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.canvas.space {
+  cursor: grab;
+}
+.canvas.panning {
+  cursor: grabbing;
+}
+.canvas.space .artboard {
+  cursor: inherit;
+}
+.file b {
+  cursor: text;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+.file b:hover {
+  background: #ffffff14;
+}
+.section-title .add {
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.section-title .add:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.row[data-page] {
+  cursor: pointer;
+}
+.row.hidden {
+  opacity: 0.45;
+}
+.row .vis:hover {
+  color: var(--text);
+}
+input.rename {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  height: 20px;
+  width: 140px;
+  color: var(--text);
+}
+.modal {
+  position: fixed;
+  inset: 0;
+  background: #0009;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+}
+.modal[hidden] {
+  display: none;
+}
+.dialog {
+  width: 520px;
+  background: var(--panel);
+  border: 1px solid #000;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dialog h3 {
+  font-size: 14px;
+}
+.dialog p,
+.dialog .muted {
+  color: var(--muted);
+}
+.dialog textarea {
+  height: 240px;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  font:
+    11px/14px ui-monospace,
+    Menlo,
+    monospace;
+  user-select: text;
+}
+.dialog-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.dialog-btns button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font: 550 11px/16px var(--font);
+  cursor: pointer;
+}
+.dialog-btns button.primary {
+  background: var(--accent);
+}
+.btn-share {
+  cursor: pointer;
+}
+/* Rulers: one tick per cell with its number, anchored to the artboard so they follow pan and zoom */
+.ruler-x,
+.ruler-y {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 10px;
+}
+.tick {
+  position: absolute;
+}
+.tick i {
+  position: absolute;
+  font-style: normal;
+  white-space: nowrap;
+}
+.ruler-x .tick {
+  top: 0;
+  bottom: 0;
+  width: 0;
+}
+.ruler-x .tick::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 5px;
+  background: #7a7a7a;
+}
+.ruler-x .tick i {
+  left: 0;
+  top: 4px;
+  transform: translateX(-50%);
+}
+.ruler-y .tick {
+  left: 0;
+  right: 0;
+  height: 0;
+}
+.ruler-y .tick::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 5px;
+  height: 1px;
+  background: #7a7a7a;
+}
+.ruler-y .tick i {
+  left: 8px;
+  top: 0;
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+.band {
+  position: absolute;
+  background: var(--accent-bg);
+}
+.ruler-x .band {
+  top: 0;
+  height: 100%;
+}
+.ruler-y .band {
+  left: 0;
+  width: 100%;
+}
+
+.logo,
+.drafts,
+.avatar {
+  cursor: pointer;
+}
+.drafts:hover {
+  color: var(--text);
+}
+.logo:hover {
+  background: #ffffff14;
+  border-radius: 6px;
+}
+.ptabs span {
+  cursor: pointer;
+}
+.ptabs .off:hover {
+  color: var(--text);
+}
+.hex {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+}
+.hex:focus {
+  border-color: var(--accent);
+}
+.present-btn {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px;
+  font: 550 11px/16px var(--font);
+  cursor: pointer;
+}
+.menu {
+  position: fixed;
+  z-index: 20;
+  width: 210px;
+  background: var(--panel);
+  border: 1px solid #000;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 20px #000a;
+}
+.menu[hidden],
+.present[hidden] {
+  display: none;
+}
+.mi {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mi:hover {
+  background: var(--accent);
+}
+.mi .hint {
+  position: static;
+  color: var(--dim);
+}
+.mi:hover .hint {
+  color: #fff;
+}
+.present {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+.present-art {
+  position: relative;
+  background: #fff;
+}
+.present-bar {
+  position: fixed;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: var(--dim);
+}
+/* Keep rulers above the zoomed/panned artboard, as in Figma */
+.ruler-x,
+.ruler-y {
+  z-index: 3;
+}
+.ruler-x::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  background: var(--panel);
+  border-right: 1px solid #000;
+}
+
+.btn-present {
+  background: none;
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius);
+  height: 24px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.btn-present:hover {
+  background: #ffffff14;
+}
+.btn-present svg {
+  width: 16px;
+  height: 16px;
+}
+.btn-present .caret {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+}
+.link-row {
+  display: flex;
+  gap: 8px;
+}
+.link-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  height: 30px;
+  color: var(--text);
+}
+.link-row button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  font: 550 11px/16px var(--font);
+  cursor: pointer;
+}
+.share-preview {
+  height: 300px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #000;
+}
+.share-preview iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.dialog-btns {
+  align-items: center;
+}
+.dialog-btns .muted {
+  margin-right: auto;
+}
+.cell {
+  position: absolute;
+  pointer-events: none;
+}
+[data-tool="paint"] .artboard,
+[data-tool="erase"] .artboard {
+  cursor: crosshair;
+}
+.present-bar {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  align-items: center;
+}
+.present-bar .dim {
+  color: var(--dim);
+}
+.present-bar .pb {
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: #ffffff1a;
+  color: #fff;
+}
+.present-bar .pb:hover {
+  background: #ffffff33;
+}
+.present-bar .pb.edit {
+  background: var(--accent);
+}
+.present-bar span:not(.pb):not(.dim) {
+  color: var(--muted);
+}
+
+.align-row {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.align-row .sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  margin: 0 4px;
+}
+.alignbtn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.alignbtn:hover {
+  background: #ffffff1a;
+  color: #fff;
+}
+.alignbtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Prototype tab */
+.ptabs .on {
+  background: var(--panel-2);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+}
+.select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.chev svg,
+.close svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.bg-row {
+  margin-top: 8px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+  padding: 0 8px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hex-static {
+  font-size: 12px;
+}
+.flow {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 0 8px;
+}
+.help h4 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.help .close {
+  cursor: pointer;
+  color: var(--muted);
+}
+.help .close:hover {
+  color: #fff;
+}
+.help-body {
+  display: flex;
+  gap: 12px;
+  padding-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.help-body p {
+  color: #fff;
+}
+.help-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  color: #fff;
+}
+/* Long field labels (Opacity, Radius) must not overlap their value */
+.field i {
+  width: auto;
+  min-width: 10px;
+  flex: none;
+}
+
+/* Design tab, nothing selected */
+.props-block h4.split {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.plus,
+.sliders {
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.plus svg,
+.sliders svg {
+  width: 16px;
+  height: 16px;
+}
+.page-row,
+.export-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.field-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+  font-size: 12px;
+  justify-content: space-between;
+}
+.field-box.grow {
+  flex: 1;
+  justify-content: flex-start;
+}
+.field-box.outlined {
+  background: none;
+  border: 1px solid var(--line);
+  justify-content: space-between;
+}
+.field-box .dim {
+  color: var(--muted);
+}
+.field-box .chev svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.page-row .eye {
+  color: #fff;
+}
+.page-row .eye svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+  font-size: 12px;
+}
+.dots,
+.minus {
+  color: #fff;
+  padding: 0 4px;
+  font-size: 14px;
+}
+.export-btn {
+  width: 100%;
+  margin-top: 12px;
+  height: 32px;
+  background: none;
+  color: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+}
+.export-btn:hover {
+  background: #ffffff0d;
+}
+.preview {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 14px 0 4px;
+}
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 2px 6px;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.props-block.mcp {
+  border-bottom: 1px solid var(--line);
+}
+.check input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+  margin: 0;
+}
+.check {
+  white-space: nowrap;
+}
+
+select.field-box {
+  appearance: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  width: 72px;
+  outline: 0;
+}
+select.field-box.grow {
+  width: auto;
+  flex: 1;
+  border: 1px solid var(--line);
+  background: none;
+}
+.field-box input {
+  width: 100%;
+}
+.field-box.pct {
+  width: 76px;
+}
+.preview {
+  cursor: pointer;
+}
+.preview-img {
+  width: 100%;
+  image-rendering: pixelated;
+  border-radius: var(--radius);
+  margin-top: 8px;
+  background: #fff;
+}
+select.field-box {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23b3b3b3' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 26px;
+}
+
+/* ======================================================================================
+   Figma editor chrome. Sizes and colors below are the values measured on the live editor:
+   57px nav rail, 240px file panel, 241px properties panel, 24px rows and fields, 40px
+   section headers, 5px radii, #2c2c2c panels, #383838 fields, #394360 selected layer,
+   #0c8ce9 accent. These override the earlier, rougher rules above.
+   ====================================================================================== */
+button,
+select {
+  font: inherit;
+  letter-spacing: inherit;
+}
+.app.min {
+  grid-template-columns: 0 0 1fr 0;
+}
+.app.min > .nav-rail,
+.app.min > .left-panel,
+.app.min > .right-panel {
+  visibility: hidden;
+  overflow: hidden;
+  border: 0;
+}
+.app.no-rulers .ruler-x,
+.app.no-rulers .ruler-y {
+  display: none;
+}
+.app.no-grid .artboard {
+  background-image: none;
+}
+
+/* Nav rail */
+.nav-rail {
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  min-height: 0;
+}
+.rail-main {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.rail-main:hover {
+  background: #ffffff14;
+}
+.rail-main img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+.rail-item {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail-ico {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+}
+.rail-ico svg {
+  width: 20px;
+  height: 20px;
+}
+.rail-label {
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.045px;
+}
+.rail-item:hover .rail-ico {
+  background: #ffffff14;
+}
+.rail-item.on {
+  color: var(--text);
+}
+.rail-item.on .rail-ico {
+  background: var(--panel-2);
+}
+
+/* File panel header and sections */
+.file-head {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0;
+  height: 65px;
+  padding: 8px 8px 8px 16px;
+}
+.file-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+}
+.file-line #title {
+  font: 550 13px/22px var(--font);
+  letter-spacing: -0.032px;
+  padding: 0 4px;
+  margin-left: -4px;
+}
+.drafts {
+  color: var(--muted);
+}
+.ibtn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+}
+.ibtn:hover {
+  background: #ffffff14;
+  color: var(--text);
+}
+.ibtn.dis {
+  opacity: 0.4;
+  cursor: default;
+}
+.ibtn.dis:hover {
+  background: none;
+  color: var(--muted);
+}
+.ibtn svg {
+  width: 16px;
+  height: 16px;
+}
+.ibtn.push {
+  margin-left: auto;
+}
+.section-title {
+  height: 40px;
+  padding: 0 8px 0 16px;
+  font-weight: 550;
+}
+.section-title .sec-actions {
+  display: flex;
+  gap: 4px;
+}
+.section-sub {
+  padding: 0 16px 8px;
+  color: var(--muted);
+}
+.divider {
+  margin: 8px 0 0;
+}
+.row {
+  height: 24px;
+  margin: 0 8px;
+  padding: 0 8px;
+  gap: 8px;
+  border-radius: var(--radius);
+  font-weight: 400;
+}
+.row.page {
+  height: 32px;
+}
+.row:hover {
+  background: #ffffff14;
+}
+.row.selected {
+  background: var(--accent-bg);
+}
+.row.active-page {
+  background: var(--panel-2);
+}
+.row svg {
+  color: var(--muted);
+}
+.row .vis {
+  opacity: 0;
+}
+.row:hover .vis,
+.row.hidden .vis {
+  opacity: 1;
+}
+.row .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+.kbd {
+  color: var(--dim);
+}
+.empty {
+  padding: 8px 16px;
+}
+
+/* Properties panel */
+.user-row {
+  padding: 0 8px 0 8px;
+}
+.btn-share {
+  height: 32px;
+  padding: 0 12px;
+}
+.ptabs {
+  height: 40px;
+  padding: 0 8px;
+  gap: 0;
+}
+.ptabs [data-tab] {
+  height: 24px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.ptabs .on {
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 0 8px;
+}
+.ptabs .zoom {
+  height: 24px;
+  padding: 0 4px 0 8px;
+}
+.props-block {
+  padding: 0 16px 8px;
+}
+.props-block:has(> h4:last-child) {
+  padding-bottom: 0;
+}
+.props-block h4,
+.props-block h4.split {
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 550;
+}
+.props-block h4 .ibtn {
+  margin-right: -8px;
+}
+.grid2 {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.field {
+  height: 24px;
+  padding: 0 8px;
+  background: var(--panel-2);
+}
+.field i {
+  color: var(--dim);
+}
+.field.dis {
+  opacity: 0.4;
+}
+.align-row {
+  height: 24px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+  gap: 0;
+  padding: 0 2px;
+}
+.alignbtn {
+  flex: 1;
+  height: 24px;
+}
+.fill-row .hex,
+.fill-row .pct {
+  height: 24px;
+  background: var(--panel-2);
+}
+.field-box {
+  height: 24px;
+}
+.export-btn {
+  height: 24px;
+  margin-top: 8px;
+}
+.preview {
+  padding: 8px 0 4px;
+}
+
+/* Toolbar pill */
+.toolbar {
+  padding: 8px;
+  gap: 0;
+  border-radius: 12px;
+  align-items: center;
+  box-shadow:
+    0 3px 8px #00000059,
+    0 1px 3px #00000080,
+    inset 0 0.5px 0 #ffffff14,
+    inset 0 0 0.5px #ffffff4d;
+}
+.tgroup {
+  display: flex;
+  align-items: center;
+}
+.tool-caret {
+  width: 16px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tool-caret svg {
+  width: 12px;
+  height: 12px;
+}
+.tool-caret:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.tool {
+  color: var(--text);
+}
+.tool.disabled {
+  opacity: 0.4;
+}
+.restore-ui {
+  display: none;
+  position: absolute;
+  left: 32px;
+  top: 32px;
+  z-index: 4;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #000;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.restore-ui:hover {
+  background: var(--panel-2);
+}
+.app.min .restore-ui {
+  display: grid;
+}
+
+/* Menus and flyouts */
+.menu {
+  min-width: 220px;
+  width: auto;
+  padding: 4px;
+  border-radius: 8px;
+}
+.mi {
+  height: 24px;
+  padding: 0 8px 0 4px;
+  gap: 4px;
+  justify-content: flex-start;
+}
+.mi .mi-label {
+  flex: 1;
+  white-space: nowrap;
+}
+.mi-check {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.mi .hint svg {
+  width: 12px;
+  height: 12px;
+}
+.mi.dis {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.mi.sel {
+  background: var(--accent);
+}
+.mi-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+/* Actions palette (⌘K) */
+.actions-modal {
+  place-items: start center;
+  padding-top: 120px;
+  background: #0006;
+}
+.palette-box {
+  width: 480px;
+  background: var(--panel);
+  border: 1px solid #000;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #000a;
+  overflow: hidden;
+}
+.palette-box input {
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+#actions-list {
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px;
+}
+#actions-list .mi {
+  padding-left: 12px;
+}
+
+/* ---- One icon set (Lucide, 24x24 grid, one stroke): sized per context, never per icon. ---- */
+[data-icon] {
+  display: contents;
+}
+svg {
+  stroke-width: 1.5;
+}
+.tool svg,
+.rail-ico svg {
+  width: 24px;
+  height: 24px;
+}
+.tool-caret svg,
+.mi .hint svg,
+.btn-present .caret svg,
+.zoom svg,
+.preview .pv svg,
+.field i svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+.btn-present .caret {
+  width: auto;
+  height: auto;
+}
+.preview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -4px;
+}
+.field i {
+  display: grid;
+  place-items: center;
+}
+.mi-check svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+/* ---- Spacing pass: every value below was measured on the live editor (same 1728px viewport). ---- */
+.app {
+  min-width: 1220px;
+}
+/* The panel edge is drawn outside the 240/241px column, as Figma's separate 1-2px resize handle is. */
+.left-panel {
+  border-right: 0;
+  box-shadow: 1px 0 0 #000;
+  position: relative;
+  z-index: 2;
+}
+.right-panel {
+  border-left: 0;
+  box-shadow: -1px 0 0 #000;
+  position: relative;
+  z-index: 2;
+}
+
+/* Nav rail: items are 56px wide from the left edge, Variables sits in its own group. */
+.nav-rail {
+  align-items: flex-start;
+}
+.rail-main {
+  margin-left: 12px;
+}
+.rail-item.gap {
+  margin-top: 16px;
+}
+
+/* File header: 32px title row, then the Drafts line; Minimize UI is a 32px button with a 24px icon. */
+.file-head {
+  justify-content: flex-start;
+  padding: 8px 8px 0 16px;
+}
+.file-line {
+  height: 32px;
+  gap: 6px;
+}
+.file-line #title {
+  margin-left: -3px;
+}
+.drafts {
+  display: block;
+  line-height: 16px;
+}
+.ibtn.push {
+  width: 32px;
+  height: 32px;
+}
+.ibtn.push svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Rows: 32px pitch, 24px highlight (transparent 4px borders keep margins from collapsing). */
+.row {
+  height: 32px;
+  margin: 0 8px;
+  border: solid transparent;
+  border-width: 4px 0;
+  background-clip: padding-box;
+}
+.row.page {
+  height: 32px;
+}
+.divider {
+  margin: 8px 0 0;
+}
+.section-title.layers + .row {
+  margin-top: 4px;
+}
+.row[data-layer] {
+  gap: 9px;
+}
+.row[data-layer] > svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+
+/* Properties panel: tabs sit at the top of their row, with 8px under them and a hairline. */
+.avatar {
+  font: 450 13px/16px var(--font);
+}
+.ptabs {
+  height: 33px;
+  padding: 0 8px 8px;
+  gap: 4px;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+}
+.ptabs .zoom {
+  gap: 0;
+}
+.ptabs .zoom svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+.field-box.joined {
+  flex: 1;
+  gap: 5px;
+  padding: 0 4px 0 5px;
+  justify-content: flex-start;
+}
+.field-box.joined .swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+}
+.field-box.joined .hexin {
+  flex: 1;
+}
+.field-box.joined .pctin {
+  width: 38px;
+  flex: none;
+  text-align: right;
+}
+.check {
+  height: 36px;
+  padding: 8px 0 0;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 16px;
+}
+.export-row {
+  gap: 8px;
+  padding-top: 4px;
+}
+.export-row .field-box {
+  width: 74px;
+  flex: none;
+}
+.preview {
+  height: 32px;
+  padding: 4px 0;
+  gap: 0;
+  margin-left: -8px;
+  font-size: 11px;
+}
+.preview .pv svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+/* Toolbar pill: 12px off the bottom, 8px between groups (button 32 + caret 16 + 1px = 49). */
+.toolbar {
+  bottom: 12px;
+  gap: 8px;
+}
+.tgroup {
+  gap: 1px;
+}
+
+/* ---- Second spacing pass (right panel and file header), from the measured diff. ---- */
+.right-panel {
+  padding-left: 1px;
+}
+.file-line {
+  gap: 2px;
+}
+.field-box {
+  font-size: 11px;
+}
+.page-row {
+  padding: 4px 0;
+}
+.field-box.joined {
+  flex: none;
+  width: 184px;
+  gap: 0;
+  padding: 0 0 0 5px;
+}
+.field-box.joined .swatch {
+  margin-right: 5px;
+}
+.field-box.joined .hexin {
+  width: 105px;
+  height: 24px;
+  flex: none;
+}
+.field-box.joined .pctin {
+  height: 24px;
+}
+.export-btn {
+  font-size: 11px;
+}
+.export-row .ibtn + .ibtn {
+  margin-left: -4px;
+}
+.preview {
+  margin-top: 4px;
+}
+.field-box.joined .hexin {
+  margin-right: 1px;
+}
+.preview .pv {
+  display: grid;
+  place-items: center;
+}
+
+/* ---- Toolbar as in the Figma reference: tool groups, Actions, a full-height divider, then the mode switcher. ---- */
+.toolbar {
+  border-radius: 14px;
+}
+.tool-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: -8px 0;
+  background: #ffffff1a;
+}
+.modes {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 2px 4px;
+  background: var(--panel-2);
+  border-radius: 7px;
+}
+.mode {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.mode svg {
+  width: 18px;
+  height: 18px;
+}
+.mode.on {
+  background: var(--panel);
+  color: #79b8ff;
+}
+.mode.disabled {
+  opacity: 0.4;
+}
+.toolbar {
+  border: 0;
+}
+/* The toolbar keeps every tool at full brightness, as in the reference; tools the OS lacks just do nothing. */
+.toolbar .tool.disabled {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: default;
+}
+.mode.disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+/* ---- Frames on a grey canvas: no artboard, no page. The cell grid is a faint guide on the grey. ---- */
+.artboard {
+  background-color: transparent;
+  background-image:
+    linear-gradient(#ffffff0f 1px, transparent 1px),
+    linear-gradient(90deg, #ffffff0f 1px, transparent 1px);
+  box-shadow: 0 0 0 1px #ffffff14;
+}
+.layer .rot {
+  position: absolute;
+}
+.layer .shape {
+  position: absolute;
+  inset: 0;
+}
+.layer .rot > svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.layer.slice .shape {
+  background: #0c8ce922;
+  outline: 1px dashed var(--accent);
+}
+.layer .text {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  font-family: ui-monospace, Menlo, "SF Mono", monospace;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.layer .text span {
+  flex: none;
+  text-align: center;
+}
+.layer .pin {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50% 50% 50% 0;
+}
+.layer .pin svg {
+  width: 60%;
+  height: 60%;
+}
+.frame-name {
+  position: absolute;
+  z-index: 2;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.frame-name:hover {
+  color: var(--text);
+}
+.frame-name.sel {
+  color: #79b8ff;
+}
+.text-edit {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  padding: 0 4px;
+  background: #fff;
+  color: #000;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  font-family: ui-monospace, Menlo, "SF Mono", monospace;
+  font-weight: 700;
+}
+.pen-dot {
+  position: absolute;
+  z-index: 3;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid #fff;
+  pointer-events: none;
+}
+
+/* Cursors: every drawing tool crosshairs, Hand grabs, Dev Mode only points. */
+[data-tool="frame"] .artboard,
+[data-tool="section"] .artboard,
+[data-tool="slice"] .artboard,
+[data-tool="line"] .artboard,
+[data-tool="arrow"] .artboard,
+[data-tool="polygon"] .artboard,
+[data-tool="star"] .artboard,
+[data-tool="pen"] .artboard,
+[data-tool="comment"] .artboard {
+  cursor: crosshair;
+}
+[data-tool="text"] .artboard {
+  cursor: text;
+}
+[data-tool="hand"] .canvas,
+[data-tool="hand"] .artboard {
+  cursor: grab;
+}
+[data-mode="dev"] .artboard {
+  cursor: default;
+}
+
+/* Present: one frame per slide, with a bar to step through them. */
+.present-empty {
+  color: var(--muted);
+  text-align: center;
+  line-height: 20px;
+  font-size: 13px;
+}
+.present-bar .pb {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+.present-bar .pb.edit {
+  width: auto;
+  padding: 2px 10px;
+}
+.present-bar .pb svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Properties panel: text, stroke, effects, Dev Mode. */
+.field.wide {
+  width: 100%;
+}
+.textin {
+  width: 100%;
+}
+.ibtn.on {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.effect-row {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  gap: 8px;
+}
+.hint-line {
+  color: var(--dim);
+  padding: 8px 0 4px;
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  height: 24px;
+  align-items: center;
+  color: var(--muted);
+}
+.kv b {
+  color: var(--text);
+  font-weight: 450;
+}
+.code {
+  margin: 4px 0 8px;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  font:
+    11px/16px ui-monospace,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  user-select: text;
+  color: var(--muted);
+}
+.props-block .palette {
+  margin-bottom: 4px;
+}
+
+/* Rail glyphs: Figma draws its 24px icons with padding, so the visible glyph is ~17px; Lucide fills its box. */
+.rail-ico svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---- An unbounded canvas: the cell grid tiles forever, anchored to the canvas origin as you pan and zoom. ---- */
+.canvas {
+  background-image:
+    linear-gradient(#ffffff0f 1px, transparent 1px),
+    linear-gradient(90deg, #ffffff0f 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+  background-position: calc(100px + var(--px, 0px)) calc(76px + var(--py, 0px));
+}
+.artboard {
+  width: 0;
+  height: 0;
+  background-image: none;
+  box-shadow: none;
+}
+.app.no-grid .canvas,
+.app.thin .canvas {
+  background-image: none;
+}
+
+/* Cursors follow the whole canvas now, not the old artboard box. */
+[data-tool="frame"] .canvas,
+[data-tool="section"] .canvas,
+[data-tool="slice"] .canvas,
+[data-tool="rect"] .canvas,
+[data-tool="line"] .canvas,
+[data-tool="arrow"] .canvas,
+[data-tool="ellipse"] .canvas,
+[data-tool="polygon"] .canvas,
+[data-tool="star"] .canvas,
+[data-tool="pen"] .canvas,
+[data-tool="paint"] .canvas,
+[data-tool="erase"] .canvas,
+[data-tool="comment"] .canvas {
+  cursor: crosshair;
+}
+[data-tool="text"] .canvas {
+  cursor: text;
+}
+.canvas.space,
+[data-tool="hand"] .canvas {
+  cursor: grab;
+}
+.canvas.panning {
+  cursor: grabbing;
+}
+.canvas .toolbar,
+.canvas .ruler-x,
+.canvas .ruler-y {
+  cursor: default;
+}
+
+/* ---- Lines between the boxes, as in Figma: rail | file panel | canvas | properties panel. ---- */
+.nav-rail {
+  border-right: 1px solid var(--line);
+}
+/* The short divider under the logo, in the 16px gap above File. */
+.rail-main {
+  position: relative;
+}
+.rail-main::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -9px;
+  height: 1px;
+  background: var(--line);
+}
+/* The panels' outer edges are the same grey hairline, not black. */
+.left-panel {
+  box-shadow: 1px 0 0 var(--line);
+}
+.right-panel {
+  box-shadow: -1px 0 0 var(--line);
+}
+/* The selected rail tab, as in the reference: a blue-grey tile and a blue glyph. */
+.rail-item.on .rail-ico {
+  background: var(--accent-bg);
+  color: #79b8ff;
+}

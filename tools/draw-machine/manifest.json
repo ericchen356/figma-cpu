@@ -1,8 +1,0 @@
-{
-  "name": "FigmaCPU Draw Machine v2",
-  "id": "figmacpu-draw-machine-dev",
-  "api": "1.0.0",
-  "main": "code.js",
-  "editorType": ["figma"],
-  "documentAccess": "dynamic-page"
-}

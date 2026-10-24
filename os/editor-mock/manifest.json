@@ -1,0 +1,9 @@
+{
+  "name": "FigmaOS Editor Mock",
+  "id": "figmaos-editor-mock-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "figmacpu-osflow",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The Figma OS editor as a flow: variables + prototype actions that Figma's own engine runs",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.142.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
