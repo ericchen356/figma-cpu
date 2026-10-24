@@ -5,7 +5,7 @@
 //   SPAN   rectangle from two corner cells (create-drag, resize)
 //   NUDGE  one-cell step that stops at the canvas edge (arrow keys, duplicate offset)
 // Coordinates are 4-bit cells; a layer stores x0, x1 = x0 + w (exclusive end), y0, y1.
-import { GRID_H, GRID_W } from "../../../../os-ui/src/model";
+import { GRID_H, GRID_W } from "../model/reference";
 import { defineAdder } from "../../../src/cells/arith";
 import { place } from "../../../src/cells/util";
 import { constBus, define } from "../../../src/hdl/builder";

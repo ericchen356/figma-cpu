@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": { "rootDir": ".." },
-  "include": ["src", "plugin/src", "plugin/ui", "test", "../types.d.ts", "../test/fake-figma.ts", "../../os-ui/src/model.ts"]
+  "include": ["src", "plugin/src", "plugin/ui", "test", "../types.d.ts", "../test/fake-figma.ts"]
 }

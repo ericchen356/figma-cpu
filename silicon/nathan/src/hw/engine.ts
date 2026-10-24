@@ -341,15 +341,7 @@ function defineConds(lib: Library): void {
       );
       L.g("OR", [b.in1("EV_NUDGE"), b.out1("DUP_OK")], b.out1("USE_NUDGE"));
       const arg = b.in("ARG");
-      const argIs = (v: number) =>
-        L.and3(
-          b.in1("EV_NUDGE"),
-          ...([0, 1, 2].map((i) => ((v >> i) & 1 ? arg[i] : L.NOT(arg[i]))) as [
-            string,
-            string,
-            string,
-          ]),
-        );
+      const argIs = (v: number) => L.andAll([b.in1("EV_NUDGE"), ...[0, 1, 2].map((k) => ((v >> k) & 1 ? arg[k] : L.NOT(arg[k])))]);
       L.g("OR", [argIs(1), b.out1("DUP_OK")], b.out1("NR"));
       L.buf(argIs(0), b.out1("NL"));
       L.g("OR", [argIs(3), b.out1("DUP_OK")], b.out1("ND"));

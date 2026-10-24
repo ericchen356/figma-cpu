@@ -8,14 +8,22 @@
 //   · There is no `array[i]` in a prototype, so "the selected layer" is a balanced decision tree
 //     over `g/sel` (switchOn, 3 conditionals for 8 slots) with one copy of the code per slot.
 //   · There are no functions either. A pointer cell is a hotspot frame, so each hotspot carries its
-//     own copy of the handler with the cell's x and y folded in as literals.
+//     own copy of the handler, with its window cell folded in as a literal.
+//   · The canvas is unbounded and the screen shows a 14 x 10 cell window of it. The window's
+//     corner is `v/x`, `v/y` (the reducer keeps no pan: it is view state there too), so a hotspot
+//     at window cell (cx, cy) is world cell (cx, cy) + corner.
 //   · Everything the screen shows is also a variable, kept up to date at the place it changes, so
 //     drawing costs no actions: slot `vis`, `used` and `sel` flags, `fill` as 16 `f/k` flags (a
 //     node per palette color shows when its flag is on), and `rr` as the rendered corner radius.
+//
+// Not implemented yet (the tools exist, but a pointer on the canvas does nothing for them): the
+// Pen, Paint, Erase, Text and Comment tools, rotation, handle drags under the Scale tool, load,
+// image import, and renaming. eventsFor() in codec.ts refuses them so tests never claim otherwise.
 import {
   add,
   and,
   bool,
+  div,
   eq,
   ge,
   gt,
@@ -52,12 +60,11 @@ import {
   GRID_H,
   GRID_W,
   MAX_LAYERS,
-  NUM_FIELDS,
   PALETTE,
   SELECT_TOOLS,
   TOOLS,
   TOOL_KEYS,
-  UNSUPPORTED_TOOLS,
+  WORLD,
   toolCode,
   type Tool,
 } from "./spec";
@@ -69,6 +76,8 @@ export interface EditorOptions {
 
 const range = (n: number) => Array.from({ length: n }, (_, i) => i);
 const SLOTS = range(MAX_LAYERS);
+const isBoolField = (field: string) =>
+  (BOOL_FIELDS as readonly string[]).includes(field);
 
 // ---------- variable names ----------
 
@@ -93,16 +102,41 @@ const g = {
   a: ref("d/a"),
   b: ref("d/b"),
   clipHas: ref("clip/has"),
+  vx: ref("v/x"),
+  vy: ref("v/y"),
 };
 const t = (name: string) => ref(`t/${name}`);
 const f = (i: number, field: string) => ref(slot(i)(field));
 
-const TEMPS = ["hit", "fill", "x0", "x1", "y0", "y1", "v", "rr"];
+const TEMPS = [
+  "hit",
+  "fill",
+  "x0",
+  "x1",
+  "y0",
+  "y1",
+  "v",
+  "rr",
+  "px",
+  "py",
+  "par",
+  "area",
+  "rem",
+  "q",
+];
 
 function declare(): VarDecl[] {
   const d: VarDecl[] = [];
   const v = (name: string, ty: VarDecl["ty"], init: VarDecl["init"]) =>
     d.push({ name, ty, init });
+  const record = (rec: Rec) =>
+    FIELDS.forEach((field) =>
+      v(
+        rec(field),
+        isBoolField(field) ? "bool" : "num",
+        FIELD_INIT[field] ?? (isBoolField(field) ? false : 0),
+      ),
+    );
   v("g/tool", "num", toolCode("move"));
   v("g/tCreate", "bool", false);
   v("g/tSelect", "bool", true);
@@ -113,23 +147,13 @@ function declare(): VarDecl[] {
   v("d/mode", "num", 0);
   v("d/a", "num", 0);
   v("d/b", "num", 0);
+  v("v/x", "num", 0);
+  v("v/y", "num", 0);
   v("clip/has", "bool", false);
-  for (const rec of [CLIP, TMP])
-    for (const field of FIELDS)
-      v(
-        rec(field),
-        (BOOL_FIELDS as readonly string[]).includes(field) ? "bool" : "num",
-        FIELD_INIT[field] ??
-          ((BOOL_FIELDS as readonly string[]).includes(field) ? false : 0),
-      );
+  record(CLIP);
+  record(TMP);
   for (const i of SLOTS) {
-    for (const field of FIELDS)
-      v(
-        slot(i)(field),
-        (BOOL_FIELDS as readonly string[]).includes(field) ? "bool" : "num",
-        FIELD_INIT[field] ??
-          ((BOOL_FIELDS as readonly string[]).includes(field) ? false : 0),
-      );
+    record(slot(i));
     for (let k = 0; k < PALETTE.length; k++) v(`L${i}/f/${k}`, "bool", false);
     v(`L${i}/sel`, "bool", false);
     v(`L${i}/used`, "bool", false);
@@ -182,31 +206,42 @@ const clampInto = (dst: string, v: Expr, lo: Expr, hi: Expr): Step[] =>
 
 export interface Editor extends Program {
   K: number;
-  /** Cell grid size, for the layout. */
+  /** The screen's window onto the canvas, in cells. */
   grid: { w: number; h: number };
 }
 
 export function buildEditor(opts: EditorOptions = {}): Editor {
   const K = opts.K ?? DEFAULT_K;
   const C = (cells: number) => num(cells * K);
-  const GW = C(GRID_W);
-  const GH = C(GRID_H);
   const one = C(1);
+  const W = C(WORLD);
+  const negW = C(-WORLD);
   const kindIs = (i: number, tool: Tool) =>
     eq(f(i, "kind"), num(toolCode(tool)));
+  const isContainer = (i: number) =>
+    or(kindIs(i, "frame"), kindIs(i, "section"));
+  /** The reducer's `world()`: keeps a coordinate inside the canvas. */
+  const world = (dst: string, v: Expr): Step[] => clampInto(dst, v, negW, W);
 
   function setTool(tool: Tool): Step[] {
     return seq(
       set("g/tool", num(toolCode(tool))),
       set("g/tCreate", bool(CREATE_TOOLS.includes(tool))),
       set("g/tSelect", bool(SELECT_TOOLS.includes(tool))),
-      UNSUPPORTED_TOOLS.includes(tool) && tool !== "text" && tool !== "comment"
+      // The Pen, Paint and Erase tools drop the selection.
+      tool === "pen" || tool === "paint" || tool === "erase"
         ? setSel(num(-1))
         : [],
     );
   }
 
-  /** Topmost visible slot whose box covers the cell (X, Y), into t/hit; -1 for none. */
+  /** The pointer's world cell, from a hotspot's window cell, into t/px, t/py. */
+  const pointer = (cx: number, cy: number): Step[] =>
+    seq(set("t/px", add(C(cx), g.vx)), set("t/py", add(C(cy), g.vy)));
+  const PX = t("px");
+  const PY = t("py");
+
+  /** Topmost visible slot whose box covers the world cell (X, Y), into t/hit; -1 for none. */
   function hitTest(X: Expr, Y: Expr): Step[] {
     const covers = (i: number) =>
       and(
@@ -268,20 +303,27 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
     );
   }
 
-  /** Pointer pressed on the cell (X, Y). */
-  function down(X: Expr, Y: Expr): Step[] {
+  /** Pointer pressed on window cell (cx, cy). */
+  function down(cx: number, cy: number): Step[] {
     return when(
       g.tCreate,
       [
         when(
           ge(g.n, num(MAX_LAYERS)),
           [setTool("move")],
-          [create(X, Y), set("d/mode", num(1)), set("d/a", X), set("d/b", Y)],
+          [
+            pointer(cx, cy),
+            create(PX, PY),
+            set("d/mode", num(1)),
+            set("d/a", PX),
+            set("d/b", PY),
+          ],
         ),
       ],
       [
         when(g.tSelect, [
-          hitTest(X, Y),
+          pointer(cx, cy),
+          hitTest(PX, PY),
           when(
             lt(t("hit"), num(0)),
             [setSel(num(-1))],
@@ -290,8 +332,8 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
               set("d/mode", num(2)),
               switchOn(t("hit"), 0, MAX_LAYERS - 1, (i) =>
                 seq(
-                  set("d/a", sub(X, f(i, "x"))),
-                  set("d/b", sub(Y, f(i, "y"))),
+                  set("d/a", sub(PX, f(i, "x"))),
+                  set("d/b", sub(PY, f(i, "y"))),
                 ),
               ),
             ],
@@ -321,37 +363,35 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
       set(`L${i}/h`, add(sub(t("y1"), t("y0")), one)),
     );
 
-  /** Pointer moved over the cell (X, Y) with the button down. */
-  function move(X: Expr, Y: Expr): Step[] {
+  /** Pointer moved over window cell (cx, cy) with the button down. */
+  function move(cx: number, cy: number): Step[] {
     return when(and(ne(g.mode, num(0)), ge(g.sel, num(0))), [
+      pointer(cx, cy),
       when(
         eq(g.mode, num(2)),
         [
           onSelected((i) =>
-            seq(
-              clampInto(`L${i}/x`, sub(X, g.a), num(0), sub(GW, f(i, "w"))),
-              clampInto(`L${i}/y`, sub(Y, g.b), num(0), sub(GH, f(i, "h"))),
-            ),
+            seq(world(`L${i}/x`, sub(PX, g.a)), world(`L${i}/y`, sub(PY, g.b))),
           ),
         ],
         [
           when(
             eq(g.mode, num(1)),
             [
-              spanTemps(g.a, g.b, X, Y),
+              spanTemps(g.a, g.b, PX, PY),
               onSelected((i) =>
                 seq(
                   putSpan(i),
                   // A line or arrow dragged against the diagonal runs bottom-left to top-right.
                   when(or(kindIs(i, "line"), kindIs(i, "arrow")), [
-                    set(`L${i}/flip`, ne(lt(X, g.a), lt(Y, g.b))),
+                    set(`L${i}/flip`, ne(lt(PX, g.a), lt(PY, g.b))),
                   ]),
                 ),
               ),
             ],
             [
               when(eq(g.mode, num(3)), [
-                spanTemps(g.a, g.b, X, Y),
+                spanTemps(g.a, g.b, PX, PY),
                 onSelected(putSpan),
               ]),
             ],
@@ -426,33 +466,25 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
     ]);
 
   /** Adds the layer in `src` (a record) on top with a fresh id; selected. */
-  const addFrom = (src: Rec, place?: (i: number) => Step[]): Step[] => [
-    switchOn(g.n, 0, MAX_LAYERS - 1, (i) =>
-      seq(copyToSlot(i, src), set(`L${i}/id`, g.nextId), place?.(i) ?? []),
-    ),
-    setSel(g.n),
-    set("g/n", add(g.n, num(1))),
-    set("g/nextId", add(g.nextId, num(1))),
-    refreshUsed(),
-  ];
+  const addFrom = (src: Rec, place?: (i: number) => Step[]): Step[] =>
+    seq(
+      switchOn(g.n, 0, MAX_LAYERS - 1, (i) =>
+        seq(copyToSlot(i, src), set(`L${i}/id`, g.nextId), place?.(i) ?? []),
+      ),
+      setSel(g.n),
+      set("g/n", add(g.n, num(1))),
+      set("g/nextId", add(g.nextId, num(1))),
+      refreshUsed(),
+    );
 
+  /** A copy one cell down and to the right of the selection. */
   const duplicate = (): Step[] =>
     when(and(ge(g.sel, num(0)), lt(g.n, num(MAX_LAYERS))), [
       switchOn(g.sel, 0, MAX_LAYERS - 1, (i) => copyRec(TMP, slot(i))),
       addFrom(TMP, (i) =>
         seq(
-          clampInto(
-            `L${i}/x`,
-            add(ref("tmp/x"), one),
-            num(0),
-            sub(GW, ref("tmp/w")),
-          ),
-          clampInto(
-            `L${i}/y`,
-            add(ref("tmp/y"), one),
-            num(0),
-            sub(GH, ref("tmp/h")),
-          ),
+          world(`L${i}/x`, add(ref("tmp/x"), one)),
+          world(`L${i}/y`, add(ref("tmp/y"), one)),
         ),
       ),
     ]);
@@ -460,26 +492,12 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
   const paste = (): Step[] =>
     when(and(g.clipHas, lt(g.n, num(MAX_LAYERS))), addFrom(CLIP));
 
-  /** Moves the selection by (dx, dy) cells, staying on the canvas. */
+  /** Moves the selection by (dx, dy) cells. */
   const nudge = (dx: number, dy: number): Step[] =>
     onSelected((i) =>
       seq(
-        dx
-          ? clampInto(
-              `L${i}/x`,
-              add(f(i, "x"), C(dx)),
-              num(0),
-              sub(GW, f(i, "w")),
-            )
-          : [],
-        dy
-          ? clampInto(
-              `L${i}/y`,
-              add(f(i, "y"), C(dy)),
-              num(0),
-              sub(GH, f(i, "h")),
-            )
-          : [],
+        dx ? world(`L${i}/x`, add(f(i, "x"), C(dx))) : [],
+        dy ? world(`L${i}/y`, add(f(i, "y"), C(dy))) : [],
       ),
     );
 
@@ -492,33 +510,11 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
       const dst = `L${i}/${prop}`;
       switch (prop) {
         case "x":
-          return clampInto(
-            dst,
-            add(f(i, "x"), C(dir)),
-            num(0),
-            sub(GW, f(i, "w")),
-          );
         case "y":
-          return clampInto(
-            dst,
-            add(f(i, "y"), C(dir)),
-            num(0),
-            sub(GH, f(i, "h")),
-          );
+          return world(dst, add(f(i, prop), C(dir)));
         case "w":
-          return clampInto(
-            dst,
-            add(f(i, "w"), C(dir)),
-            one,
-            sub(GW, f(i, "x")),
-          );
         case "h":
-          return clampInto(
-            dst,
-            add(f(i, "h"), C(dir)),
-            one,
-            sub(GH, f(i, "y")),
-          );
+          return clampInto(dst, add(f(i, prop), C(dir)), one, W);
         case "opacity":
           return clampInto(
             dst,
@@ -538,34 +534,93 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
     });
   }
 
-  /** floor(v / 2) for a px value that is a whole number of cells (the reducer's Math.floor). */
-  const halfInto = (dst: string, v: Expr, cells: number): Step[] =>
-    switchOn(div0(v), 0, cells, (c) => set(dst, num(Math.floor(c / 2) * K)));
-  const div0 = (v: Expr): Expr => ({ k: "op", fn: "div", a: v, b: num(K) });
+  /** dst = floor(v / 2) cells, for a px value v ≥ 0 that is a whole number of cells (Math.floor
+   * in the reducer): peels the bits of the cell count from the top. */
+  function halfInto(dst: string, v: Expr): Step[] {
+    const top = 1 << Math.floor(Math.log2(2 * WORLD + 1));
+    const peel: Step[] = [];
+    for (let b = top; b >= 2; b >>= 1)
+      peel.push(
+        ...when(ge(t("rem"), num(b)), [
+          set("t/rem", sub(t("rem"), num(b))),
+          set("t/q", add(t("q"), num(b / 2))),
+        ]),
+      );
+    return seq(
+      set("t/rem", div(v, num(K))),
+      set("t/q", num(0)),
+      peel,
+      set(dst, mul(t("q"), num(K))),
+    );
+  }
 
+  /** Into t/par: the smallest frame or section that fully contains slot i, else -1 (the reducer's
+   * `parentOf`). Ties go to the lowest slot, as `for … of` does there. */
+  function findParent(i: number): Step[] {
+    const area = (j: number) => mul(f(j, "w"), f(j, "h"));
+    return seq(
+      set("t/par", num(-1)),
+      SLOTS.filter((j) => j !== i).flatMap((j) =>
+        when(and(lt(num(j), g.n), isContainer(j)), [
+          when(
+            and(
+              le(f(j, "x"), f(i, "x")),
+              le(f(j, "y"), f(i, "y")),
+              le(add(f(i, "x"), f(i, "w")), add(f(j, "x"), f(j, "w"))),
+              le(add(f(i, "y"), f(i, "h")), add(f(j, "y"), f(j, "h"))),
+            ),
+            [
+              when(
+                or(
+                  gt(area(j), area(i)),
+                  and(eq(area(j), area(i)), lt(f(j, "id"), f(i, "id"))),
+                ),
+                [
+                  when(or(lt(t("par"), num(0)), lt(area(j), t("area"))), [
+                    set("t/par", num(j)),
+                    set("t/area", area(j)),
+                  ]),
+                ],
+              ),
+            ],
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /** Aligns the selection to the frame or section it sits in; a layer on the bare canvas has nothing to align to. */
   function align(to: (typeof ALIGNS)[number]): Step[] {
-    return onSelected((i) => {
+    const toParent = (i: number, p: number): Step[] => {
       switch (to) {
         case "left":
-          return set(`L${i}/x`, num(0));
+          return set(`L${i}/x`, f(p, "x"));
         case "right":
-          return set(`L${i}/x`, sub(GW, f(i, "w")));
+          return set(`L${i}/x`, sub(add(f(p, "x"), f(p, "w")), f(i, "w")));
         case "top":
-          return set(`L${i}/y`, num(0));
+          return set(`L${i}/y`, f(p, "y"));
         case "bottom":
-          return set(`L${i}/y`, sub(GH, f(i, "h")));
+          return set(`L${i}/y`, sub(add(f(p, "y"), f(p, "h")), f(i, "h")));
         case "hcenter":
           return seq(
-            halfInto("t/v", sub(GW, f(i, "w")), GRID_W),
-            set(`L${i}/x`, t("v")),
+            halfInto("t/v", sub(f(p, "w"), f(i, "w"))),
+            set(`L${i}/x`, add(f(p, "x"), t("v"))),
           );
         case "vcenter":
           return seq(
-            halfInto("t/v", sub(GH, f(i, "h")), GRID_H),
-            set(`L${i}/y`, t("v")),
+            halfInto("t/v", sub(f(p, "h"), f(i, "h"))),
+            set(`L${i}/y`, add(f(p, "y"), t("v"))),
           );
       }
-    });
+    };
+    return onSelected((i) =>
+      seq(
+        findParent(i),
+        when(ge(t("par"), num(0)), [
+          switchOn(t("par"), 0, MAX_LAYERS - 1, (p) => toParent(i, p)),
+        ]),
+      ),
+    );
   }
 
   function newDoc(): Step[] {
@@ -615,11 +670,9 @@ export function buildEditor(opts: EditorOptions = {}): Editor {
 
   for (let cy = 0; cy < GRID_H; cy++)
     for (let cx = 0; cx < GRID_W; cx++) {
-      const X = C(cx);
-      const Y = C(cy);
       const node = `cell/${cx},${cy}`;
-      on(node, { type: "down" }, down(X, Y));
-      on(node, { type: "enter" }, move(X, Y));
+      on(node, { type: "down" }, down(cx, cy));
+      on(node, { type: "enter" }, move(cx, cy));
       on(node, { type: "up" }, up());
     }
   for (const c of CORNERS) on(`handle/${c}`, { type: "down" }, handleDown(c));

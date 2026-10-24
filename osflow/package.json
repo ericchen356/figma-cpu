@@ -6,7 +6,9 @@
   "description": "The Figma OS editor as a flow: variables + prototype actions that Figma's own engine runs",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "stats": "esbuild cli/stats.ts --bundle --platform=node --format=esm --log-level=warning --outfile=dist/stats.mjs && node dist/stats.mjs",
+    "spike": "node spike/build.mjs"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.142.0",

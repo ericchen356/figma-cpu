@@ -5,3 +5,5 @@ os-ui/dist/
 silicon/plugin/dist/
 silicon/cli/dist/
 .gstack/
+osflow/dist/
+osflow/spike/dist/

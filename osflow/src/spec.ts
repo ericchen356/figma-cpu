@@ -6,11 +6,12 @@ import {
   MAX_LAYERS,
   PALETTE,
   TOOL_KEYS,
+  WORLD,
   type Corner,
   type Tool,
 } from "../../os-ui/src/model";
 
-export { GRID_H, GRID_W, MAX_LAYERS, PALETTE, TOOL_KEYS };
+export { GRID_H, GRID_W, MAX_LAYERS, PALETTE, TOOL_KEYS, WORLD };
 export type { Corner, Tool };
 
 /** Order of the Tool union in os-ui/src/model.ts. A kind's code is its tool's code. */

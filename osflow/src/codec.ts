@@ -127,57 +127,57 @@ export function viewOf(s: State): View {
 /** Why an action cannot be a Figma UI event (yet). */
 export class Unsupported extends Error {}
 
+/** The corner of the screen's window in the canvas, in cells. The flow's `v/x`, `v/y` divided by K. */
+export interface Origin {
+  x: number;
+  y: number;
+}
+
 /**
  * The event ids a person causes in Figma by doing what `a` says, given the state it applies to.
- * A pointer `up` can land on any cell and every cell's `up` is the same handler, so cell 0,0 stands in.
+ * A pointer action names a canvas cell; a hotspot is a cell of the 14 x 10 window, so it is the
+ * cell minus the window's corner and must lie inside it. A pointer `up` can land on any hotspot
+ * and every `up` is the same handler, so cell 0,0 stands in.
  * Property edits are the Properties panel's +/- steppers: Figma cannot type a number, so a typed
  * value is only supported when it is one step from the current one.
  */
-export function eventsFor(s: State, a: Action): string[] {
+export function eventsFor(s: State, a: Action, origin: Origin = { x: 0, y: 0 }): string[] {
   const slotOf = (id: number) => {
     const i = s.layers.findIndex((l) => l.id === id);
     if (i < 0) throw new Unsupported(`no layer ${id}`);
     return i;
   };
-  const inGrid = (x: number, y: number) =>
-    x >= 0 && x < GRID_W && y >= 0 && y < GRID_H;
+  const cell = (x: number, y: number) => {
+    const cx = x - origin.x;
+    const cy = y - origin.y;
+    if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) throw new Unsupported("pointer outside the window has no hotspot");
+    return `cell/${cx},${cy}`;
+  };
   switch (a.t) {
     case "down":
-      if (!inGrid(a.x, a.y))
-        throw new Unsupported("pointer outside the canvas has no hotspot");
-      if (UNSUPPORTED_TOOLS.includes(s.tool))
-        throw new Unsupported(`tool ${s.tool}`);
-      return [
-        a.handle && CORNERS.includes(a.handle) && getSelected(s)
-          ? `handle/${a.handle}#down`
-          : `cell/${a.x},${a.y}#down`,
-      ];
+      if (UNSUPPORTED_TOOLS.includes(s.tool)) throw new Unsupported(`tool ${s.tool}`);
+      if (a.handle && getSelected(s)) {
+        if (s.tool === "scale") throw new Unsupported("resize handles under the Scale tool keep a ratio");
+        return [`handle/${a.handle}#down`];
+      }
+      return [`${cell(a.x, a.y)}#down`];
     case "move":
-      if (!inGrid(a.x, a.y))
-        throw new Unsupported("pointer outside the canvas has no hotspot");
-      return [`cell/${a.x},${a.y}#enter`];
+      return [`${cell(a.x, a.y)}#enter`];
     case "up":
       return ["cell/0,0#up"];
     case "tool":
       return [`tool/${a.tool}#click`];
     case "select":
-      return [
-        a.id === null ? "select/none#click" : `layer/${slotOf(a.id)}#click`,
-      ];
+      return [a.id === null ? "select/none#click" : `layer/${slotOf(a.id)}#click`];
     case "visible":
       return [`eye/${slotOf(a.id)}#click`];
     case "fill":
       return [`swatch/${PALETTE.indexOf(a.color)}#click`];
     case "stroke":
-      return [
-        a.color === ""
-          ? "stroke/none#click"
-          : `stroke/${PALETTE.indexOf(a.color)}#click`,
-      ];
+      return [a.color === "" ? "stroke/none#click" : `stroke/${PALETTE.indexOf(a.color)}#click`];
     case "shadow":
       return [a.on ? "shadow/on#click" : "shadow/off#click"];
     case "align":
-      if (!ALIGNS.includes(a.to)) throw new Unsupported(`align ${a.to}`);
       return [`align/${a.to}#click`];
     case "new":
       return ["new#click"];
@@ -193,9 +193,7 @@ export function eventsFor(s: State, a: Action): string[] {
       throw new Unsupported(`prop ${a.prop} jumps from ${cur} to ${want}`);
     }
     case "key": {
-      const id = a.meta
-        ? `key/meta+${a.key}`
-        : `key/${a.shift ? "shift+" : ""}${a.key}`;
+      const id = a.meta ? `key/meta+${a.key}` : `key/${a.shift ? "shift+" : ""}${a.key}`;
       return [`${id}#key`];
     }
     default:

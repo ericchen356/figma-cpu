@@ -1,0 +1,16 @@
+{
+  "name": "OS Flow Spike",
+  "id": "osflow-spike-dev",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] },
+  "menu": [
+    { "name": "Editor · build the real compiled OS (variables, hotspots, reactions)", "command": "editor" },
+    { "separator": true },
+    { "name": "Tests · all (render + input)", "command": "all" },
+    { "name": "Tests · render only (R1 size, R2 position, R3 fill)", "command": "render" },
+    { "name": "Tests · input only (I1 pointer, I2 keys)", "command": "input" }
+  ]
+}
