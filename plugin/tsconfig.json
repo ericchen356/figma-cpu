@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "es2017",
-    "lib": ["es2020", "dom"],
+    "lib": [
+      "es2020",
+      "dom"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -9,7 +12,15 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "typeRoots": ["./node_modules/@types", "./node_modules/@figma"]
+    "types": [
+      "@figma/plugin-typings",
+      "node"
+    ]
   },
-  "include": ["src", "ui", "test", "types.d.ts"]
+  "include": [
+    "src",
+    "ui",
+    "test",
+    "types.d.ts"
+  ]
 }
