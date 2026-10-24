@@ -11,7 +11,7 @@ import { flatten, netId } from "../src/netlist/flatten";
 import { type FlatNetlist, GATE_TYPES, evalGate, type Library } from "../src/netlist/types";
 import { apply } from "../src/prototype/apply";
 import { runFigmaActions, type FigmaValue } from "../src/prototype/emulate";
-import { aliasData, boolData, conditional, exprData, figmaActions, increment, navigate, toFigmaActions, worstCase } from "../src/prototype/figma-actions";
+import { aliasData, boolData, conditional, exprData, figmaActions, increment, navigate, nestedConditional, toFigmaActions, worstCase } from "../src/prototype/figma-actions";
 import { initialState, interpret, interpretChunked, runPlanActions } from "../src/prototype/interpret";
 import { dispatchOverhead, gateExpr, plan, splitActions, varName, worstActions } from "../src/prototype/plan";
 import { powerOnState, simpleSchedule } from "../src/prototype/schedule";
@@ -860,7 +860,7 @@ describe("apply() with chunked ticks", () => {
     const net = flatten(testLib(), "ACC4");
     const sched = compile(net);
     const init = powerOn(net);
-    const p = plan(net, sched, { initial: init, gate: true, maxActionsPerEvent: 60 });
+    const p = plan(net, sched, { initial: init, maxActionsPerEvent: 60 });
     const res = await apply(asApi(f), p, { multiTrigger: true, keys: [32, 75] });
     expect(res.chunks).toBe(p.chunking!.chunks.length);
     expect(res.chunks).toBeGreaterThan(1);
@@ -920,17 +920,32 @@ describe("apply() with chunked ticks", () => {
     expect(hops).toBe(3 * res.chunks + 1); // HALTED is seen at the next hop, which stops instead
   });
 
-  it("tickDisplay 'digits' counts in STRING digits within the event budget", async () => {
+  it("tickDisplay 'digits' is refused when chunked: its carry chain nests conditionals, which Figma rejects", async () => {
     const net = counterNetlist();
     const p = plan(net, compile(net), { initial: powerOn(net), maxActionsPerEvent: 80 });
+    await expect(apply(asApi(new FakeFigma()), p, { tickDisplay: "digits" })).rejects.toThrow(/CONDITIONAL nested inside a conditional block/);
+  });
+
+  it("clock gating + chunking is refused for the same reason (gated plans put an if inside each chunk)", async () => {
+    const net = flatten(testLib(), "ACC4");
+    const p = plan(net, compile(net), { initial: powerOn(net), gate: true, maxActionsPerEvent: 60 });
+    await expect(apply(asApi(new FakeFigma()), p, {})).rejects.toThrow(/nested inside a conditional block/);
+  });
+
+  it("a default chunked build nests no conditional anywhere (real Figma: 'Unrecognized key conditionalBlocks')", async () => {
     const f = new FakeFigma();
-    const res = await apply(asApi(f), p, { tickDisplay: "digits" });
-    expect(res.tickText).toBeUndefined();
-    const vals = f.values();
-    const step = onClick(res.buttons.step as unknown as FNode);
-    for (let i = 0; i < 123 * res.chunks; i++) expect(runFigmaActions(step, vals)).toBeLessThanOrEqual(80 - 2);
-    const digit = (i: number) => vals.get(f.varNamed(p.name, `ctl/digitText/${i}`).id);
-    expect([3, 2, 1, 0].map(digit).join("")).toBe("0123");
+    const net = flatten(testLib(), "ACC4");
+    const p = plan(net, compile(net), { initial: powerOn(net), maxActionsPerEvent: 60 });
+    const res = await apply(asApi(f), p, { multiTrigger: true, keys: [32] });
+    expect(res.chunks).toBeGreaterThan(1);
+    let reactions = 0;
+    for (const n of f.currentPage.findAll((x) => ((x as unknown as { reactions?: unknown[] }).reactions ?? []).length > 0)) {
+      for (const r of (n as unknown as { reactions: Array<{ actions?: Action[] }> }).reactions) {
+        reactions++;
+        expect(nestedConditional(r.actions ?? []), `reaction on ${n.name}`).toBeNull();
+      }
+    }
+    expect(reactions).toBeGreaterThan(5);
   });
 });
 

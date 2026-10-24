@@ -61,16 +61,28 @@ export function worstCase(actions: readonly RestAction[] | undefined): number {
   return n;
 }
 
-/** `if v == k` with no else: one case of apply()'s chunk dispatcher (v a variable, k a number literal). */
-function dispatchCase(a: RestAction): { v: string; k: number } | null {
-  if (a.type !== "CONDITIONAL" || a.conditionalBlocks?.length !== 1) return null;
-  const c = a.conditionalBlocks[0].condition as { type?: string; value?: { expressionFunction?: string; expressionArguments?: Array<{ type?: string; value?: unknown }> } } | undefined;
-  const e = c?.type === "EXPRESSION" ? c.value : undefined;
-  if (e?.expressionFunction !== "EQUALS" || e.expressionArguments?.length !== 2) return null;
+type RestExpr = { expressionFunction?: string; expressionArguments?: Array<{ type?: string; value?: unknown }> };
+/** `v == k` for a variable alias and a number literal, or an AND whose operand is one (the flat Run hop gates each case on ctl/go). */
+function equalsCase(e: RestExpr | undefined): { v: string; k: number } | null {
+  if (!e) return null;
+  if (e.expressionFunction === "AND") {
+    for (const arg of e.expressionArguments ?? []) {
+      const inner = arg?.type === "EXPRESSION" ? equalsCase(arg.value as RestExpr) : null;
+      if (inner) return inner;
+    }
+    return null;
+  }
+  if (e.expressionFunction !== "EQUALS" || e.expressionArguments?.length !== 2) return null;
   const [x, y] = e.expressionArguments;
   const alias = (x?.value as { type?: string; id?: unknown } | undefined) ?? undefined;
   const v = alias?.type === "VARIABLE_ALIAS" && typeof alias.id === "string" ? alias.id : x?.type === "VARIABLE_ALIAS" && typeof (x as { id?: unknown }).id === "string" ? ((x as { id: string }).id) : undefined;
   return v && typeof y?.value === "number" ? { v, k: y.value } : null;
+}
+/** `if v == k` with no else: one case of apply()'s chunk dispatcher (v a variable, k a number literal). */
+function dispatchCase(a: RestAction): { v: string; k: number } | null {
+  if (a.type !== "CONDITIONAL" || a.conditionalBlocks?.length !== 1) return null;
+  const c = a.conditionalBlocks[0].condition as { type?: string; value?: RestExpr } | undefined;
+  return c?.type === "EXPRESSION" ? equalsCase(c.value) : null;
 }
 const writesVar = (acts: readonly RestAction[] | undefined, v: string): boolean =>
   (acts ?? []).some((a) => a.variableId === v || (a.conditionalBlocks ?? []).some((b) => writesVar(b.actions, v)));

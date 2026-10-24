@@ -36,6 +36,8 @@ import {
   type FigmaActionOptions,
   figmaActions,
   floatData,
+  guardReactions,
+  nestedConditional,
   increment,
   keyDown,
   mouseDown,
@@ -121,7 +123,8 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const name = plan.name;
   const frameNames = [`${name} · Control`, `${name} · Run A`, `${name} · Run B`, `${name} · Reset A`, `${name} · Reset B`];
   const display = opts.tickDisplay ?? "concat";
-  const tickExtra = display === "digits" ? worstCase(digitsIncrement(range(DIGITS, "d"), range(DIGITS, "s"))) + 1 : display === "concat" ? 2 : 1;
+  // + 2: the flattened Run hop (see `loop`) spends one more action (the "go" snapshot) and a three-action tail conditional.
+  const tickExtra = (display === "digits" ? worstCase(digitsIncrement(range(DIGITS, "d"), range(DIGITS, "s"))) + 1 : display === "concat" ? 2 : 1) + 2;
   const cap = opts.maxActionsPerEvent ?? plan.maxActionsPerEvent ?? DEFAULT_MAX_ACTIONS_PER_EVENT;
   const chunking: Chunking | undefined = needsChunks(worstActions(plan.tick), cap, tickExtra)
     ? plan.chunking && plan.chunking.maxActionsPerEvent === cap && plan.chunking.tickExtra >= tickExtra
@@ -164,6 +167,8 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
           { name: "ctl/phase", type: "FLOAT" as const, init: 0 },
           { name: "ctl/phaseNow", type: "FLOAT" as const, init: 0 },
           { name: "ctl/phaseText", type: "STRING" as const, init: "0" },
+          // The Run hop's keep-going decision, snapshotted once so the flattened dispatcher cannot change its mind mid-event.
+          { name: "ctl/go", type: "BOOLEAN" as const, init: false },
         ]
       : []),
   ];
@@ -211,22 +216,24 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
       ),
     );
   let event: Action[];
+  // One dispatch block per chunk. All of them sit at the TOP level of the event: Figma rejects a CONDITIONAL nested in
+  // another conditional's block ("Unrecognized key conditionalBlocks"), which the emulator never noticed.
+  let dispatch: (gate?: ReturnType<typeof exprData>) => Action[] = () => [];
   if (chunking) {
     const ph = phase!.id;
     const now = ctl.get("ctl/phaseNow")!.id;
     const phText = ctl.get("ctl/phaseText")!.id;
     const K = chunking.chunks.length;
-    event = [
-      setVariable(now, exprData("ADDITION", [aliasData(ph, "FLOAT"), floatData(0)], "FLOAT")),
-      ...chunking.chunks.map((c, k) =>
-        conditional(compareData("EQUALS", now, k), [
+    dispatch = (gate) =>
+      chunking.chunks.map((c, k) =>
+        conditional(gate ? exprData("AND", [gate, compareData("EQUALS", now, k)]) : compareData("EQUALS", now, k), [
           ...figmaActions(c, varIds, opts.actions),
           setVariable(ph, floatData((k + 1) % K)),
           concatText(phText, ph),
           ...(k === K - 1 ? tickDone : []),
         ]),
-      ),
-    ];
+      );
+    event = [setVariable(now, exprData("ADDITION", [aliasData(ph, "FLOAT"), floatData(0)], "FLOAT")), ...dispatch()];
   } else event = [...figmaActions(plan.tick, varIds, opts.actions), ...tickDone];
   // What Reset does besides restoring the circuit: counters, phase and the running flag back to 0.
   const resetTail: Action[] = [
@@ -270,7 +277,8 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const perEvent = chunking
     ? 1 + event.length - 1 + Math.max(...event.slice(1).map((c) => worstCase([c]) - 1))
     : worstCase(event);
-  if (perEvent + 2 > cap) throw new Error(`one event can execute ${perEvent + 2} actions, more than maxActionsPerEvent ${cap}`);
+  const hopExtra = chunking ? 4 : 2;
+  if (perEvent + hopExtra > cap) throw new Error(`one event can execute ${perEvent + hopExtra} actions, more than maxActionsPerEvent ${cap}`);
 
   // 4. Frames.
   await loadFonts(api);
@@ -319,42 +327,71 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const resetB = resetChunking ? frame(`${name} · resetting (B)`, 4) : undefined;
   const stopA = put(runA, button(api, "Stop", COLORS.stop), 24, 84);
   const stopB = put(runB, button(api, "Stop", COLORS.stop), 24, 84);
+  for (const [g, label] of [[controlFrame, "Control"], [runA, "Run A frame"], [runB, "Run B frame"], [run, "Run button"], [reset, "Reset button"], [stopA, "Stop A"], [stopB, "Stop B"], [stepMulti, "Step x3"], [resetA, "Reset A frame"], [resetB, "Reset B frame"]] as const) guardReactions(g, label, log);
 
   // 5. Reactions.
   const delay = opts.runDelayMs ?? 1;
   const keys = (opts.keys ?? []).length ? [{ trigger: keyDown(opts.keys!), actions: event }] : [];
+  // Unchunked: the whole tick sits in the keep-going conditional's block. Chunked: that would nest one dispatch conditional inside
+  // another (rejected by Figma), so the hop is flat: snapshot the keep-going decision into ctl/go, run the one matching chunk
+  // gated by it, then a final conditional on the snapshot navigates on (or stops and returns to Control).
+  const goVar = ctl.get("ctl/go");
+  const goNow = goVar ? exprData("EQUALS", [aliasData(goVar.id), boolData(true)]) : undefined;
   const loop = (to: FrameNode): Reaction[] => [
-    { trigger: afterTimeout(delay), actions: [conditional(keepGoing, [...event, navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)])] },
+    {
+      trigger: afterTimeout(delay),
+      actions: chunking
+        ? [
+            event[0],
+            setVariable(goVar!.id, keepGoing),
+            ...dispatch(goNow),
+            conditional(goNow!, [navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)]),
+          ]
+        : [conditional(keepGoing, [...event, navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)])],
+    },
     ...keys,
   ];
   log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""}${resetChunking ? `, ${resetChunking.chunks.length} events per reset` : ""})…`);
-  await step.setReactionsAsync([{ trigger: onClick(), actions: event }]);
+  const setR = async (n: { setReactionsAsync(r: Reaction[]): Promise<void> }, label: string, r: Reaction[]) => {
+    for (const reaction of r) {
+      const bad = nestedConditional((reaction.actions ?? []) as Action[]);
+      if (bad) throw new Error(`reactions on "${label}": a CONDITIONAL nested inside a conditional block at ${bad} (Figma rejects this)`);
+    }
+    try {
+      await n.setReactionsAsync(r);
+    } catch (e) {
+      const first = r[0]?.actions?.[0] as unknown as Record<string, unknown> | undefined;
+      log(`FAILED setReactions on "${label}": ${String((e as Error)?.message ?? e).slice(0, 400)} | trigger=${JSON.stringify(r[0]?.trigger)}, actions[0] type=${String(first?.type)}, keys=${first ? Object.keys(first).join(",") : "none"}`);
+      throw e;
+    }
+  };
+  await setR(step, "Step", [{ trigger: onClick(), actions: event }]);
   if (stepMulti)
-    await stepMulti.setReactionsAsync([
+    await setR(stepMulti, "Step x3", [
       { trigger: mouseDown(), actions: event },
       { trigger: mouseUp(), actions: event },
       { trigger: onClick(), actions: event },
     ]);
   if (resetChunking) {
     const hop = (self: FrameNode, other: FrameNode) =>
-      self.setReactionsAsync([
+      setR(self, self.name, [
         {
           trigger: afterTimeout(delay),
           // phase wrapped to 0 = the last chunk ran: back to Control; else hop to the other frame
           actions: [...resetEvent, conditional(compareData("EQUALS", resetPhase!.id, 0), [navigate(controlFrame.id)], [navigate(other.id)])],
         },
       ]);
-    await reset.setReactionsAsync([
+    await setR(reset, "Reset button", [
       { trigger: onClick(), actions: [setVariable(running.id, boolData(false)), setVariable(resetPhase!.id, floatData(0)), navigate(resetA!.id)] },
     ]);
     await hop(resetA!, resetB!);
     await hop(resetB!, resetA!);
-  } else await reset.setReactionsAsync([{ trigger: onClick(), actions: resetActs }]);
-  await run.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(true)), navigate(runA.id)] }]);
-  for (const stop of [stopA, stopB]) await stop.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(false))] }]);
-  if (keys.length) await controlFrame.setReactionsAsync(keys);
-  await runA.setReactionsAsync(loop(runB));
-  await runB.setReactionsAsync(loop(runA));
+  } else await setR(reset, "Reset button", [{ trigger: onClick(), actions: resetActs }]);
+  await setR(run, "Run button", [{ trigger: onClick(), actions: [setVariable(running.id, boolData(true)), navigate(runA.id)] }]);
+  for (const stop of [stopA, stopB]) await setR(stop, "Stop button", [{ trigger: onClick(), actions: [setVariable(running.id, boolData(false))] }]);
+  if (keys.length) await setR(controlFrame, "Control keys", keys);
+  await setR(runA, "Run A", loop(runB));
+  await setR(runB, "Run B", loop(runA));
 
   // 6. A flow starting point so ▶ Present opens the Control frame.
   try {

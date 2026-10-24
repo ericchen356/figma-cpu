@@ -3,6 +3,7 @@
 // itself (never an instance: the CPU is ~37k layers) with the front panel and the buttons.
 import { CELL_PREFIX } from "../../src/figma/names";
 import { COLORS, box, loadFonts, put, text } from "../../src/prototype/draw";
+import { guardReactions } from "../../src/prototype/figma-actions";
 
 export const STEP_FRAME = "CPU · Step";
 const PAD = 48;
@@ -171,8 +172,16 @@ export async function buildStepFrame(api: PluginAPI, page: PageNode, cpu: Compon
     stepReset = { a: a2, b: b2 };
     const to = (src: FrameNode, self: FrameNode, otherSrc: FrameNode, other: FrameNode) =>
       redirect(redirect(redirect(src.reactions, control.id, frame.id), otherSrc.id, other.id), src.id, self.id);
-    await a2.setReactionsAsync(to(rf.a, a2, rf.b, b2));
-    await b2.setReactionsAsync(to(rf.b, b2, rf.a, a2));
+    for (const [label, node, src, other, otherCopy] of [["Reset A (Step)", a2, rf.a, rf.b, b2], ["Reset B (Step)", b2, rf.b, rf.a, a2]] as const) {
+      const r = to(src, node, other, otherCopy);
+      try {
+        await node.setReactionsAsync(r);
+      } catch (e) {
+        const first = r[0]?.actions?.[0] as unknown as Record<string, unknown> | undefined;
+        log(`FAILED setReactions on "${label}": ${String((e as Error)?.message ?? e).slice(0, 400)} | read-back: ${r.length} reaction(s), trigger=${JSON.stringify(r[0]?.trigger)}, actions[0] keys=${first ? Object.keys(first).join(",") : "none"}, type=${String(first?.type)}, actions[0]=${JSON.stringify(first)?.slice(0, 500)}`);
+        throw e;
+      }
+    }
     const reset2 = (src: FrameNode, k: FrameNode) => {
       const ps: Array<[SceneNode, SceneNode]> = [];
       pairUp(src, k, ps);
@@ -186,12 +195,14 @@ export async function buildStepFrame(api: PluginAPI, page: PageNode, cpu: Compon
     if (rs && rs.length) {
       let r = redirect(rs, control.id, frame.id);
       if (rf && stepReset) r = redirect(r, rf.a.id, stepReset.a.id); // the Reset button starts the Step flow's own chain
+      guardReactions(copy, `copy of ${orig.name}`, log);
       await (copy as SceneNode & ReactionMixin).setReactionsAsync(r);
       reactionsCopied++;
     }
     await copyBindings(api, orig, copy, log);
   }
   if (control.reactions.length) {
+    guardReactions(frame, "Step frame", log);
     try {
       await frame.setReactionsAsync(redirect(control.reactions, control.id, frame.id));
       reactionsCopied++;
