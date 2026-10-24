@@ -8,7 +8,7 @@ export interface RunOpts {
   ioRead?: (addr: number, step: number) => number | undefined;
   ioWrite?: (addr: number, v: number) => boolean;
   /** called after every instruction */
-  onStep?: (step: number) => void;
+  onStep?: (step: number, mem: Uint8Array) => void;
 }
 export function run(bytes: number[], opts: RunOpts = {}) {
   const maxSteps = opts.maxSteps ?? 5000;
@@ -58,7 +58,7 @@ export function run(bytes: number[], opts: RunOpts = {}) {
         case "HALT": halted = true; break;
       }
     }
-    opts.onStep?.(steps);
+    opts.onStep?.(steps, mem);
   }
   return { R, mem, pc, steps, halted };
 }
