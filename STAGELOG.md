@@ -314,6 +314,10 @@ With MCP blocked, an agent ran the real plugin the way a person would. It used `
 
 **Bug found → handed to the plugin owner (Stage 6):** after a Turbo run halts, the canvas `dev/screen` can keep a stale frame ([evidence](docs/stages/stage-5-screen-stale-frame-bug.png): half-drawn artboard). If a PNG is still in flight when the run stops, the final frame is skipped and nothing re-syncs once the PNG lands. The fix is to call `screen.sync(cpu, …)` again after `screen.onPng(...)`.
 
+The plugin owner applied that fix. Re-verified in Figma: after re-running `rect.asm` in Turbo, a REST render of `dev/screen` shows the complete final frame. ![after fix](docs/stages/stage-5-screen-after-fix.png)
+
+Also confirmed: reopening the plugin **restores the machine state saved in the file** (`pluginData`). It came back at cycle 7,622,000 with the same PC and registers.
+
 **Gotchas:**
 
 - Figma desktop exposes no accessibility tree, and Orca's focus check rejects its keyboard and coordinate input. JXA `CGEventPost` (clicks and drags) plus System Events keystrokes work. Before typing, confirm that Quick Actions actually opened. Stray letters on the canvas act as tool shortcuts.
