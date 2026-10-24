@@ -205,7 +205,9 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     expect(buttons.map((b) => b.name)).toEqual(expect.arrayContaining(["button/Step", "button/Run", "button/Reset"]));
     for (const b of buttons) expect(kid(header, b.name)!.reactions, b.name).toEqual(redirect(b.reactions, control.id, frame.id));
     expect(frame.reactions).toEqual(redirect(control.reactions, control.id, frame.id));
-    expect(onClick(kid(header, "button/Step")).length).toBe(s.actionsPerStep);
+    // A Step event (one chunk of the tick when chunked) never executes more than the cap.
+    const probe = fig.variableValues();
+    for (let e = 0; e < 24; e++) expect(runFigmaActions(onClick(kid(header, "button/Step")), probe)).toBeLessThanOrEqual(s.actionsPerStep);
     expect(page.flowStartingPoints.map((f) => f.name).sort()).toEqual([NAME, STEP_FRAME].sort());
     // No text is bound to a FLOAT (Figma refuses it); the front panel binds no text at all.
     const roots = [frame, control, kid(page, `${NAME} · Run A`)!, kid(page, `${NAME} · Run B`)!];
@@ -264,7 +266,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const hooks = { navigate: (d: string | null) => void (at = d!) };
     runFigmaActions(onClick(kid(control, "button/Run")), vals, hooks);
     let frames = 0;
-    while (at !== control.id && frames < 400) {
+    while (at !== control.id && frames < 162 * 20) {
       const f = fig.nodeById(at)!;
       runFigmaActions(f.reactions.find((x) => x.trigger?.type === "AFTER_TIMEOUT")!.actions!, vals, hooks);
       frames++;
@@ -284,7 +286,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const changed = [...after].filter(([id, v]) => before.get(id) !== v).length;
     expect(changed).toBeGreaterThan(0);
     expect(fig.variableWrites - w0).toBe(changed); // every write changed a value (ticks included)
-    expect(st.writes).toBe(changed - 1);
+    expect(st.writes).toBe(changed - 2); // the tick counters ctl/ticks and ctl/tickText are not CPU nets
 
     const w1 = fig.variableWrites;
     await app.clock.run(0);

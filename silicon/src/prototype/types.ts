@@ -30,12 +30,37 @@ export interface PlanVariable {
 export interface PlanStats {
   gates: number;
   variables: number;
-  /** Actions in one Step (gate actions + the two CLK sets), = Figma work per tick. */
+  /** Actions in the tick, counting every branch (gate actions + the two CLK sets). Without
+   * gating this is also what one tick executes. */
   actionsPerTick: number;
   lowPass: number;
   highPass: number;
   /** Deepest expression nesting in the tick (1 = a single operator over vars/consts). */
   maxDepth: number;
+  /** Most actions one tick can execute (every gated block taken). = actionsPerTick ungated. */
+  worstCase: number;
+  /** Clock-gating blocks (`if` actions added by `gate: true`), 0 without gating. */
+  gatedBlocks: number;
+  /** Events per tick (chunks) and the worst case of one event incl. dispatch, if chunked. */
+  chunks?: number;
+  maxEvent?: number;
+}
+
+/** The tick split for engines that limit the actions one event may execute (Figma's viewer
+ * overflows its stack somewhere between 501 and 2001 actions per click). Running the chunks
+ * one after another is exactly one tick. Each event runs one chunk through a dispatcher:
+ *   phaseNow = phase                                    1
+ *   if phaseNow == k { chunk k; phase = k+1 mod K;      K conditionals (all evaluated)
+ *                      phaseText = "" + phase }         + chunk + 2
+ *   … and the last chunk also updates the tick counter  + tickExtra
+ * plus 2 for a Run-loop hop (its CONDITIONAL and NAVIGATE). So every chunk's worst case is at
+ * most maxActionsPerEvent − (K + 5) − tickExtra. */
+export interface Chunking {
+  maxActionsPerEvent: number;
+  tickExtra: number;
+  chunks: PlanAction[][];
+  /** Worst-case executed actions of each event, dispatch included (≤ maxActionsPerEvent). */
+  perEvent: number[];
 }
 
 export interface PrototypePlan {
@@ -45,12 +70,19 @@ export interface PrototypePlan {
   clk: number;
   /** Net id that stops the Run loop when 1 (e.g. HALTED), if the circuit has one. */
   halt?: number;
+  /** Plan-only boolean variables (clock-gating dirty flags). Their ids are ≥ the netlist's
+   * net count, so they never collide with nets; all are false at every tick boundary. */
+  flags: PlanVariable[];
   /** Gate index → output net id, so canvas `lit` layers of gates can be bound. */
   gateOut: number[];
   /** One clock cycle: CLK=0, LOW pass gates, CLK=1, HIGH pass gates. */
   tick: PlanAction[];
-  /** Sets every variable back to its power-on value. */
+  /** Sets every variable (and flag) back to its power-on value. */
   reset: PlanAction[];
+  /** The event budget the plan was made for (absent: unlimited), and the chunks if the tick
+   * does not fit in one event. */
+  maxActionsPerEvent?: number;
+  chunking?: Chunking;
   stats: PlanStats;
 }
 

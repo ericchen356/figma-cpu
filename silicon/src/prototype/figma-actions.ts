@@ -47,6 +47,59 @@ export const navigate = (destinationId: string): Action =>
 export const increment = (variableId: string, by = 1): Action =>
   setVariable(variableId, exprData("ADDITION", [aliasData(variableId, "FLOAT"), floatData(by)], "FLOAT"));
 
+export const strData = (value: string): VariableData => ({ type: "STRING", resolvedType: "STRING", value });
+/** FLOAT variable compared with a literal (a BOOLEAN expression). */
+export const compareData = (fn: "LESS_THAN" | "GREATER_THAN" | "EQUALS", variableId: string, value: number): VariableData =>
+  exprData(fn, [aliasData(variableId, "FLOAT"), floatData(value)]);
+
+// ---------- numbers on text layers ----------
+// Text `characters` only bind to STRING variables (spike: binding a FLOAT throws "variable of
+// resolved type 'FLOAT' cannot be bound to 'characters'"). Two ways to show a number:
+
+/** s = prefix + n (Figma: "number values can be added on to a string value"). One action. */
+export const concatText = (textId: string, numberId: string, prefix = ""): Action =>
+  setVariable(textId, exprData("ADDITION", [strData(prefix), aliasData(numberId, "FLOAT")], "STRING"));
+
+/** s = "0"…"9" from a FLOAT digit 0–9 by a binary search of nested CONDITIONALs (string
+ * literals only; the fallback if concatenation does not work). ≤ 5 actions executed. */
+export function digitText(digitId: string, textId: string, lo = 0, hi = 9): Action[] {
+  if (lo === hi) return [setVariable(textId, strData(String(lo)))];
+  const mid = (lo + hi) >> 1;
+  return [conditional(compareData("LESS_THAN", digitId, mid + 0.5), digitText(digitId, textId, lo, mid), digitText(digitId, textId, mid + 1, hi))];
+}
+
+/** Increments a decimal counter kept as FLOAT digits (LSB first) and their STRING texts. */
+export function digitsIncrement(digitIds: string[], textIds: string[], i = 0): Action[] {
+  const acts: Action[] = [increment(digitIds[i])];
+  if (i + 1 < digitIds.length)
+    acts.push(conditional(compareData("GREATER_THAN", digitIds[i], 9.5), [setVariable(digitIds[i], floatData(0)), ...digitsIncrement(digitIds, textIds, i + 1)]));
+  acts.push(...digitText(digitIds[i], textIds[i]));
+  return acts;
+}
+
+// ---------- triggers ----------
+
+export const onClick = (): Trigger => ({ type: "ON_CLICK" });
+export const mouseDown = (delay = 0): Trigger => ({ type: "MOUSE_DOWN", delay });
+export const mouseUp = (delay = 0): Trigger => ({ type: "MOUSE_UP", delay });
+export const mouseEnter = (delay = 0): Trigger => ({ type: "MOUSE_ENTER", delay, deprecatedVersion: false });
+/** Key codes are JS keyCodes (Space 32, A–Z 65–90). */
+export const keyDown = (keyCodes: number[]): Trigger => ({ type: "ON_KEY_DOWN", device: "KEYBOARD", keyCodes });
+/** `timeout` in milliseconds (developers.figma.com: "stored in milliseconds"). */
+export const afterTimeout = (timeout: number): Trigger => ({ type: "AFTER_TIMEOUT", timeout });
+
+/** Navigation of any kind (NAVIGATE / SWAP / CHANGE_TO …), instant. */
+export const navigateWith = (destinationId: string, navigation: "NAVIGATE" | "SWAP" | "CHANGE_TO" | "OVERLAY"): Action =>
+  ({ type: "NODE", destinationId, navigation, transition: null }) as unknown as Action;
+
+/** Executed actions in the worst case (every condition taken the costliest way): what one
+ * event can cost the viewer's stack. A CONDITIONAL counts 1 plus its largest block. */
+export function worstCase(actions: readonly Action[]): number {
+  let n = 0;
+  for (const a of actions) n += a.type === "CONDITIONAL" ? 1 + Math.max(0, ...a.conditionalBlocks.map((b) => worstCase(b.actions))) : 1;
+  return n;
+}
+
 // ---------- plan → actions ----------
 
 function lookup(varIds: VarIds): (n: number) => string {

@@ -7,10 +7,15 @@
   "documentAccess": "dynamic-page",
   "networkAccess": { "allowedDomains": ["none"] },
   "menu": [
-    { "name": "Build all (counter, self-test, stress 500/2000/5000)", "command": "all" },
-    { "name": "Counter + self-test only", "command": "basic" },
-    { "name": "Stress 500 / 2000 / 5000 only", "command": "stress" },
+    { "name": "v2 · all tests (limits, triggers, keys, text, loops, chunked)", "command": "v2" },
+    { "name": "v2 · limits + conditionals only", "command": "v2-limits" },
+    { "name": "v2 · triggers, keys, hover only", "command": "v2-input" },
+    { "name": "v2 · text + run loops only", "command": "v2-loops" },
+    { "name": "v2 · chunked counter only", "command": "v2-chunked" },
     { "separator": true },
-    { "name": "Heavy stress 10k + 20k (slow to build)", "command": "heavy" }
+    { "name": "v1 · Build all (counter, self-test, stress 500/2000/5000)", "command": "all" },
+    { "name": "v1 · Counter + self-test only", "command": "basic" },
+    { "name": "v1 · Stress 500 / 2000 / 5000 only", "command": "stress" },
+    { "name": "v1 · Heavy stress 10k + 20k (slow to build)", "command": "heavy" }
   ]
 }

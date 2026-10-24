@@ -100,8 +100,8 @@ export function put<T extends SceneNode>(parent: BaseNode & ChildrenMixin, child
 
 export interface VariableSpec {
   name: string;
-  type: "BOOLEAN" | "FLOAT";
-  init: boolean | number;
+  type: "BOOLEAN" | "FLOAT" | "STRING";
+  init: boolean | number | string;
 }
 
 /** Collections created by `createVariables` are named `name`, `name · 2`, `name · 3`, … */
@@ -162,6 +162,24 @@ export async function createVariables(
     }
   }
   return { collections, vars };
+}
+
+/** Sets the page's prototype flows: `add` first (in order), then the existing flows whose node
+ * is still a top-level child and is not in `add`. Deduplicated by node id: Figma rejects
+ * duplicates ("Found duplicate input nodeIds"), and it creates a flow by itself when a
+ * frame gets its first navigation, so the same frame can already be listed under another name. */
+export function setFlows(page: PageNode, add: Array<{ nodeId: string; name: string }>): void {
+  const top = new Set(page.children.map((c) => c.id));
+  const seen = new Set<string>();
+  const out: Array<{ nodeId: string; name: string }> = [];
+  const names = new Set(add.map((f) => f.name));
+  const push = (f: { nodeId: string; name: string }) => {
+    seen.add(f.nodeId);
+    out.push({ nodeId: f.nodeId, name: f.name });
+  };
+  for (const f of add) if (!seen.has(f.nodeId)) push(f);
+  for (const f of page.flowStartingPoints) if (top.has(f.nodeId) && !seen.has(f.nodeId) && !names.has(f.name)) push(f);
+  page.flowStartingPoints = out;
 }
 
 /** Binds a node's visibility to a boolean variable (or fixes it, for a constant net). */

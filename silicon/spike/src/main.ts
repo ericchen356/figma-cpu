@@ -1,8 +1,7 @@
 // Spike plugin entry. Builds the page and closes; nothing runs at prototype time but Figma.
-import { buildSpike, type SpikeCommand } from "./spike";
+import { buildSpike, SPIKE_COMMANDS, type SpikeCommand } from "./spike";
 
-const COMMANDS: SpikeCommand[] = ["all", "basic", "stress", "heavy"];
-const command = (COMMANDS as string[]).includes(figma.command) ? (figma.command as SpikeCommand) : "all";
+const command = (SPIKE_COMMANDS as string[]).includes(figma.command) ? (figma.command as SpikeCommand) : "all";
 
 buildSpike(figma, command)
   .then((r) =>

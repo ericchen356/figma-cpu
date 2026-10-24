@@ -41,6 +41,28 @@ function eval3(type: GateType, a: V3, b: V3): V3 {
   }
 }
 
+export { eval3, X as UNKNOWN };
+
+/** Three-valued value of every net for a pass with CLK fixed at `level`: 0, 1 or 2 (varies). */
+export function constants3(net: FlatNetlist, clk: number, level: 0 | 1): Uint8Array {
+  const k = new Uint8Array(net.netNames.length).fill(X);
+  k[NET0] = 0;
+  k[NET1] = 1;
+  if (clk >= 0) k[clk] = level;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const g of net.gates) {
+      if (k[g.out] !== X) continue;
+      const y = eval3(g.type, k[g.in[0]] as V3, (g.in.length > 1 ? k[g.in[1]] : 0) as V3);
+      if (y !== X) {
+        k[g.out] = y;
+        changed = true;
+      }
+    }
+  }
+  return k;
+}
+
 export interface SimpleScheduleOptions {
   /** Name of the clock input (default "CLK"). */
   clk?: string;

@@ -87,9 +87,13 @@ function evalExpression(x: Expression, vars: Map<string, FigmaValue>): FigmaValu
   }
 }
 
-/** Runs actions in place on `vars` (variable id → value). */
-export function runFigmaActions(actions: readonly Action[], vars: Map<string, FigmaValue>, hooks: EmulatorHooks = {}): void {
+/** Runs actions in place on `vars` (variable id → value). Returns the number of actions
+ * executed (a CONDITIONAL counts 1 plus the actions of the block it ran; skipped blocks count
+ * nothing): the cost model for the viewer's per-event stack limit. */
+export function runFigmaActions(actions: readonly Action[], vars: Map<string, FigmaValue>, hooks: EmulatorHooks = {}): number {
+  let executed = 0;
   for (const a of actions) {
+    executed++;
     switch (a.type) {
       case "SET_VARIABLE": {
         if (!a.variableId || !a.variableValue) throw new Error(`SET_VARIABLE without variable/value`);
@@ -107,7 +111,7 @@ export function runFigmaActions(actions: readonly Action[], vars: Map<string, Fi
             if (typeof c !== "boolean") throw new Error(`condition is not boolean`);
             if (!c) continue;
           }
-          runFigmaActions(block.actions, vars, hooks);
+          executed += runFigmaActions(block.actions, vars, hooks);
           break;
         }
         break;
@@ -119,4 +123,5 @@ export function runFigmaActions(actions: readonly Action[], vars: Map<string, Fi
         throw new Error(`emulator does not support ${a.type}`);
     }
   }
+  return executed;
 }

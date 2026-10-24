@@ -34,17 +34,21 @@ export function evalExpr(e: Expr, get: (n: number) => boolean): boolean {
   return evalExpr(e.neq[0], get) !== evalExpr(e.neq[1], get);
 }
 
-/** Executes an action list in place. */
-export function runPlanActions(actions: PlanAction[], state: PlanState): void {
+/** Executes an action list in place. Returns the number of actions executed (an `if` counts
+ * 1 plus the branch it ran), the same cost model as `runFigmaActions`. */
+export function runPlanActions(actions: PlanAction[], state: PlanState): number {
   const get = getter(state);
   const set = setter(state);
+  let executed = 0;
   const run = (list: PlanAction[]) => {
     for (const a of list) {
+      executed++;
       if ("set" in a) set(a.set, evalExpr(a.to, get));
       else run(evalExpr(a.if, get) ? a.then : (a.else ?? []));
     }
   };
   run(actions);
+  return executed;
 }
 
 /** Runs one Step (the plan's tick) on `state`, in place; returns `state`. */
@@ -53,7 +57,14 @@ export function interpret<S extends PlanState>(plan: PrototypePlan, state: S, ac
   return state;
 }
 
-/** The variables' power-on values. */
+/** The variables' (and flags') power-on values. */
 export function initialState(plan: PrototypePlan): Map<number, boolean> {
-  return new Map(plan.variables.map((v) => [v.net, v.init]));
+  return new Map([...plan.variables, ...(plan.flags ?? [])].map((v) => [v.net, v.init]));
+}
+
+/** Runs one tick as the chunked prototype does, one chunk per event; returns the executed
+ * actions of each chunk (without dispatch). Requires a plan made with maxActionsPerEvent. */
+export function interpretChunked(plan: PrototypePlan, state: PlanState): number[] {
+  if (!plan.chunking) throw new Error("plan has no chunking (plan with maxActionsPerEvent)");
+  return plan.chunking.chunks.map((c) => runPlanActions(c, state));
 }

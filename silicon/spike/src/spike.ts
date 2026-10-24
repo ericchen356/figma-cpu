@@ -19,6 +19,7 @@ import {
   loadFonts,
   put,
   removeCollections,
+  setFlows,
   text,
   type VariableSpec,
 } from "../../src/prototype/draw";
@@ -29,21 +30,25 @@ import {
   exprData,
   figmaActions,
   floatData,
+  concatText,
   increment,
   navigate,
   setVariable,
+  strData,
 } from "../../src/prototype/figma-actions";
 import { gateExpr, plan, setActions } from "../../src/prototype/plan";
 import type { Expr, PlanAction, PrototypePlan } from "../../src/prototype/types";
 import { GATE_TYPES, evalGate, type FlatNetlist, type GateType } from "../../src/netlist/types";
 import { counterNetlist } from "./circuits";
+import { V2, V2_COLLECTION, V2_PREFIX, Y0 } from "./v2";
 
 export const PAGE = "Silicon · Spike";
 export const STRESS_SIZES = [500, 2000, 5000];
 export const HEAVY_SIZES = [10000, 20000];
 const RUN_DELAY_MS = 1;
 
-export type SpikeCommand = "all" | "basic" | "stress" | "heavy";
+export type SpikeCommand = "all" | "basic" | "stress" | "heavy" | "v2" | "v2-limits" | "v2-input" | "v2-loops" | "v2-chunked";
+export const SPIKE_COMMANDS: SpikeCommand[] = ["all", "basic", "stress", "heavy", "v2", "v2-limits", "v2-input", "v2-loops", "v2-chunked"];
 
 export interface SpikeReport {
   ok: boolean;
@@ -121,8 +126,13 @@ export async function buildSpike(api: PluginAPI, command: SpikeCommand = "all"):
   const page = await step(log, "open page", async () => {
     let p = api.root.children.find((x) => x.name === PAGE);
     if (!p) {
-      p = api.createPage();
-      p.name = PAGE;
+      try {
+        p = api.createPage();
+        p.name = PAGE;
+      } catch {
+        // Starter plan files are capped at 3 pages: build on the current page instead.
+        p = api.currentPage;
+      }
     }
     await api.setCurrentPageAsync(p);
     return p;
@@ -139,19 +149,39 @@ export async function buildSpike(api: PluginAPI, command: SpikeCommand = "all"):
     const test = await step(log, "self-test", () => buildSelfTest(api, page, log));
     if (test) flows.push(test);
   }
-  const sizes = command === "heavy" ? HEAVY_SIZES : command === "basic" ? [] : STRESS_SIZES;
+  const sizes = command === "heavy" ? HEAVY_SIZES : command === "all" || command === "stress" ? STRESS_SIZES : [];
   for (const [i, n] of sizes.entries()) {
     const s = await step(log, `stress ${n}`, () => buildStress(api, page, log, n, 1600 + i * 360));
     if (s) flows.push(s);
   }
+  if (command.startsWith("v2")) {
+    const v2 = new V2(api, page, log);
+    const ok = await step(log, "v2 variables", () => v2.init().then(() => true));
+    const want = (part: SpikeCommand) => command === "v2" || command === part;
+    if (ok) {
+      if (want("v2-limits")) {
+        await step(log, "v2 limits", () => v2.limits());
+        await step(log, "v2 conditionals", () => v2.conditionals());
+      }
+      if (want("v2-input")) {
+        await step(log, "v2 triggers", () => v2.triggers());
+        await step(log, "v2 keys", () => v2.keys());
+        await step(log, "v2 hover", () => v2.hover());
+      }
+      if (want("v2-loops")) {
+        await step(log, "v2 text", () => v2.textDisplay());
+        await step(log, "v2 loops", () => v2.loops());
+      }
+    }
+    flows.push(...v2.flows);
+    if (want("v2-chunked")) {
+      const c = await step(log, "v2 chunked counter", () => buildChunked(api, page, log));
+      if (c) flows.push(c);
+    }
+    log.info(`v2: ${v2.flows.length} test flows; variables in "${V2_COLLECTION}"`);
+  }
 
-  await step(log, "flow starting points", () => {
-    const top = new Set(page.children.map((c) => c.id));
-    const keep = page.flowStartingPoints.filter(
-      (f) => top.has(f.nodeId) && !flows.some((g) => g.name === f.name || g.nodeId === f.nodeId),
-    );
-    page.flowStartingPoints = [...flows, ...keep];
-  });
+  await step(log, "flow starting points", () => setFlows(page, flows));
   log.info(`done in ${((Date.now() - t0) / 1000).toFixed(1)} s with ${log.errors.length} error(s). Press ▶ Present and pick a flow.`);
   return { ok: log.errors.length === 0, errors: log.errors, lines: log.lines, page };
 }
@@ -379,6 +409,43 @@ async function buildSelfTest(api: PluginAPI, page: PageNode, log: Log): Promise<
   return { nodeId: f.id, name: "Self-test" };
 }
 
+// ---------- v2: the counter with chunked ticks ----------
+
+export const CHUNKED = { name: "Spike chunked", maxActionsPerEvent: 30, keys: [32, 75] };
+
+/** The counter through apply() with a tiny event budget, so one tick takes several events:
+ * Step = one chunk, "Step ×3" = MOUSE_DOWN + MOUSE_UP + ON_CLICK, Space / K = one chunk. */
+async function buildChunked(api: PluginAPI, page: PageNode, log: Log): Promise<{ nodeId: string; name: string }> {
+  clear(page, [`${V2_PREFIX}chunked display`]);
+  const net = counterNetlist();
+  const p = plan(net, compile(net), { initial: powerOn(net), name: CHUNKED.name, maxActionsPerEvent: CHUNKED.maxActionsPerEvent });
+  const comp = api.createComponent();
+  comp.name = `${V2_PREFIX}chunked display`;
+  comp.resize(420, 110);
+  comp.fills = [];
+  const q = net.ports.find((x) => x.name === "Q")!.nets;
+  const wireLit = new Map<number, SceneNode[]>();
+  for (let i = 0; i < 4; i++) {
+    const l = lamp(api, 56, COLORS.amber, `Q[${3 - i}]`);
+    put(comp, l.node, i * 80, 0);
+    put(comp, text(api, `Q${3 - i}`, { size: 13, bold: true }), i * 80 + 16, 64);
+    wireLit.set(q[3 - i], [l.lit]);
+  }
+  put(comp, text(api, "Q = ticks mod 16.\nA tick = every phase once.", { size: 11, color: COLORS.dim }), 330, 6);
+  put(page, comp, 2900, Y0 + 3000);
+  const res = await apply(api, p, {
+    page,
+    display: comp,
+    bindings: { gateLit: new Map(), wireLit },
+    at: { x: 0, y: Y0 + 3000 },
+    multiTrigger: true,
+    keys: CHUNKED.keys,
+    log: (m) => log.info(`chunked: ${m}`),
+  });
+  log.info(`chunked: ${res.chunks} events per tick, ≤ ${res.actionsPerStep} actions per event (cap ${CHUNKED.maxActionsPerEvent})`);
+  return { nodeId: res.frames.control.id, name: `${V2_PREFIX}chunked counter` };
+}
+
 // ---------- 3. stress ----------
 
 /** N gate actions: s0 = ¬s0, then s[i] = s[i-1] ⊕ s[i] (prefix XOR along the chain). */
@@ -398,9 +465,11 @@ async function buildStress(api: PluginAPI, page: PageNode, log: Log, n: number, 
     { name: "ctl/ticks", type: "FLOAT", init: 0 },
     { name: "ctl/running", type: "BOOLEAN", init: false },
     ...Array.from({ length: n }, (_, i) => ({ name: `s/${i}`, type: "BOOLEAN" as const, init: false })),
+    { name: "ctl/tickText", type: "STRING", init: "0" },
   ];
   const { vars, collections } = await createVariables(api, coll, specs, { log: (m) => log.info(m) });
   const [ticks, running] = vars;
+  const tickText = vars[vars.length - 1];
   const ids = new Map(Array.from({ length: n }, (_, i) => [i, vars[i + 2].id]));
 
   // Display: tick counter (the LAST action of a click, so it only moves if all N ran) and
@@ -412,7 +481,8 @@ async function buildStress(api: PluginAPI, page: PageNode, log: Log, n: number, 
   put(comp, text(api, `${n} gate actions per click`, { size: 14, color: COLORS.dim }), 0, 0);
   put(comp, text(api, "ticks", { size: 12, color: COLORS.dim }), 0, 30);
   const tt = put(comp, text(api, "0", { size: 36, bold: true, color: COLORS.amber, name: "ticks" }), 0, 46);
-  await step(log, `${title} bind tick text`, () => tt.setBoundVariable("characters", ticks));
+  // Text binds to STRING only (v1: FLOAT → characters throws); the text is "" + ticks.
+  await step(log, `${title} bind tick text`, () => tt.setBoundVariable("characters", tickText));
   for (let i = 0; i < Math.min(16, n); i++) {
     const l = lamp(api, 22, COLORS.lampOn, `s/${i}`);
     bindVisible(l.lit, vars[i + 2]);
@@ -420,7 +490,7 @@ async function buildStress(api: PluginAPI, page: PageNode, log: Log, n: number, 
   }
   put(page, comp, 2900, y);
 
-  const tick = [...figmaActions(stressActions(n), ids), increment(ticks.id)];
+  const tick = [...figmaActions(stressActions(n), ids), increment(ticks.id), concatText(tickText.id, ticks.id)];
   const f = (name: string, x: number) => {
     const fr = box(api, name, 760, 260, COLORS.bg);
     put(page, fr, x, y);
@@ -447,6 +517,7 @@ async function buildStress(api: PluginAPI, page: PageNode, log: Log, n: number, 
       trigger: { type: "ON_CLICK" },
       actions: [
         setVariable(ticks.id, floatData(0)),
+        setVariable(tickText.id, strData("0")),
         setVariable(running.id, boolData(false)),
         ...Array.from({ length: n }, (_, i) => setVariable(ids.get(i)!, boolData(false))),
       ],
