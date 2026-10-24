@@ -7,3 +7,4 @@ silicon/spike/dist/
 silicon/plugin/dist/
 silicon/release/
 .scratch/
+silicon/tools/connector/out/
