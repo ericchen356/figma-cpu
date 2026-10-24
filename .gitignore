@@ -7,3 +7,7 @@ silicon/cli/dist/
 .gstack/
 osflow/dist/
 osflow/spike/dist/
+.env
+.scratch/
+silicon/release/
+silicon/spike/dist/

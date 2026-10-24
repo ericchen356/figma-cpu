@@ -4692,13 +4692,32 @@
     }
   ];
   var HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
-  var clickRun = (set, row) => `${HOTSPOT_REACTIONS[set]}/${row}`;
+  var HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row"];
+  var clickRun = (set, row, col = 0, sel = 0) => `${HOTSPOT_REACTIONS[set]}/${row}` + (HOTSPOT_GRAIN[set] === "cell" ? `/${col}` : "") + (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
   var CLICK_SPECS = HOTSPOT_SETS.flatMap(
-    (h) => Array.from({ length: GRID_H }, (_, y) => __spreadProps(__spreadValues({}, h), {
-      name: `${h.name}/${y}`,
-      ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
-      event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
-    }))
+    (h, set) => Array.from({ length: GRID_H }, (_, y) => {
+      const grain = HOTSPOT_GRAIN[set];
+      if (grain === "cell")
+        return Array.from({ length: GRID_W }, (_2, x) => __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y, x),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y, PX: x }),
+          event: () => ({ k: "click", x, y })
+        }));
+      if (grain === "row@sel")
+        return Array.from({ length: LAYERS }, (_2, sel) => __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y, 0, sel),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
+          given: { sel },
+          event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+        }));
+      return [
+        __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
+          event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+        })
+      ];
+    }).flat()
   );
   function reactionSpecs() {
     const out = [...CLICK_SPECS];
@@ -4710,12 +4729,14 @@
         event: () => ({ k: "tool", t })
       });
     for (let c = 0; c < PALETTE_SIZE; c++)
-      out.push({
-        name: `fill/${c}`,
-        ties: { EVT: EV.FILL, ARG: c },
-        valid: always,
-        event: () => ({ k: "fill", c })
-      });
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `fill/${c}@${sel}`,
+          ties: { EVT: EV.FILL, ARG: c },
+          given: { sel },
+          valid: always,
+          event: () => ({ k: "fill", c })
+        });
     for (let k = 0; k < LAYERS; k++) {
       out.push({
         name: `select/${k}`,
@@ -4731,19 +4752,23 @@
       });
     }
     for (let c = 0; c < 4; c++)
-      out.push({
-        name: `handle/${c}`,
-        ties: { EVT: EV.HANDLE, ARG: c },
-        valid: (s) => s.selected !== null,
-        event: () => ({ k: "handle", corner: c })
-      });
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `handle/${c}@${sel}`,
+          ties: { EVT: EV.HANDLE, ARG: c },
+          given: { sel },
+          valid: (s) => s.selected !== null,
+          event: () => ({ k: "handle", corner: c })
+        });
     for (let d = 0; d < 4; d++)
-      out.push({
-        name: `nudge/${d}`,
-        ties: { EVT: EV.NUDGE, ARG: d },
-        valid: always,
-        event: () => ({ k: "nudge", dir: d })
-      });
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `nudge/${d}@${sel}`,
+          ties: { EVT: EV.NUDGE, ARG: d },
+          given: { sel },
+          valid: always,
+          event: () => ({ k: "nudge", dir: d })
+        });
     out.push({
       name: "delete",
       ties: { EVT: EV.DELETE },
@@ -5081,7 +5106,7 @@
       fill: COLOR.text,
       stroke: COLOR.accent,
       strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}` }]
+      reactions: [{ trigger: { on: "click" }, run: `handle/${code}@${k}` }]
     });
     const handleRow = (a, b) => frame("handles", {
       sizeH: "FILL",
@@ -5112,34 +5137,35 @@
     });
   }
   function hotspotSet(i) {
-    const rows = [];
-    for (let r = 0; r < GRID_H; r++)
-      rows.push(
-        frame(`row/${r}`, {
-          x: 0,
-          y: r * CELL,
-          w: CANVAS_W,
-          h: CELL,
-          reactions: [{ trigger: { on: "click" }, run: clickRun(i, r) }],
-          children: Array.from(
-            { length: GRID_W },
-            (_, c) => frame(`cell/${c}`, {
-              x: c * CELL,
-              y: 0,
-              w: CELL,
-              h: CELL,
-              reactions: [{ trigger: { on: "enter" }, run: `pointer/${c}` }]
-            })
-          )
-        })
-      );
+    const grain = HOTSPOT_GRAIN[i];
+    const rows = (sel) => Array.from(
+      { length: GRID_H },
+      (_, r) => frame(`row/${r}`, __spreadProps(__spreadValues({
+        x: 0,
+        y: r * CELL,
+        w: CANVAS_W,
+        h: CELL
+      }, grain === "cell" ? {} : { reactions: [{ trigger: { on: "click" }, run: clickRun(i, r, 0, sel) }] }), {
+        children: Array.from(
+          { length: GRID_W },
+          (_2, c) => frame(`cell/${c}`, {
+            x: c * CELL,
+            y: 0,
+            w: CELL,
+            h: CELL,
+            reactions: grain === "cell" ? [{ trigger: { on: "click" }, run: clickRun(i, r, c) }] : [{ trigger: { on: "enter" }, run: `pointer/${c}` }]
+          })
+        )
+      }))
+    );
+    const level = (name, children) => frame(name, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, children });
     return frame(`hot/${HOT[i]}`, {
       x: 0,
       y: 0,
       w: CANVAS_W,
       h: CANVAS_H,
       visibleNet: bit(SCREEN_NETS.hot, i),
-      children: rows
+      children: grain === "row@sel" ? [__spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => level(`sel/${k}`, rows(k)))), { name: "slots" })] : rows(0)
     });
   }
   function canvas() {
@@ -5294,20 +5320,23 @@
   function rightPanel() {
     const sw = 40;
     const gap = 8;
-    const swatches = Array.from(
-      { length: PALETTE_SIZE },
-      (_, c) => frame(`color/${c}`, {
-        x: 16 + c % 4 * (sw + gap),
-        y: 112 + Math.floor(c / 4) * (sw + gap),
-        w: sw,
-        h: sw,
-        radius: 4,
-        fill: PALETTE_HEX[c],
-        stroke: COLOR.line,
-        strokeWeight: 1,
-        reactions: [{ trigger: { on: "click" }, run: `fill/${c}` }]
-      })
-    );
+    const swatch = (c, k) => frame(`sel/${k}`, {
+      x: 0,
+      y: 0,
+      w: sw,
+      h: sw,
+      radius: 4,
+      fill: PALETTE_HEX[c],
+      stroke: COLOR.line,
+      strokeWeight: 1,
+      reactions: [{ trigger: { on: "click" }, run: `fill/${c}@${k}` }]
+    });
+    const level = (n, children) => frame(n, { x: 0, y: 0, w: sw, h: sw, children });
+    const swatches = Array.from({ length: PALETTE_SIZE }, (_, c) => __spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => swatch(c, k))), {
+      name: `color/${c}`,
+      x: 16 + c % 4 * (sw + gap),
+      y: 112 + Math.floor(c / 4) * (sw + gap)
+    }));
     return frame("design", {
       x: UI_W - RIGHT_W,
       y: TOP_H,
@@ -5428,7 +5457,7 @@
       })
     );
     arrows.forEach(
-      ([n, t, run], i) => out.push(pushButton(n, t, 16 + i * 56, 446, 52, run))
+      ([n, t, run], i) => out.push(slotButton(n, t, 16 + i * 56, 446, 52, run))
     );
     return out;
   }
@@ -5541,16 +5570,16 @@
     // one key per reaction: Figma reads a keyCodes list as a chord (all held at once)
     { codes: [46], run: "delete" },
     { codes: [8], run: "delete" },
-    { codes: [37], run: "nudge/0" },
-    { codes: [39], run: "nudge/1" },
-    { codes: [38], run: "nudge/2" },
-    { codes: [40], run: "nudge/3" },
     { codes: [27], run: "esc" }
   ];
   var SLOT_KEYS = [
     { code: 68, run: "dup" },
     { code: 219, run: "back" },
-    { code: 221, run: "fwd" }
+    { code: 221, run: "fwd" },
+    { code: 37, run: "nudge/0" },
+    { code: 39, run: "nudge/1" },
+    { code: 38, run: "nudge/2" },
+    { code: 40, run: "nudge/3" }
   ];
   function slotKeys(fill) {
     const level = (name, children) => frame(name, { x: 0, y: 0, w: 8, h: 8, children });
@@ -6884,7 +6913,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     };
     let viaKeys = 0;
     const act = (ev, spec2, preferKey) => {
-      var _a2;
+      var _a2, _b2;
       const keyOr = (code, button3) => {
         if (!preferKey) return button3();
         const holder = holderOf(code);
@@ -6907,8 +6936,12 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
               find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)
             )
           );
-        case "fill":
-          return press(find(present, "editor", "design", `color/${ev.c}`));
+        case "fill": {
+          const s = find(present, "editor", "design", `color/${ev.c}`);
+          const leaf = ((_a2 = s.children) == null ? void 0 : _a2.some((c) => c.name.startsWith("pick/"))) ? pickedLeaf(s) : s;
+          if (!leaf) throw new Error(`color/${ev.c}: no single swatch shows`);
+          return press(leaf);
+        }
         case "select":
           return press(find(present, "editor", "layers", `row/${ev.slot}`));
         case "vis":
@@ -6929,8 +6962,15 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
             throw new Error(
               `the visible click layer is ${sets[0].name}, expected ${name}`
             );
-          const row = find(sets[0], `row/${ev.y}`);
+          const slots = find(sets[0], "slots");
+          const holder = slots ? pickedLeaf(slots) : sets[0];
+          if (!holder) throw new Error(`${name}: no single slot copy shows`);
+          const row = find(holder, `row/${ev.y}`);
           const cell = find(row, `cell/${ev.x}`);
+          if (reactionsOf(cell).some((x) => {
+            var _a3;
+            return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === "ON_CLICK";
+          })) return press(cell);
           return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
         }
         case "handle": {
@@ -6939,11 +6979,11 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           const overlay = shown(selection2) ? pickedLeaf(selection2) : null;
           if ((overlay == null ? void 0 : overlay.name) !== `overlay/${k}`)
             throw new Error(
-              `the visible selection outline is ${(_a2 = overlay == null ? void 0 : overlay.name) != null ? _a2 : "none"}, expected overlay/${k}`
+              `the visible selection outline is ${(_b2 = overlay == null ? void 0 : overlay.name) != null ? _b2 : "none"}, expected overlay/${k}`
             );
           const walk = (n) => {
-            var _a3, _b2;
-            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b2 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b2 : null;
+            var _a3, _b3;
+            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b3 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b3 : null;
           };
           return press(walk(overlay));
         }

@@ -296,8 +296,12 @@ export async function selfTest(
             find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)!,
           ),
         );
-      case "fill":
-        return press(find(present, "editor", "design", `color/${ev.c}`)!);
+      case "fill": {
+        const s = find(present, "editor", "design", `color/${ev.c}`)!;
+        const leaf = s.children?.some((c) => c.name.startsWith("pick/")) ? pickedLeaf(s) : s;
+        if (!leaf) throw new Error(`color/${ev.c}: no single swatch shows`);
+        return press(leaf);
+      }
       case "select":
         return press(find(present, "editor", "layers", `row/${ev.slot}`)!);
       case "vis":
@@ -324,8 +328,14 @@ export async function selfTest(
           throw new Error(
             `the visible click layer is ${sets[0].name}, expected ${name}`,
           );
-        const row = find(sets[0], `row/${ev.y}`)!;
+        // a per-slot set is a pick tree of copies: use the one showing
+        const slots = find(sets[0], "slots");
+        const holder = slots ? pickedLeaf(slots) : sets[0];
+        if (!holder) throw new Error(`${name}: no single slot copy shows`);
+        const row = find(holder, `row/${ev.y}`)!;
         const cell = find(row, `cell/${ev.x}`)!;
+        // a per-cell set: the cell takes the click itself; a per-row set: hover the cell, click the row
+        if (reactionsOf(cell).some((x) => x.trigger?.type === "ON_CLICK")) return press(cell);
         return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
       }
       case "handle": {
