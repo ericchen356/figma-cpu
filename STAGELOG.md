@@ -140,3 +140,50 @@ To replace an existing Machine v2, build with the redraw flag (`build.mjs --forc
 - `use_figma` caps code at 50,000 chars (ours is about 17k).
 - Inside `use_figma`, `setPluginData` and `createImageAsync` are forbidden, and pages must be switched with `await figma.setCurrentPageAsync()` + `page.loadAsync()`. The draw script avoids all of these.
 - The script is idempotent: it won't redraw over an existing `Machine v2` unless built with the redraw flag.
+
+---
+
+## Stage 3 — The CPU core, assembler and demo programs, tested headless (tag: `stage-3`)
+
+**Goal:** a CPU whose _only_ hard-coded behavior is the micro-op primitives. Instructions come from a decode table, and an assembler targets whatever that table says. Everything is proven with tests before touching Figma.
+
+**Inputs:** `spec/opcodes.json` (Stage 1).
+
+**Figma work:** none.
+
+**Prompts used:** the approved one-shot plan (see Stage 1). No separate prompts; this stage was written directly from the spec.
+
+**Code:**
+
+- [`plugin/src/table.ts`](plugin/src/table.ts): compiles each row's micro-op text (`REG; ALU ADD rd rs`) into functions and validates rows. A bad row becomes an error message, not a crash.
+- [`plugin/src/cpu.ts`](plugin/src/cpu.ts):
+  - registers, flags and 64 KB of memory;
+  - memory-mapped IO (mouse, key, tick, rand);
+  - `step()` = fetch → look the opcode up in the table → run its micro-ops;
+  - a `Trace` per instruction that later drives the animation.
+- [`plugin/src/assembler.ts`](plugin/src/assembler.ts): two-pass, with labels, `.org .db .dw .equ .include`, expressions and `lo()/hi()`. It reports every error with its line number.
+- [`plugin/programs/`](plugin/programs/):
+  - `count`, `fib`, `rect`, `bounce`, `paint`;
+  - `hw.asm` (memory map) and `gfx.asm` (`fill_rect`: `VRAM + y*128 + x` computed with 8-bit registers).
+- [`plugin/test/`](plugin/test/): 54 tests:
+  - encodings and error messages;
+  - each instruction's flags;
+  - stack/CALL/RET;
+  - IO;
+  - each demo program checked against a reference painter;
+  - **rewiring ADD→SUB in the table makes `count.asm` count down**.
+
+**Reproduce:**
+
+```bash
+git checkout stage-3
+cd plugin && npm install && npm test
+```
+
+**Verify:** `Tests 54 passed (54)`. In Node the core runs **26–43 million instructions/s**, far above the PRD's 50k Turbo target.
+
+**Gotchas:**
+
+- `bounce.asm` paints a 128×96 background first. That's about 50k instructions before frame 1, so tests and Watch mode need patience there (use Turbo).
+- TypeScript 7 no longer auto-includes `@types`/`@figma` type roots, so `tsconfig.json` lists `"types": ["@figma/plugin-typings", "node"]` explicitly.
+- `npm install` warns that esbuild's postinstall script is not in `allowScripts`. The binary still resolves through its optional dependency, so the build works anyway.
