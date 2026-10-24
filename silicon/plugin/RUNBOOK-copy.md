@@ -68,3 +68,32 @@ A plugin-built file (fake Figma, `test/audit-e2e.test.ts`) audits READY: Step �
 return home, 2,295 variables = 2,287 wires + 8 control. Eric's legacy file audits REBUILD (Step 3,861, Reset 2,289, Run hops
 3,863) and also has **no MEM matrix**: Compile reuses an existing `Silicon · Front panel`, so **delete that component
 before Compile** (or the MEM check stays ✗).
+
+## OS card
+
+After **Build hardware → Compile** (the OS needs the CPU variables):
+
+1. The card opens with **hello-os** (`os/hello-os.{json,asm,bindings.json}`, embedded in the bundle) in three tabs:
+   manifest, source, bindings. Paste your own, or **pick files** (`*.bindings.json` → bindings, other `*.json` →
+   manifest, anything else → source). The **hello-os** button puts the defaults back.
+2. **Load OS**: `loadImage` (assemble + validate against the memory map) and `parseBindingsFile`. Any error: the card
+   lists every message exactly as the loader wrote it (`error [code] …`, with line numbers) and **nothing is loaded**.
+   Otherwise the bytes go through the normal Load program path, the region map and binding list are shown, and one
+   frame syncs every bound property.
+3. **Build OS demo**: creates once, by name, the layers the bindings and keymap name (hello-os: `window`,
+   `taskbar-button`, `status`, `window-x-label`, `window-move`) in a frame **OS demo** right of `CPU · Step`.
+   Existing names are skipped; layers you draw yourself with those names work the same.
+4. **▶ Run OS** runs the plugin clock at max speed. After each frame the RAM bytes are diffed and only changed
+   properties are written to the layers found by name on the current page (not inside the CPU, instances or the
+   prototype frames). A missing layer is logged once per name.
+5. Events: the buttons built from the keymap (`click …`, `key …`), the key-catch box (focus it, press keys), or
+   **selecting** a layer the keymap names. The byte is written to RAM[14] only when RAM[14] reads 0; one is held at a
+   time, more are dropped (logged).
+
+Limits: a key poked after the OS's `LD [IN]` and before its consume `ST` is overwritten and lost (the contract's
+race; send it again). Selecting the same layer twice in a row does not fire twice (Figma only reports selection
+changes). Loading any other program turns the bindings off until the next Load OS.
+
+Not verified in real Figma: the layer writes and font loading on real nodes, the name lookup cost on a full page,
+`selectionchange` as a click, the file picker and the key-catch box in the plugin iframe. Tested in Node:
+`test/os-host.test.ts` (real gate-level CPU, fake layer port and fake Figma).

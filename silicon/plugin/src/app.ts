@@ -26,6 +26,7 @@ import { buildStepFrame, child, dismantleStepFrame, findCell, liftCells, restore
 import { type ClockSession, PluginClock, type VarRef } from "./clock";
 import { DeviceBus, IN_ADDR } from "./devices";
 import type { BuildStats, CompileStats, DocStatus, LogLevel, ToMain, ToUi } from "./messages";
+import { buildOsDemo, figmaLayerPort, type LayerPort, OsHost, selectedNames } from "./os-host";
 import { ensureFrontPanel, findFrontPanel, panelLits } from "./panel";
 import { AsmFailed, assembleOrThrow, powerOnWith, programName, verifyAgainstModel, type VerifyResult } from "./program";
 import {
@@ -76,6 +77,8 @@ export interface AppOptions {
   now?: () => number;
   /** Plugin clock frame pause, ms (tests use 0). */
   clockFrameMs?: number;
+  /** Where the OS card writes layer properties (default: figmaLayerPort on the current page). */
+  layers?: LayerPort;
 }
 
 export interface BuildOptions {
@@ -111,6 +114,8 @@ export class SiliconApp {
   readonly clock: PluginClock;
   /** Input byte at RAM[IN_ADDR], poked by the plugin clock at the next tick boundary. */
   readonly devices = new DeviceBus();
+  /** The OS card (os-host.ts): RAM → layers after each frame, keymap events → RAM[14]. */
+  readonly os: OsHost;
   private readonly now: () => number;
   private readonly breathe: () => Promise<void>;
 
@@ -121,11 +126,28 @@ export class SiliconApp {
   ) {
     this.now = opts.now ?? (() => Date.now());
     this.breathe = opts.yield ?? (() => new Promise((r) => setTimeout(r, 0)));
+    this.os = new OsHost({
+      bus: this.devices,
+      port: opts.layers ?? figmaLayerPort(api),
+      log: (level, text) => this.log(level, text),
+      post: (m) => this.post(m),
+      loadProgram: (source) => this.loadProgram(source),
+    });
     this.clock = new PluginClock(
       () => this.clockSession(),
-      (status) => this.post({ type: "clock", status }),
-      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`), devices: this.devices },
+      (status) => {
+        this.post({ type: "clock", status });
+        this.os.frame();
+      },
+      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`), devices: this.os },
     );
+    // Selecting a layer the OS keymap names counts as a click on it (Figma has no canvas click event for plugins).
+    if (typeof (api as Partial<PluginAPI>).on === "function")
+      api.on("selectionchange", () => {
+        if (!this.os.isActive) return;
+        const node = selectedNames(api).find((n) => n in (this.os.keymap.click ?? {}));
+        if (node) this.os.send({ type: "click", node });
+      });
   }
 
   // ---------- messages ----------
@@ -160,6 +182,21 @@ export class SiliconApp {
           this.log("info", `input ${h} → RAM[${IN_ADDR}]${this.clock.isRunning ? "" : " (applied at the next Step / Run)"}`);
           return;
         }
+        case "os-load":
+          await this.task("Load OS", () => this.loadOs(msg.manifest, msg.source, msg.bindings));
+          return;
+        case "os-run":
+          if (!this.os.isActive && msg.load) await this.task("Load OS", () => this.loadOs(msg.load!.manifest, msg.load!.source, msg.load!.bindings));
+          if (!this.os.isActive) return this.log("error", "Run OS: no OS loaded (Load OS first)");
+          if (this.busy) return this.log("error", `busy: ${this.busy} is still running`);
+          void this.clock.run(msg.tps ?? 0);
+          return;
+        case "os-event":
+          this.os.send(msg.event);
+          return;
+        case "os-demo":
+          await this.task("Build OS demo", () => this.osDemo());
+          return;
         case "clock":
           if (msg.action === "pause") {
             this.clock.pause();
@@ -507,6 +544,7 @@ export class SiliconApp {
     const bytes = assembleOrThrow(source);
     this.post({ type: "asm", errors: [] });
     this.clock.invalidate();
+    this.os.programLoaded(source);
     const s = await this.ensureSession(source);
     const old = new Map(s.plan.variables.map((v) => [v.net, v.init]));
     const p = this.plan(s.net, s.schedule, bytes, s.planOpts);
@@ -580,6 +618,33 @@ export class SiliconApp {
       }
     }
     return out;
+  }
+
+  // ---------- OS card (logic in os-host.ts) ----------
+
+  /** Load OS: validate, load the bytes like Load program, then sync the bound layers once. */
+  async loadOs(manifest: unknown, source: string, bindings: unknown) {
+    const r = await this.os.load(manifest, source, bindings);
+    if (r.loaded) {
+      await this.clock.step(0); // attaches the simulator: the first frame writes every bound property
+      await this.os.flush();
+    }
+    return r;
+  }
+
+  /** Build OS demo: the layers the OS names, in a frame "OS demo" beside the CPU (idempotent). */
+  async osDemo() {
+    if (!this.os.isActive) throw new Error("no OS loaded (Load OS first): the layer names come from its bindings");
+    const where = await locate(this.api, { build: true });
+    const page = where!.pages.cpu;
+    await this.api.setCurrentPageAsync(page);
+    const anchor = child(page, STEP_FRAME) ?? findCell(page, CPU_MODULE);
+    const r = await buildOsDemo(this.api, page, this.os.neededLayers(), anchor);
+    this.os.resync();
+    this.os.frame();
+    await this.os.flush();
+    this.log("ok", `OS demo: ${r.created.length ? `created ${r.created.join(", ")}` : "nothing to create"}${r.skipped.length ? `; already there: ${r.skipped.join(", ")}` : ""}`);
+    return r;
   }
 
   // ---------- 5. plugin clock: see PluginClock; the session it runs on ----------

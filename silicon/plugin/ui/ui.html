@@ -267,6 +267,53 @@
       .verdict.bad {
         color: var(--err);
       }
+      textarea.os {
+        height: 110px;
+        margin-top: 4px;
+      }
+      .os-tabs button.on {
+        border-color: var(--active);
+        color: var(--active);
+      }
+      table.os-map {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 6px;
+        font: 11px/1.4 var(--mono);
+      }
+      table.os-map td {
+        padding: 1px 4px;
+        border-bottom: 1px solid var(--stroke);
+        color: var(--dim);
+      }
+      table.os-map td b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .os-keys {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+      }
+      .os-keys button {
+        padding: 4px 8px;
+        font: 600 11px var(--mono);
+      }
+      .keycatch {
+        margin-top: 6px;
+        padding: 6px;
+        border: 1px dashed var(--stroke);
+        border-radius: 6px;
+        color: var(--dim);
+        font-size: 11px;
+        text-align: center;
+        outline: none;
+      }
+      .keycatch:focus {
+        border-color: var(--active);
+        color: var(--active);
+      }
     </style>
   </head>
   <body>
@@ -380,6 +427,39 @@
       </div>
       <div class="keypad" id="keypad"></div>
       <div class="hint">The plugin writes the byte into RAM[14] at the next tick (no extra gates); programs read it with <span class="mono">LD Rd, [14]</span>. Try "echo" or "keypad".</div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <div class="title" style="margin: 0"><span>OS</span>Load an OS <span style="font-weight: 400">· manifest + assembly + bindings</span></div>
+        <button id="os-default" title="Put the hello-os files back in the three boxes">hello-os</button>
+      </div>
+      <div class="row os-tabs" style="margin-top: 6px">
+        <button id="os-tab-manifest" class="on">manifest.json</button>
+        <button id="os-tab-source">source.asm</button>
+        <button id="os-tab-bindings">bindings.json</button>
+        <span class="grow"></span>
+        <label class="check" title="Pick files: *.bindings.json → bindings, other *.json → manifest, anything else → source">pick files <input id="os-files" type="file" multiple accept=".json,.asm,.txt" style="width: 90px" /></label>
+      </div>
+      <textarea id="os-manifest" class="os" spellcheck="false"></textarea>
+      <textarea id="os-source" class="os" spellcheck="false" style="display: none"></textarea>
+      <textarea id="os-bindings" class="os" spellcheck="false" style="display: none"></textarea>
+      <div class="row" style="margin-top: 6px">
+        <button id="os-load" class="blue">Load OS</button>
+        <button id="os-run" class="run">▶ Run OS</button>
+        <button id="os-pause">⏸ Pause</button>
+        <span class="grow"></span>
+        <button id="os-demo" title="Creates the layers the bindings name, in a frame &quot;OS demo&quot; beside the CPU (once; existing names are skipped)">Build OS demo</button>
+      </div>
+      <div id="os-msgs" class="msgs" style="max-height: 110px"></div>
+      <div class="label" style="margin-top: 8px">Regions</div>
+      <table id="os-regions" class="os-map"></table>
+      <div class="label" style="margin-top: 8px">Bindings</div>
+      <table id="os-binds" class="os-map"></table>
+      <div class="label" style="margin-top: 8px">Send event <span id="os-pending" class="pill mono" style="text-transform: none">--</span></div>
+      <div id="os-keys" class="os-keys"></div>
+      <div id="os-keycatch" class="keycatch" tabindex="0">click here, then press keys (sent to the OS by its keymap)</div>
+      <div class="hint">Load OS assembles and validates against the memory map (0–13 code/data, 14 INPUT, 15 OUT) and loads the bytes like Load program. Run OS runs the plugin clock; after each frame the bound layers on this page (found by name) get the changed properties. An event is written to RAM[14] only when it reads 0 (one held at a time); a key that lands between the OS's LD and its consume is lost: send it again. Selecting a layer the keymap names also sends its click.</div>
     </div>
 
     <div class="card">

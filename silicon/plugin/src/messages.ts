@@ -11,7 +11,15 @@ export type ToMain =
   | { type: "clock"; action: "step" | "run" | "pause" | "reset"; tps?: number; source?: string }
   | { type: "verify"; source: string; maxTicks?: number }
   /** Input byte (0–255) for the memory-mapped input register RAM[IN_ADDR] (devices.ts). */
-  | { type: "input"; value: number };
+  | { type: "input"; value: number }
+  /** OS card (os-host.ts): manifest and bindings are JSON text, source is assembly. */
+  | { type: "os-load"; manifest: string; source: string; bindings: string }
+  /** Loads the OS first when `load` is given and no OS is active; then runs the plugin clock. */
+  | { type: "os-run"; tps?: number; load?: { manifest: string; source: string; bindings: string } }
+  /** A keymap event: a click on a named layer or a key (KeyboardEvent.key). */
+  | { type: "os-event"; event: { type: "click"; node: string } | { type: "key"; key: string } }
+  /** Creates the layers the loaded OS's bindings name, in a frame "OS demo" beside the CPU. */
+  | { type: "os-demo" };
 
 export type LogLevel = "info" | "ok" | "error";
 
@@ -82,4 +90,31 @@ export type ToUi =
   | { type: "compile"; stats: CompileStats }
   | { type: "asm"; errors: Array<{ line: number; msg: string }> }
   | { type: "clock"; status: ClockStatus }
-  | { type: "verify"; ok: boolean; text: string };
+  | { type: "verify"; ok: boolean; text: string }
+  | { type: "os"; report: OsReport };
+
+/** One binding, as the OS card lists it. */
+export interface OsBindingRow {
+  node: string;
+  prop: string;
+  /** e.g. "RAM[12].0–6". */
+  ram: string;
+  /** e.g. "×24 + 40" or 'table ["closed","open"]'; "" without a map. */
+  map: string;
+}
+
+/** Result of Load OS: loader / bindings messages verbatim, the region map and the bindings. */
+export interface OsReport {
+  /** No errors. */
+  ok: boolean;
+  /** The bytes went through Load program and the bindings are live. */
+  loaded: boolean;
+  name: string;
+  /** "error [code] message" lines, exactly as the loader / bindings validator wrote them. */
+  errors: string[];
+  warnings: string[];
+  regions: Array<{ name: string; start: number; end: number; kind: string }>;
+  bytes: number[];
+  bindings: OsBindingRow[];
+  keymap: { click: Record<string, number>; key: Record<string, number> };
+}
