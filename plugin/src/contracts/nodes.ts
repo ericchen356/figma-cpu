@@ -12,6 +12,8 @@ export const hex = (n: number, w: number) => n.toString(16).toUpperCase().padSta
 
 export const N = {
   page: "Machine v2",
+  // Plugin-team sandbox: made by tools/clone-test-page. The plugin prefers it, so tests never touch the canvas team's page.
+  testPage: "Machine v2 (plugin test)",
   // 6 general registers are instances of the `Register` component set (children: name, value, dec, bit/0..7)
   reg: (r: Reg) => `cpu/reg/${r}`,
   // 16-bit PC/SP and the IR are frames (children: label, value, bit/0..15)

@@ -39,3 +39,8 @@ git checkout plugin/scaffold && cd plugin && npm ci && npm run build
 npm test        # pure-Node tests (assembler, cpu core, vram)
 ```
 Only ONE person drives the plugin against the shared Figma file at a time.
+
+## Test page (do not run the engine on the canvas team's page)
+Run the dev plugin `tools/clone-test-page/manifest.json` once (Figma desktop -> Plugins -> Development -> Import plugin
+from manifest). It copies page "Machine v2" to "Machine v2 (plugin test)"; the plugin binds to that page when it exists.
+Canvas team changes? Delete the test page and run the cloner again.
