@@ -12,7 +12,10 @@
 //   7  switching   of two stacked click layers only the visible one takes the click
 //   8  spacers     hidden frames in an auto layout take no room (positions come from this)
 //   9  keys        ON_KEY_DOWN for the shortcut keys the editor uses
-//  10  triple      one click fires MOUSE_DOWN, MOUSE_UP and ON_CLICK, in that order
+//  10  triple      one click fires MOUSE_DOWN then MOUSE_UP (and whether ON_CLICK fires as well)
+//  11  placement   the editor's own layer structure: a rectangle and its colour from register bits
+//  12  key layers  a key on a layer inside the frame: does it fire, and does it when the layer is hidden?
+//  13  key pick    eight stacked layers with the same key, one shown by 3 bits: the shown one takes it
 import {
   aliasData,
   boolData,
@@ -41,6 +44,8 @@ import {
   text,
   type VariableSpec,
 } from "../../../src/prototype/draw";
+import { render } from "../ui/render";
+import { colourPick, PALETTE_HEX, pick, placedBy, type NodeSpec } from "../ui/spec";
 
 export const TEST_COLLECTION = "NATHAN tests";
 export const TEST_PREFIX = "NATHAN test ";
@@ -99,6 +104,19 @@ function variableSpecs(): VariableSpec[] {
     specs.push({ name: `t8/b${i}`, type: "BOOLEAN", init: false });
   for (const k of ["a", "delete", "left", "bracket"]) counter(`t9/${k}`);
   specs.push({ name: "t10/seq", type: "STRING", init: "" });
+  for (const r of PLACE_REGS)
+    for (let i = 0; i < 4; i++)
+      specs.push({ name: `t11/${r}/${i}`, type: "BOOLEAN", init: r === "nf" });
+  for (const c of PLACE_CASES)
+    specs.push({ name: `t11/case/${c.name}`, type: "BOOLEAN", init: false });
+  for (const k of KEY_LAYERS) counter(`t12/${k.name}`);
+  specs.push({ name: "t12/off", type: "BOOLEAN", init: false });
+  for (let i = 0; i < 3; i++)
+    specs.push(
+      { name: `t13/b${i}`, type: "BOOLEAN", init: false },
+      { name: `t13/n${i}`, type: "BOOLEAN", init: true },
+    );
+  specs.push({ name: "t13/which", type: "STRING", init: "–" });
   return specs;
 }
 
@@ -532,14 +550,15 @@ async function keys(ctx: Ctx) {
     "Click once inside the frame so it has focus, then press: A, Delete, ← (left arrow), ] (right bracket).",
     "each key adds 1 to its own number",
   );
-  const table: Array<[string, number[], string]> = [
-    ["A", [65], "t9/a"],
-    ["Delete / Backspace", [46, 8], "t9/delete"],
-    ["←", [37], "t9/left"],
-    ["]", [221], "t9/bracket"],
+  // one key per reaction: a keyCodes list is a chord (all keys held at once)
+  const table: Array<[string, number[][], string]> = [
+    ["A", [[65]], "t9/a"],
+    ["Delete or Backspace", [[46], [8]], "t9/delete"],
+    ["←", [[37]], "t9/left"],
+    ["]", [[221]], "t9/bracket"],
   ];
   const reactions: Reaction[] = [];
-  table.forEach(([label, codes, name], i) => {
+  table.forEach(([label, keys, name], i) => {
     put(
       f,
       text(ctx.api, label, { size: 13, color: COLORS.dim }),
@@ -547,23 +566,203 @@ async function keys(ctx: Ctx) {
       100 + i * 44,
     );
     num(ctx, f, name, 240, 92 + i * 44, 24);
-    reactions.push({ trigger: keyDown(codes), actions: bump(ctx, name) });
+    for (const codes of keys)
+      reactions.push({ trigger: keyDown(codes), actions: bump(ctx, name) });
   });
   await f.setReactionsAsync(reactions);
 }
 
-/** 10 · one click = three events (the plugin splits long canvas clicks across them). */
+/** 10 · one click = mouse down + mouse up (a click too long for one event is split across them). On a
+ * layer that also has an ON_CLICK, Figma desktop fires only the first two (measured), which button 2
+ * shows. */
 async function triple(ctx: Ctx) {
-  const f = testFrame(ctx, 10, "one click is three events", "Click the button a few times.", "every click appends D U C, in that order (mouse down, mouse up, click)");
+  const f = testFrame(
+    ctx,
+    10,
+    "one click is two events",
+    "Click each button a few times.",
+    "button 1 appends D U for every click (button 2 shows whether C also fires)",
+  );
   const t = put(f, text(ctx.api, "", { size: 22, bold: true, color: COLORS.amber, name: "value" }), 20, 160);
   t.setBoundVariable("characters", ctx.v.get("t10/seq")!);
-  const b = put(f, button(ctx.api, "click me", COLORS.step, 160, 44), 20, 100);
-  const add = (letter: string): Action[] => [setVariable(id(ctx, "t10/seq"), exprData("ADDITION", [aliasData(id(ctx, "t10/seq"), "STRING"), strData(letter)], "STRING"))];
-  await b.setReactionsAsync([
+  const add = (letter: string): Action[] => [
+    setVariable(
+      id(ctx, "t10/seq"),
+      exprData("ADDITION", [aliasData(id(ctx, "t10/seq"), "STRING"), strData(letter)], "STRING"),
+    ),
+  ];
+  const one = put(f, button(ctx.api, "1: down + up", COLORS.step, 160, 44), 20, 100);
+  await one.setReactionsAsync([
     { trigger: mouseDown(0), actions: add("D") },
-    { trigger: mouseUp(0), actions: add("U") },
-    { trigger: onClick(), actions: add("C ") },
+    { trigger: mouseUp(0), actions: add("U ") },
   ]);
+  const two = put(f, button(ctx.api, "2: down + up + click", COLORS.run, 200, 44), 200, 100);
+  await two.setReactionsAsync([
+    { trigger: mouseDown(0), actions: add("d") },
+    { trigger: mouseUp(0), actions: add("u") },
+    { trigger: onClick(), actions: add("c") },
+    ]);
+}
+
+const PLACE_REGS = ["x0", "x1", "y0", "y1", "f", "nf"] as const;
+/** Rectangles to try, with odd and even bits in every coordinate (x1, y1 exclusive), and colours. */
+const PLACE_CASES = [
+  { name: "A", x0: 1, x1: 5, y0: 1, y1: 4, f: 8, colour: "red" },
+  { name: "B", x0: 3, x1: 11, y0: 5, y1: 7, f: 10, colour: "yellow" },
+  { name: "C", x0: 0, x1: 14, y0: 0, y1: 10, f: 3, colour: "green" },
+];
+
+/** 11 · the editor's screen structure: a rectangle placed by spacer frames bound to four 4-bit
+ * registers, its colour picked by a tree on 4 bits and their inverses (the same spec builders). */
+async function placement(ctx: Ctx) {
+  const f = testFrame(
+    ctx,
+    11,
+    "a rectangle from register bits",
+    "Click case A, B and C. Each sets 24 bits; the layout alone draws the rectangle.",
+    "the coloured rectangle exactly fills the dashed outline, in the colour named",
+  );
+  const U = 20;
+  const grid = put(f, box(ctx.api, "grid", 14 * U, 10 * U, COLORS.lampOff, 0), 20, 96);
+  grid.clipsContent = false;
+  const net = (r: string) => (i: number) => `t11/${r}/${i}`;
+  await render(
+    { api: ctx.api, variable: (n) => ctx.v.get(n), reactionsFor: () => [] },
+    grid,
+    placedBy("rect", { x0: net("x0"), x1: net("x1"), y0: net("y0"), y1: net("y1") }, U, {
+      ...colourPick(net("f"), net("nf")),
+      name: "body",
+    }),
+  );
+  for (const c of PLACE_CASES) {
+    const show = ctx.v.get(`t11/case/${c.name}`)!;
+    const outline = put(grid, box(ctx.api, `expect ${c.name}`, (c.x1 - c.x0) * U, (c.y1 - c.y0) * U, COLORS.bg, 0), c.x0 * U, c.y0 * U);
+    outline.fills = [];
+    outline.strokes = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+    outline.strokeWeight = 2;
+    outline.dashPattern = [6, 4];
+    outline.setBoundVariable("visible", show);
+    const note = put(f, text(ctx.api, `${c.name}: ${c.colour} (${PALETTE_HEX[c.f]})`, { size: 12, bold: true, name: `colour ${c.name}` }), 320, 150);
+    note.setBoundVariable("visible", show);
+  }
+  for (let n = 0; n < PLACE_CASES.length; n++) {
+    const c = PLACE_CASES[n];
+    const value: Record<string, number> = { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, f: c.f, nf: ~c.f };
+    const b = put(f, button(ctx.api, `case ${c.name}`, COLORS.step, 60, 36), 320 + n * 64, 96);
+    await react(b, onClick(), [
+      ...PLACE_REGS.flatMap((r) =>
+        [0, 1, 2, 3].map((i) => setVariable(id(ctx, `t11/${r}/${i}`), boolData(((value[r] >> i) & 1) === 1))),
+      ),
+      ...PLACE_CASES.map((o) => setVariable(id(ctx, `t11/case/${o.name}`), boolData(o === c))),
+    ]);
+  }
+}
+
+/** Where test 12 puts a K key: on the frame, on layers inside it, shown or hidden. */
+const KEY_LAYERS = [
+  { name: "frame", label: "the frame itself" },
+  { name: "shown", label: "a layer in it" },
+  { name: "deep", label: "a layer 3 frames deep" },
+  { name: "hidden", label: "a hidden layer (bound to false)" },
+  { name: "inside", label: "a shown layer in a hidden frame" },
+  { name: "only", label: "J: only on the shown layer" },
+] as const;
+
+/** 12 · keys on layers: if a key on a layer fires only while the layer shows, the visible one of
+ * several stacked layers (picked by register bits) can take a shortcut, like a click. */
+async function keyLayers(ctx: Ctx) {
+  const f = testFrame(
+    ctx,
+    12,
+    "keys on layers inside the frame",
+    "Click once on the frame's background for focus (not on a box), then press K once, then J once. Each number counts its own reaction.",
+    "write down which numbers grew: K on the frame, shown, deep, hidden, inside; J",
+  );
+  KEY_LAYERS.forEach((k, i) => {
+    put(f, text(ctx.api, k.label, { size: 12, color: COLORS.dim }), 40, 96 + i * 30);
+    num(ctx, f, `t12/${k.name}`, 300, 90 + i * 30, 20);
+  });
+  const K = 75;
+  const J = 74;
+  const at = (parent: FrameNode, name: string, x: number) =>
+    put(parent, box(ctx.api, name, 28, 28, COLORS.panel, 4), x, 0);
+  const tray = put(f, box(ctx.api, "tray", 200, 28, COLORS.bg, 0), 300, H - 76);
+  const shown = at(tray, "shown", 0);
+  const deep1 = at(tray, "deep 1", 36);
+  const deep2 = put(deep1, box(ctx.api, "deep 2", 28, 28, COLORS.panel, 4), 0, 0);
+  const deep = put(deep2, box(ctx.api, "deep", 28, 28, COLORS.lampOff, 4), 0, 0);
+  const hidden = at(tray, "hidden", 72);
+  hidden.setBoundVariable("visible", ctx.v.get("t12/off")!);
+  const hider = at(tray, "hidden frame", 108);
+  hider.setBoundVariable("visible", ctx.v.get("t12/off")!);
+  const inside = put(hider, box(ctx.api, "inside", 28, 28, COLORS.lampOff, 4), 0, 0);
+  await f.setReactionsAsync([{ trigger: keyDown([K]), actions: bump(ctx, "t12/frame") }]);
+  await shown.setReactionsAsync([
+    { trigger: keyDown([K]), actions: bump(ctx, "t12/shown") },
+    { trigger: keyDown([J]), actions: bump(ctx, "t12/only") },
+  ]);
+  await react(deep, keyDown([K]), bump(ctx, "t12/deep"));
+  await react(hidden, keyDown([K]), bump(ctx, "t12/hidden"));
+  await react(inside, keyDown([K]), bump(ctx, "t12/inside"));
+}
+
+/** 13 · a shortcut picked by register bits: the Arrange shortcuts' design. Eight layers carry the
+ * same key, stacked in a pick tree on 3 bits (level i shows child 0 on ¬bit i, child 1 on bit i), so
+ * exactly one shows; the key must go to that one, whichever it is. */
+async function keyPick(ctx: Ctx) {
+  const f = testFrame(
+    ctx,
+    13,
+    "a shortcut picked by 3 bits",
+    "Click the frame's background, press P: the big number says which of 8 stacked layers took it. Toggle bits with the buttons (the square shows the layer that is up) and press P again, a few times.",
+    "after every P the number equals the number in the square",
+  );
+  const t = put(f, text(ctx.api, "–", { size: 40, bold: true, color: COLORS.amber, name: "which" }), 400, 90);
+  t.setBoundVariable("characters", ctx.v.get("t13/which")!);
+  put(f, text(ctx.api, "P went to:", { size: 13, color: COLORS.dim }), 300, 108);
+  const level = (name: string, children: NodeSpec[]): NodeSpec => ({
+    type: "frame",
+    name,
+    x: 0,
+    y: 0,
+    w: 72,
+    h: 72,
+    children,
+  });
+  const leaf = (k: number): NodeSpec => ({
+    type: "frame",
+    name: `leaf/${k}`,
+    x: 0,
+    y: 0,
+    w: 72,
+    h: 72,
+    fill: "#2f6fed",
+    radius: 6,
+    reactions: [{ trigger: { on: "key", codes: [80] }, run: `t13/${k}` }],
+    children: [{ type: "text", name: "n", x: 26, y: 18, text: { chars: String(k), size: 28, bold: true, color: "#ffffff" } }],
+  });
+  const holder = put(f, box(ctx.api, "stack", 72, 72, COLORS.bg, 0), 40, 100);
+  await render(
+    {
+      api: ctx.api,
+      variable: (n) => ctx.v.get(n),
+      reactionsFor: (ref) => [
+        {
+          trigger: keyDown([80]),
+          actions: [setVariable(id(ctx, "t13/which"), strData(ref.run.slice("t13/".length)))],
+        },
+      ],
+    },
+    holder,
+    pick(3, (i) => `t13/b${i}`, (i) => `t13/n${i}`, level, leaf),
+  );
+  for (let i = 0; i < 3; i++) {
+    const b = put(f, button(ctx.api, `bit ${i} (${1 << i})`, COLORS.step, 100, 36), 40 + i * 110, 200);
+    await react(b, onClick(), [
+      setVariable(id(ctx, `t13/b${i}`), exprData("NOT", [aliasData(id(ctx, `t13/b${i}`))])),
+      setVariable(id(ctx, `t13/n${i}`), exprData("NOT", [aliasData(id(ctx, `t13/n${i}`))])),
+    ]);
+  }
 }
 
 /** Builds the platform test frames on `page`, below everything, each with a flow. */
@@ -590,7 +789,7 @@ export async function buildPlatformTests(
     info: [],
     at: { x: 0, y: bottom + 1200 },
   };
-  for (const t of [size, big, nesting, hover, bubbling, passThrough, switching, spacers, keys, triple])
+  for (const t of [size, big, nesting, hover, bubbling, passThrough, switching, spacers, keys, triple, placement, keyLayers, keyPick])
     try {
       await t(ctx);
     } catch (e) {

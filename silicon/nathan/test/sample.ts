@@ -57,16 +57,12 @@ export function observedNets(net: FlatNetlist): number[] {
   bus(STATE_NETS.drag, 2);
   bus(STATE_NETS.r1, 4);
   bus(STATE_NETS.r2, 4);
-  bus(SCREEN_NETS.show, 8);
-  bus(SCREEN_NETS.selk, 8);
-  bus(SCREEN_NETS.nx1, 32);
-  bus(SCREEN_NETS.ny1, 32);
-  bus(SCREEN_NETS.kfr, 8);
-  bus(SCREEN_NETS.kre, 8);
-  bus(SCREEN_NETS.kel, 8);
-  bus(SCREEN_NETS.fill1h, 128);
-  bus(SCREEN_NETS.cur1h, 16);
-  bus(SCREEN_NETS.tool1h, 4);
+  bus(SCREEN_NETS.nsel, 3);
+  bus(SCREEN_NETS.nkind, 16);
+  bus(SCREEN_NETS.nfill, 32);
+  bus(SCREEN_NETS.ncur, 4);
+  bus(SCREEN_NETS.ell, 8);
+  bus(SCREEN_NETS.nell, 8);
   bus(SCREEN_NETS.hot, 4);
   return ids;
 }

@@ -64,18 +64,17 @@ export const STATE_NETS = {
   r2: "r2",
 } as const;
 
-/** Net names of the screen: what the UI frame's layers are bound to. All are top-level wires. */
+/** Net names of the screen besides the registers: what else the UI frame's layers are bound to.
+ * Most of the screen is bound to register bits directly (positions, sizes, visibility); a value
+ * that picks one of several layers (a colour, a kind, the selected layer) needs each bit and its
+ * inverse, one level of frames per bit. All are top-level wires. */
 export const SCREEN_NETS = {
-  show: "show", // [8] used·vis
-  selk: "selk", // [8] selected
-  nx1: "nx1", // [32] ¬x1 bits, layer-major
-  ny1: "ny1", // [32] ¬y1 bits
-  kfr: "kfr", // [8] kind = frame
-  kre: "kre", // [8] kind = rectangle
-  kel: "kel", // [8] kind = ellipse
-  fill1h: "fill1h", // [128] one-hot colour of each layer, layer-major
-  cur1h: "cur1h", // [16] one-hot current colour
-  tool1h: "tool1h", // [4]
+  nsel: "nsel", // [3] ¬sel
+  nkind: "nkind", // [16] ¬kind bits, layer-major
+  nfill: "nfill", // [32] ¬fill bits, layer-major
+  ncur: "ncur", // [4] ¬cur
+  ell: "ell", // [8] kind = ellipse: the layer's body is round
+  nell: "nell", // [8] ¬ell
   hot: "hot", // [4] hotspot sets: idle+move tool, idle+creation tool, drag=move, drag=create/resize
 } as const;
 

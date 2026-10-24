@@ -14,9 +14,12 @@ import {
 } from "./synth";
 
 export interface ReactionSpec {
-  /** Catalogue name, e.g. "tool/2", "click/idle-move". */
+  /** Catalogue name, e.g. "tool/2", "click/idle-move/3" (a click on canvas row 3), "dup@5" (Duplicate
+   * while the selection register holds 5). */
   name: string;
   ties: Tie;
+  /** Registers the control that runs it shows for (`sel` for the per-slot Arrange buttons). */
+  given?: Tie;
   /** Is this reaction reachable in editor state `s`? (The UI only shows the control then.) */
   valid(s: R.State): boolean;
   /** A concrete editor event for this reaction; `rnd(n)` picks where the reaction leaves a choice. */
@@ -30,13 +33,10 @@ const dg = (v0: number, v1: number, v2?: number, v3?: number): Tie => ({
   ...(v2 === undefined ? {} : { "dg[2]": v2 }),
   ...(v3 === undefined ? {} : { "dg[3]": v3 }),
 });
-const cell = (rnd: (n: number) => number) => ({
-  x: rnd(R.GRID_W),
-  y: rnd(R.GRID_H),
-});
-
-/** The four hotspot sets: which clicks they take, and the line (`hot` bit) that shows them. */
-export const CLICK_SPECS: ReactionSpec[] = [
+/** The four hotspot sets: which clicks they take, and the line (`hot` bit) that shows them. A set
+ * is one click layer per canvas row, each with its own reaction: PY is that row, a constant, which
+ * folds half the hit test away (the pointer's column comes from the hover). */
+const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
   {
     name: "click/idle-move",
     ties: {
@@ -47,7 +47,6 @@ export const CLICK_SPECS: ReactionSpec[] = [
       creating: 0,
     },
     valid: (s) => !s.drag && s.tool === "move",
-    event: (rnd) => ({ k: "click", ...cell(rnd) }),
   },
   {
     name: "click/idle-create",
@@ -59,29 +58,33 @@ export const CLICK_SPECS: ReactionSpec[] = [
       creating: 1,
     },
     valid: (s) => !s.drag && s.tool !== "move",
-    event: (rnd) => ({ k: "click", ...cell(rnd) }),
   },
   {
     name: "click/drag-move",
     ties: { EVT: EV.CLICK, ...dg(0, 1, 0, 0), dragging: 1 },
     valid: (s) => s.drag?.mode === "move",
-    event: (rnd) => ({ k: "click", ...cell(rnd) }),
   },
   {
     name: "click/drag-span",
     ties: { EVT: EV.CLICK, ...dg(0, 0), dragging: 1 },
     valid: (s) => s.drag?.mode === "create" || s.drag?.mode === "resize",
-    event: (rnd) => ({ k: "click", ...cell(rnd) }),
   },
 ];
 
-/** Hotspot set names in `hot` bit order, with the reaction each one's clicks run. */
-export const HOTSPOT_REACTIONS = [
-  "click/idle-move",
-  "click/idle-create",
-  "click/drag-move",
-  "click/drag-span",
-] as const;
+/** Hotspot set names in `hot` bit order. */
+export const HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
+/** The reaction a click on canvas row `row` of hotspot set `set` runs. */
+export const clickRun = (set: number, row: number) =>
+  `${HOTSPOT_REACTIONS[set]}/${row}`;
+
+export const CLICK_SPECS: ReactionSpec[] = HOTSPOT_SETS.flatMap((h) =>
+  Array.from({ length: R.GRID_H }, (_, y) => ({
+    ...h,
+    name: `${h.name}/${y}`,
+    ties: { ...h.ties, PY: y },
+    event: (rnd: (n: number) => number): Ev => ({ k: "click", x: rnd(R.GRID_W), y }),
+  })),
+);
 
 export function reactionSpecs(): ReactionSpec[] {
   const out: ReactionSpec[] = [...CLICK_SPECS];
@@ -133,24 +136,23 @@ export function reactionSpecs(): ReactionSpec[] {
     valid: always,
     event: () => ({ k: "delete" }),
   });
-  out.push({
-    name: "dup",
-    ties: { EVT: EV.DUP },
-    valid: always,
-    event: () => ({ k: "dup" }),
-  });
-  out.push({
-    name: "fwd",
-    ties: { EVT: EV.FWD },
-    valid: always,
-    event: () => ({ k: "fwd" }),
-  });
-  out.push({
-    name: "back",
-    ties: { EVT: EV.BACK },
-    valid: always,
-    event: () => ({ k: "back" }),
-  });
+  // Duplicate and the reorders: one per value of the selection register (the button and the
+  // shortcut for the register's value are the ones showing). With the slot known, reading the
+  // selected record and the reorder's muxes fold away.
+  for (const [name, evt, k] of [
+    ["dup", EV.DUP, "dup"],
+    ["fwd", EV.FWD, "fwd"],
+    ["back", EV.BACK, "back"],
+  ] as const) {
+    for (let sel = 0; sel < LAYERS; sel++)
+      out.push({
+        name: `${name}@${sel}`,
+        ties: { EVT: evt },
+        given: { sel },
+        valid: always,
+        event: () => ({ k }),
+      });
+  }
   out.push({
     name: "esc",
     ties: { EVT: EV.ESC },
@@ -162,6 +164,23 @@ export function reactionSpecs(): ReactionSpec[] {
 
 export type Catalog = Map<string, { spec: ReactionSpec; reaction: Reaction }>;
 
+/** Do the machine's values `v` (one per net) hold the registers a spec is given? */
+export function givenHolds(
+  net: { aliases: Map<string, number> },
+  spec: ReactionSpec,
+  v: ArrayLike<number>,
+): boolean {
+  return Object.entries(spec.given ?? {}).every(([name, value]) => {
+    const one = net.aliases.get(name);
+    if (one !== undefined) return v[one] === (value & 1);
+    for (let i = 0; ; i++) {
+      const id = net.aliases.get(`${name}[${i}]`);
+      if (id === undefined) return i > 0;
+      if (v[id] !== ((value >> i) & 1)) return false;
+    }
+  });
+}
+
 /** Synthesises every reaction of the OS (a few seconds for ~50 specs on the full machine). */
 export function buildCatalog(
   net: Parameters<typeof synthesize>[0],
@@ -169,7 +188,31 @@ export function buildCatalog(
   opts: SynthOptions = {},
 ): Catalog {
   const out: Catalog = new Map();
-  for (const spec of specs)
-    out.set(spec.name, { spec, reaction: synthesize(net, spec.ties, opts) });
+  for (const spec of specs) out.set(spec.name, entryOf(net, spec, opts));
   return out;
 }
+
+/** The same, a few reactions at a time with `rest()` in between (a plugin must not hold Figma's
+ * main thread for long, or Figma loses its connection to the server). */
+export async function buildCatalogGently(
+  net: Parameters<typeof synthesize>[0],
+  specs: ReactionSpec[],
+  opts: SynthOptions,
+  rest: () => Promise<void>,
+): Promise<Catalog> {
+  const out: Catalog = new Map();
+  for (const [i, spec] of specs.entries()) {
+    out.set(spec.name, entryOf(net, spec, opts));
+    if (i % 4 === 3) await rest();
+  }
+  return out;
+}
+
+const entryOf = (
+  net: Parameters<typeof synthesize>[0],
+  spec: ReactionSpec,
+  opts: SynthOptions,
+) => ({
+  spec,
+  reaction: synthesize(net, spec.ties, { ...opts, given: spec.given }),
+});

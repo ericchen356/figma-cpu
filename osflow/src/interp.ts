@@ -40,12 +40,24 @@ export function evalExpr(e: Expr, vars: Vars): Val {
   }
 }
 
-/** Runs `steps` in place on `vars`; returns the number of actions executed. */
+/** Runs `steps` in place on `vars`; returns the number of actions executed. A unit costs nothing
+ * itself (it only groups steps for the chart); a gate-level `half` counts as one step. */
 export function run(steps: readonly Step[], vars: Vars): number {
   let n = 0;
   for (const s of steps) {
+    if (s.k === "unit") {
+      n += run(s.steps, vars);
+      continue;
+    }
     n++;
-    if (s.k === "set") {
+    if (s.k === "half") {
+      const v = evalExpr(s.src, vars);
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
+        throw new Error(`half of ${String(v)}: needs a whole number ≥ 0`);
+      if (typeof vars.get(s.dst) !== "number")
+        throw new Error(`half into ${s.dst}, which is not a declared number`);
+      vars.set(s.dst, Math.floor(v / 2));
+    } else if (s.k === "set") {
       const old = vars.get(s.name);
       if (old === undefined)
         throw new Error(`set of undeclared variable ${s.name}`);

@@ -39,12 +39,31 @@ export type Expr =
 
 export type Step =
   | { k: "set"; name: string; to: Expr }
-  | { k: "if"; cond: Expr; then: Step[]; else?: Step[] };
+  | { k: "if"; cond: Expr; then: Step[]; else?: Step[] }
+  /** dst = floor(src / 2), for a whole number src ≥ 0. Gate level only: there it is a shift. The
+   * word-level editor writes bit-peeling steps instead, because Figma has no floor. */
+  | { k: "half"; dst: string; src: Expr }
+  /** A named group of steps: one block of the gate-level chart (gates/ draws each unit as one
+   * module). It runs its steps in place and costs no action itself. */
+  | { k: "unit"; name: string; steps: Step[] };
+
+/** What a variable is to the gate-level machine (gates/):
+ *  · state  a register: it keeps its value from one event to the next;
+ *  · temp   recomputed inside one event and never read there before it is written;
+ *  · view   derived from the state for the screen (the display decode computes it, not a register);
+ *  · input  driven from outside before each event (the pointer cell);
+ *  · const  a fixed value (the window corner, until panning exists). */
+export type Role = "state" | "temp" | "view" | "input" | "const";
 
 export interface VarDecl {
   name: string;
   ty: Ty;
   init: Val;
+  /** Gate level: what the variable is (default "state"). */
+  role?: Role;
+  /** Gate level: bit width of a num variable, and whether it is two's complement. */
+  bits?: number;
+  signed?: boolean;
 }
 
 export type Const = Extract<Expr, { k: "num" | "bool" | "str" | "col" }>;
@@ -140,6 +159,34 @@ export const seq = (...parts: Part[]): Step[] => parts.flat();
 
 export const set = (name: string, to: Expr): Step[] => [{ k: "set", name, to }];
 
+/** dst = floor(src / 2) (gate level only, see Step). */
+export const half = (dst: string, src: Expr): Step[] => [
+  { k: "half", dst, src },
+];
+
+/** Groups steps into one named block of the chart. An empty group disappears. */
+export function unit(name: string, ...parts: Part[]): Step[] {
+  const steps = seq(...parts);
+  return steps.length ? [{ k: "unit", name, steps }] : [];
+}
+
+/** The steps with every unit opened up, in order (what runs; units only group them for the chart). */
+export function inline(steps: readonly Step[]): Step[] {
+  return steps.flatMap((s): Step[] =>
+    s.k === "unit"
+      ? inline(s.steps)
+      : s.k === "if"
+        ? [
+            {
+              ...s,
+              then: inline(s.then),
+              ...(s.else ? { else: inline(s.else) } : {}),
+            },
+          ]
+        : [s],
+  );
+}
+
 /** `if cond then … else …`. A constant condition keeps only the branch that runs. */
 export function when(cond: Expr, then: Part[], otherwise?: Part[]): Step[] {
   if (cond.k === "bool") return seq(...(cond.v ? then : (otherwise ?? [])));
@@ -209,6 +256,11 @@ export function touched(
     if (s.k === "set") {
       into.writes.add(s.name);
       readsOf(s.to);
+    } else if (s.k === "half") {
+      into.writes.add(s.dst);
+      readsOf(s.src);
+    } else if (s.k === "unit") {
+      touched(s.steps, into);
     } else {
       readsOf(s.cond);
       touched(s.then, into);

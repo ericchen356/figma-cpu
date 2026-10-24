@@ -9,10 +9,16 @@ export interface RenderContext {
   api: PluginAPI;
   /** The BOOLEAN variable of a net, by net name (undefined: the net has no variable). */
   variable(net: string): Variable | undefined;
-  /** The stored reaction(s) a spec reference stands for. One click can become three (MOUSE_DOWN,
-   * MOUSE_UP, ON_CLICK) when the action list is too long for one event. */
+  /** The stored reaction(s) a spec reference stands for. One click can become two (MOUSE_DOWN,
+   * MOUSE_UP) when the action list is too long for one event. */
   reactionsFor(ref: ReactionRef): Reaction[];
+  /** Hands the main thread back to Figma for a moment. Called every `BREATHE_EVERY` layers: a long
+   * uninterrupted build starves Figma's connection to its server, which then drops ("Unable to
+   * establish connection to Figma"). */
+  breathe?: () => Promise<void>;
 }
+
+const BREATHE_EVERY = 150;
 
 export interface RenderResult {
   root: SceneNode;
@@ -54,16 +60,17 @@ export async function render(
   };
   const pending: Array<[SceneNode & ReactionMixin, Reaction[]]> = [];
 
-  const build = (
+  const build = async (
     s: NodeSpec,
     into: BaseNode & ChildrenMixin,
     parentSpec: NodeSpec | null,
     path: string,
-  ): SceneNode => {
+  ): Promise<SceneNode> => {
     const api = ctx.api;
     const node = make(api, s);
     node.name = s.name;
     out.created++;
+    if (ctx.breathe && out.created % BREATHE_EVERY === 0) await ctx.breathe();
 
     // look
     if (node.type === "TEXT") {
@@ -74,8 +81,12 @@ export async function render(
       node.fills = solid(t.color ?? "#FFFFFF");
     } else {
       const shape = node as FrameNode | RectangleNode | EllipseNode;
-      if (s.w !== undefined && s.h !== undefined)
-        shape.resize(Math.max(s.w, 0.01), Math.max(s.h, 0.01));
+      // a size given in one direction only keeps Figma's default (100) in the other
+      if (s.w !== undefined || s.h !== undefined)
+        shape.resize(
+          Math.max(s.w ?? shape.width, 0.01),
+          Math.max(s.h ?? shape.height, 0.01),
+        );
       shape.fills = s.fill ? solid(s.fill) : [];
       shape.strokes = s.stroke ? solid(s.stroke) : [];
       if (s.stroke) {
@@ -118,9 +129,9 @@ export async function render(
         (node as FrameNode).layoutSizingVertical = s.sizeV ?? "FIXED";
       }
     } else if (node.type === "FRAME" && s.layout) {
-      // an auto-layout frame outside a flow keeps the size it was given
-      node.layoutSizingHorizontal = "FIXED";
-      node.layoutSizingVertical = "FIXED";
+      // an auto-layout frame outside a flow keeps the size it was given, or hugs its content
+      node.layoutSizingHorizontal = s.sizeH === "HUG" ? "HUG" : "FIXED";
+      node.layoutSizingVertical = s.sizeV === "HUG" ? "HUG" : "FIXED";
     }
 
     // the live parts
@@ -132,20 +143,25 @@ export async function render(
       } else out.missing.push(s.visibleNet);
     }
     if (s.reactions?.length) {
-      pending.push([node as SceneNode & ReactionMixin, s.reactions.flatMap((r: ReactionRef) => ctx.reactionsFor(r))]);
+      pending.push([
+        node as SceneNode & ReactionMixin,
+        s.reactions.flatMap((r: ReactionRef) => ctx.reactionsFor(r)),
+      ]);
       out.reactions += s.reactions.length;
     }
 
     const here = `${path}/${s.name}`;
     out.nodes.set(here, node);
     for (const c of s.children ?? [])
-      build(c, node as BaseNode & ChildrenMixin, s, here);
+      await build(c, node as BaseNode & ChildrenMixin, s, here);
     return node;
   };
 
-  out.root = build(spec, parent, null, "");
+  out.root = await build(spec, parent, null, "");
   // reactions last: they may point at variables only, but setting them in one sweep keeps the tree build fast
-  for (const [node, reactions] of pending)
-    await node.setReactionsAsync(reactions);
+  for (let i = 0; i < pending.length; i++) {
+    await pending[i][0].setReactionsAsync(pending[i][1]);
+    if (ctx.breathe && i % 25 === 24) await ctx.breathe();
+  }
   return out;
 }

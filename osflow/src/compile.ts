@@ -10,7 +10,7 @@ import {
   setVariable,
   strData,
 } from "../../silicon/src/prototype/figma-actions";
-import type { Expr, Fn, Program, Step, Ty, Val, VarDecl } from "./ir";
+import { inline, type Expr, type Fn, type Program, type Step, type Ty, type Val, type VarDecl } from "./ir";
 
 /** Figma variable id per variable name. */
 export type VarIds = Map<string, string>;
@@ -167,7 +167,11 @@ export function compileSteps(
   opts: CompileOptions = {},
 ): Action[] {
   const conv = (list: readonly Step[]): Action[] =>
-    list.map((s) => {
+    inline(list).map((s) => {
+      if (s.k === "half" || s.k === "unit")
+        throw new Error(
+          `${s.k} is a gate-level step; the word-level editor must not emit it`,
+        );
       if (s.k === "set") {
         const want = types.get(s.name);
         const id = ids.get(s.name);
@@ -192,29 +196,32 @@ export function compileSteps(
 
 /** Most actions an event can execute: every `if` counts 1 plus its costlier branch. This is what
  * the viewer's per-event limit (about 500 to 2000 actions) is measured against. */
-export function worstCase(steps: readonly Step[]): number {
+export function worstCase(input: readonly Step[]): number {
+  const steps = inline(input);
   let n = 0;
   for (const s of steps)
     n +=
-      s.k === "set"
+      s.k !== "if"
         ? 1
         : 1 + Math.max(worstCase(s.then), s.else ? worstCase(s.else) : 0);
   return n;
 }
 
 /** Every action stored in the reaction: both branches of every `if`. */
-export function storedSize(steps: readonly Step[]): number {
+export function storedSize(input: readonly Step[]): number {
+  const steps = inline(input);
   let n = 0;
   for (const s of steps)
     n +=
-      s.k === "set"
+      s.k !== "if"
         ? 1
         : 1 + storedSize(s.then) + (s.else ? storedSize(s.else) : 0);
   return n;
 }
 
 /** Deepest expression nesting in the handler (an operator over variables and literals is 1). */
-export function maxDepth(steps: readonly Step[]): number {
+export function maxDepth(input: readonly Step[]): number {
+  const steps = inline(input);
   const depth = (e: Expr): number =>
     e.k === "op" ? 1 + Math.max(depth(e.a), e.b ? depth(e.b) : 0) : 0;
   let d = 0;
@@ -223,7 +230,11 @@ export function maxDepth(steps: readonly Step[]): number {
       d,
       s.k === "set"
         ? depth(s.to)
-        : Math.max(
+        : s.k === "half"
+          ? depth(s.src)
+          : s.k === "unit"
+            ? maxDepth(s.steps)
+            : Math.max(
             depth(s.cond),
             maxDepth(s.then),
             s.else ? maxDepth(s.else) : 0,

@@ -410,7 +410,9 @@ export class FakeNode {
           if (a.type === "NODE") {
             const dest = this.api.nodeById(a.destinationId!);
             if (!dest) throw new Error(`navigate to unknown node ${a.destinationId}`);
-            if (dest.parent?.type !== "PAGE") throw new Error(`navigate to ${dest.name}, which is not a top-level frame`);
+            // a Scroll-to targets a layer inside a scrolling frame; the other navigations a top-level frame
+            if (String(a.navigation) !== "SCROLL_TO" && dest.parent?.type !== "PAGE")
+              throw new Error(`navigate to ${dest.name}, which is not a top-level frame`);
           }
           if (a.type === "CONDITIONAL") for (const b of a.conditionalBlocks) check(b.actions);
         }
@@ -419,6 +421,25 @@ export class FakeNode {
     }
     this.reactions = JSON.parse(JSON.stringify(reactions));
     this.api.reactionWrites++;
+    // Like Figma (opt-in, `autoFlows`): a top-level frame that gets a navigation (NAVIGATE / SWAP)
+    // and is not a flow yet becomes one, named "Flow n" (seen in Figma desktop on overlays that
+    // swap to the next).
+    const page = this.api.autoFlows ? this.parent : null;
+    const navigates = (acts: readonly Action[]): boolean =>
+      acts.some(
+        (a) =>
+          (a.type === "NODE" && ["NAVIGATE", "SWAP"].includes(String(a.navigation))) ||
+          (a.type === "CONDITIONAL" && a.conditionalBlocks.some((b) => navigates(b.actions))),
+      );
+    if (
+      page?.type === "PAGE" &&
+      reactions.some((r) => navigates(r.actions ?? [])) &&
+      !page.flowStartingPoints.some((f) => f.nodeId === this.id)
+    )
+      page.flowStartingPoints = [
+        ...page.flowStartingPoints,
+        { nodeId: this.id, name: `Flow ${page.flowStartingPoints.length + 1}` },
+      ];
   }
 
   /** Depth-first walk that ignores page loading (test helper for id lookups). */
@@ -492,6 +513,8 @@ export class FakeFigma {
   writes = 0;
   /** Behave like a plugin with "documentAccess": "dynamic-page". */
   dynamicPage = true;
+  /** Make a flow of a top-level frame that gets a navigation, as Figma does (off by default). */
+  autoFlows = false;
   loaded = new Set<string>();
   root: FakeNode;
   currentPage: FakeNode;

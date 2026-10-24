@@ -45,8 +45,8 @@
     XNOR: 2
   };
   var GATE_PREFIX = "gate/";
-  var isGateCell = (cell2) => cell2.startsWith(GATE_PREFIX);
-  var gateTypeOf = (cell2) => cell2.slice(GATE_PREFIX.length);
+  var isGateCell = (cell) => cell.startsWith(GATE_PREFIX);
+  var gateTypeOf = (cell) => cell.slice(GATE_PREFIX.length);
   function evalGate(type, a, b) {
     switch (type) {
       case "BUF":
@@ -330,10 +330,10 @@
     def.instances.forEach((inst, ii) => {
       var _a2;
       for (const p of geoms[ii].ports) {
-        const bits = portBits(p);
+        const bits2 = portBits(p);
         ((_a2 = inst.conn[p.name]) != null ? _a2 : []).forEach((net, k) => {
-          if (net === CONST0 || net === CONST1 || k >= bits.length) return;
-          const e = { inst: ii, key: bits[k], port: -1, k };
+          if (net === CONST0 || net === CONST1 || k >= bits2.length) return;
+          const e = { inst: ii, key: bits2[k], port: -1, k };
           const x = info(net);
           if (p.dir === "in") x.sinks.push(e);
           else if (!x.driver) x.driver = e;
@@ -422,10 +422,10 @@
       const out = [];
       for (const p of geoms[ii].ports) {
         if (p.dir !== dir) continue;
-        const bits = portBits(p);
+        const bits2 = portBits(p);
         ((_a2 = inst.conn[p.name]) != null ? _a2 : []).forEach((net, k) => {
           const x = nets.get(net);
-          if (x && k < bits.length) out.push({ key: bits[k], net: x });
+          if (x && k < bits2.length) out.push({ key: bits2[k], net: x });
         });
       }
       return out;
@@ -970,15 +970,15 @@
     const geoms = /* @__PURE__ */ new Map();
     const layouts = /* @__PURE__ */ new Map();
     const reused = [];
-    const geomOf = (cell2) => {
-      if (isGateCell(cell2)) return gateGeom(gateTypeOf(cell2));
-      const g = geoms.get(cell2);
-      if (!g) throw new Error(`no geometry for ${cell2}`);
+    const geomOf = (cell) => {
+      if (isGateCell(cell)) return gateGeom(gateTypeOf(cell));
+      const g = geoms.get(cell);
+      if (!g) throw new Error(`no geometry for ${cell}`);
       return g;
     };
-    const mainOf = (cell2) => {
-      const m = isGateCell(cell2) ? gates.get(gateTypeOf(cell2)) : cells.get(cell2);
-      if (!m) throw new Error(`no component for ${cell2}`);
+    const mainOf = (cell) => {
+      const m = isGateCell(cell) ? gates.get(gateTypeOf(cell)) : cells.get(cell);
+      if (!m) throw new Error(`no component for ${cell}`);
       return m;
     };
     const shelves = /* @__PURE__ */ new Map();
@@ -1130,15 +1130,15 @@
     f.fills = [];
     f.clipsContent = false;
     const x0 = isIn ? 0 : pl.w - STUB;
-    const bits = portBits(p).map((_, k) => bitOffset(k));
+    const bits2 = portBits(p).map((_, k) => bitOffset(k));
     polyVector(
       f,
       "stub",
-      bits.map((y) => [
+      bits2.map((y) => [
         { x: x0, y },
         { x: x0 + STUB, y }
       ]),
-      bits.map((y) => ({ x: isIn ? 0 : pl.w, y })),
+      bits2.map((y) => ({ x: isIn ? 0 : pl.w, y })),
       C.lead,
       1.5
     );
@@ -1225,26 +1225,26 @@
   async function readInstance(node) {
     const main = await node.getMainComponentAsync();
     if (!main) throw new ExtractError(`${node.name}: instance has no main component`);
-    const cell2 = cellOfComponent(main.name);
-    if (!cell2) return null;
+    const cell = cellOfComponent(main.name);
+    if (!cell) return null;
     const conn = {};
     for (const [key, prop] of Object.entries(node.componentProperties)) {
       if (prop.type !== "TEXT") continue;
       const nets = parseNets(String(prop.value));
       if (nets.length) conn[propName(key)] = nets;
     }
-    return { name: node.name, cell: cell2, conn };
+    return { name: node.name, cell, conn };
   }
 
   // src/hdl/builder.ts
-  function cellPorts(lib, cell2) {
-    if (isGateCell(cell2)) {
-      const t = cell2.slice(GATE_PREFIX.length);
-      if (!(t in GATE_ARITY)) throw new Error(`unknown gate ${cell2}`);
+  function cellPorts(lib, cell) {
+    if (isGateCell(cell)) {
+      const t = cell.slice(GATE_PREFIX.length);
+      if (!(t in GATE_ARITY)) throw new Error(`unknown gate ${cell}`);
       return gatePorts(t);
     }
-    const m = lib.get(cell2);
-    if (!m) throw new Error(`unknown cell ${cell2}`);
+    const m = lib.get(cell);
+    if (!m) throw new Error(`unknown cell ${cell}`);
     return m.ports;
   }
   var ModuleBuilder = class {
@@ -1345,28 +1345,28 @@
     }
     /** Instantiates another module. `conn` maps child port → parent nets; unconnected
      * child outputs get fresh nets. Returns every child port's nets in this scope. */
-    use(cell2, conn, inst) {
-      const ports = cellPorts(this.lib, cell2);
-      const name = inst != null ? inst : this.instName(cell2.toLowerCase().replace(/[^a-z0-9]+/g, "_"));
+    use(cell, conn, inst) {
+      const ports = cellPorts(this.lib, cell);
+      const name = inst != null ? inst : this.instName(cell.toLowerCase().replace(/[^a-z0-9]+/g, "_"));
       if (this.instances.some((i) => i.name === name)) throw new Error(`${this.name}: duplicate instance ${name}`);
       const out = {};
       const resolved = {};
       for (const p of ports) {
         let nets = conn[p.name];
         if (nets === void 0) {
-          if (p.dir === "in") throw new Error(`${this.name}/${name}: input ${p.name} of ${cell2} is not connected`);
+          if (p.dir === "in") throw new Error(`${this.name}/${name}: input ${p.name} of ${cell} is not connected`);
           nets = this.wire(`${name}_${p.name}`, p.width);
         }
         const bus = typeof nets === "string" ? [nets] : nets;
         if (bus.length !== p.width)
-          throw new Error(`${this.name}/${name}: ${cell2}.${p.name} is ${p.width} bits, got ${bus.length}`);
+          throw new Error(`${this.name}/${name}: ${cell}.${p.name} is ${p.width} bits, got ${bus.length}`);
         for (const n of bus) if (n !== CONST0 && n !== CONST1) this.used.add(n);
         resolved[p.name] = bus;
         out[p.name] = bus;
       }
       for (const k of Object.keys(conn))
-        if (!ports.some((p) => p.name === k)) throw new Error(`${this.name}/${name}: ${cell2} has no port ${k}`);
-      this.instances.push({ name, cell: cell2, conn: resolved });
+        if (!ports.some((p) => p.name === k)) throw new Error(`${this.name}/${name}: ${cell} has no port ${k}`);
+      this.instances.push({ name, cell, conn: resolved });
       return out;
     }
     build(doc) {
@@ -1443,9 +1443,9 @@
             if (p.dir === "in") throw new NetlistError(`${path}: input ${p.name} of ${inst.cell} not connected`);
             continue;
           }
-          const bits = portBits(p);
-          if (nets.length !== bits.length) throw new NetlistError(`${path}: ${inst.cell}.${p.name} width mismatch`);
-          bits.forEach((b, i) => childBinding.set(b, resolve(nets[i])));
+          const bits2 = portBits(p);
+          if (nets.length !== bits2.length) throw new NetlistError(`${path}: ${inst.cell}.${p.name} width mismatch`);
+          bits2.forEach((b, i) => childBinding.set(b, resolve(nets[i])));
         }
         expand(inst.cell, `${path}/`, childBinding, depth + 1);
         for (const [b, id2] of childBinding) if (!aliases.has(`${path}/${b}`)) aliases.set(`${path}/${b}`, id2);
@@ -1601,14 +1601,26 @@
   }
 
   // src/prototype/figma-actions.ts
-  var boolData = (value) => ({ type: "BOOLEAN", resolvedType: "BOOLEAN", value });
-  var floatData = (value) => ({ type: "FLOAT", resolvedType: "FLOAT", value });
+  var boolData = (value) => ({
+    type: "BOOLEAN",
+    resolvedType: "BOOLEAN",
+    value
+  });
+  var floatData = (value) => ({
+    type: "FLOAT",
+    resolvedType: "FLOAT",
+    value
+  });
   var aliasData = (id2, resolvedType = "BOOLEAN") => ({
     type: "VARIABLE_ALIAS",
     resolvedType,
     value: { type: "VARIABLE_ALIAS", id: id2 }
   });
-  var exprData = (expressionFunction, expressionArguments, resolvedType = "BOOLEAN") => ({ type: "EXPRESSION", resolvedType, value: { expressionFunction, expressionArguments } });
+  var exprData = (expressionFunction, expressionArguments, resolvedType = "BOOLEAN") => ({
+    type: "EXPRESSION",
+    resolvedType,
+    value: { expressionFunction, expressionArguments }
+  });
   var setVariable = (variableId, variableValue) => ({
     type: "SET_VARIABLE",
     variableId,
@@ -1618,14 +1630,55 @@
     type: "CONDITIONAL",
     conditionalBlocks: otherwise ? [{ condition, actions: then }, { actions: otherwise }] : [{ condition, actions: then }]
   });
-  var increment = (variableId, by = 1) => setVariable(variableId, exprData("ADDITION", [aliasData(variableId, "FLOAT"), floatData(by)], "FLOAT"));
-  var strData = (value) => ({ type: "STRING", resolvedType: "STRING", value });
-  var concatText = (textId, numberId, prefix = "") => setVariable(textId, exprData("ADDITION", [strData(prefix), aliasData(numberId, "FLOAT")], "STRING"));
+  var navigate = (destinationId) => ({
+    type: "NODE",
+    destinationId,
+    navigation: "NAVIGATE",
+    transition: null
+  });
+  var increment = (variableId, by = 1) => setVariable(
+    variableId,
+    exprData(
+      "ADDITION",
+      [aliasData(variableId, "FLOAT"), floatData(by)],
+      "FLOAT"
+    )
+  );
+  var strData = (value) => ({
+    type: "STRING",
+    resolvedType: "STRING",
+    value
+  });
+  var concatText = (textId, numberId, prefix = "") => setVariable(
+    textId,
+    exprData(
+      "ADDITION",
+      [strData(prefix), aliasData(numberId, "FLOAT")],
+      "STRING"
+    )
+  );
   var onClick = () => ({ type: "ON_CLICK" });
-  var mouseDown = (delay = 0) => ({ type: "MOUSE_DOWN", delay });
+  var mouseDown = (delay = 0) => ({
+    type: "MOUSE_DOWN",
+    delay
+  });
   var mouseUp = (delay = 0) => ({ type: "MOUSE_UP", delay });
-  var mouseEnter = (delay = 0) => ({ type: "MOUSE_ENTER", delay, deprecatedVersion: false });
-  var keyDown = (keyCodes) => ({ type: "ON_KEY_DOWN", device: "KEYBOARD", keyCodes });
+  var mouseEnter = (delay = 0) => ({ type: "MOUSE_ENTER", delay });
+  var keyDown = (keyCodes) => ({
+    type: "ON_KEY_DOWN",
+    device: "KEYBOARD",
+    keyCodes
+  });
+  var afterTimeout = (timeout) => ({
+    type: "AFTER_TIMEOUT",
+    timeout
+  });
+  var navigateWith = (destinationId, navigation) => ({
+    type: "NODE",
+    destinationId,
+    navigation,
+    transition: null
+  });
   function lookup(varIds) {
     return (n) => {
       const id2 = varIds instanceof Map ? varIds.get(n) : varIds[n];
@@ -1641,13 +1694,18 @@
     return exprData(fn, [figmaExpr(a, id2), figmaExpr(b, id2)]);
   }
   function setValue(to, id2, opts) {
-    if ("var" in to && opts.copy !== "alias") return exprData("EQUALS", [aliasData(id2(to.var)), boolData(true)]);
+    if ("var" in to && opts.copy !== "alias")
+      return exprData("EQUALS", [aliasData(id2(to.var)), boolData(true)]);
     return figmaExpr(to, id2);
   }
   function figmaActions(list, varIds, opts = {}) {
     const id2 = lookup(varIds);
     const conv = (l) => l.map(
-      (a) => "set" in a ? setVariable(id2(a.set), setValue(a.to, id2, opts)) : conditional(figmaExpr(a.if, id2), conv(a.then), a.else ? conv(a.else) : void 0)
+      (a) => "set" in a ? setVariable(id2(a.set), setValue(a.to, id2, opts)) : conditional(
+        figmaExpr(a.if, id2),
+        conv(a.then),
+        a.else ? conv(a.else) : void 0
+      )
     );
     return conv(list);
   }
@@ -2449,26 +2507,18 @@
     r2: "r2"
   };
   var SCREEN_NETS = {
-    show: "show",
-    // [8] used·vis
-    selk: "selk",
-    // [8] selected
-    nx1: "nx1",
-    // [32] ¬x1 bits, layer-major
-    ny1: "ny1",
-    // [32] ¬y1 bits
-    kfr: "kfr",
-    // [8] kind = frame
-    kre: "kre",
-    // [8] kind = rectangle
-    kel: "kel",
-    // [8] kind = ellipse
-    fill1h: "fill1h",
-    // [128] one-hot colour of each layer, layer-major
-    cur1h: "cur1h",
-    // [16] one-hot current colour
-    tool1h: "tool1h",
-    // [4]
+    nsel: "nsel",
+    // [3] ¬sel
+    nkind: "nkind",
+    // [16] ¬kind bits, layer-major
+    nfill: "nfill",
+    // [32] ¬fill bits, layer-major
+    ncur: "ncur",
+    // [4] ¬cur
+    ell: "ell",
+    // [8] kind = ellipse: the layer's body is round
+    nell: "nell",
+    // [8] ¬ell
     hot: "hot"
     // [4] hotspot sets: idle+move tool, idle+creation tool, drag=move, drag=create/resize
   };
@@ -2766,13 +2816,13 @@
           "lim"
         ).S;
         const ok = b.use("GE4", { A: lim, B: t.slice(0, 4) }, "cmp").GE[0];
-        const pick = b.use(
+        const pick2 = b.use(
           "MUX2_W4",
           { A: lim, B: t.slice(0, 4), S: ok },
           "pick"
         ).Y;
         const notNeg = place2(b, "NOT", "notneg", [t[4]]);
-        const nlo = pick.map(
+        const nlo = pick2.map(
           (x, i) => place2(b, "AND", `nlo_${i}`, [x, notNeg], b.out("NLO")[i])
         );
         b.use("ADDER_W4", { A: nlo, B: w, CI: CONST0, S: b.out("NHI") }, "hi");
@@ -2949,7 +2999,7 @@
       (b) => {
         const L = logic(b);
         const [TOOL, DRAG] = [b.in("TOOL"), b.in("DRAG")];
-        const pick = (name) => b.out1(name);
+        const pick2 = (name) => b.out1(name);
         const evNets = Array.from({ length: 16 }, (_, i) => b.wire1(`ev${i}`));
         const named = {
           1: "EV_TOOL",
@@ -2964,7 +3014,7 @@
           13: "EV_NUDGE",
           14: "EV_ESC"
         };
-        for (const [i, n] of Object.entries(named)) evNets[Number(i)] = pick(n);
+        for (const [i, n] of Object.entries(named)) evNets[Number(i)] = pick2(n);
         L.dec(b.in("EVT"), "evdec", evNets);
         b.use("DEC2", { A: DRAG, EN: CONST1, Y: b.out("DG") }, "dragdec");
         const dg2 = b.out("DG");
@@ -3218,7 +3268,10 @@
         );
         L.g("OR", [b.in1("EV_NUDGE"), b.out1("DUP_OK")], b.out1("USE_NUDGE"));
         const arg = b.in("ARG");
-        const argIs = (v) => L.andAll([b.in1("EV_NUDGE"), ...[0, 1, 2].map((k) => v >> k & 1 ? arg[k] : L.NOT(arg[k]))]);
+        const argIs = (v) => L.andAll([
+          b.in1("EV_NUDGE"),
+          ...[0, 1, 2].map((k) => v >> k & 1 ? arg[k] : L.NOT(arg[k]))
+        ]);
         L.g("OR", [argIs(1), b.out1("DUP_OK")], b.out1("NR"));
         L.buf(argIs(0), b.out1("NL"));
         L.g("OR", [argIs(3), b.out1("DUP_OK")], b.out1("ND"));
@@ -3616,61 +3669,37 @@
         in: {
           REC: LAYERS * REC.bits,
           SEL: 3,
-          HASSEL: 1,
           TOOL: 2,
           DRAG: 2,
           CUR: 4
         },
-        out: {
-          SHOW: 8,
-          SELK: 8,
-          NX1: 32,
-          NY1: 32,
-          KFR: 8,
-          KRE: 8,
-          KEL: 8,
-          FILL1H: 128,
-          CUR1H: 16,
-          TOOL1H: 4,
-          HOT: 4
-        }
+        out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 4 }
       },
       (b) => {
         const L = logic(b);
         const rec = b.in("REC");
         const f = (k, at, w = 1) => rec.slice(k * REC.bits + at, k * REC.bits + at + w);
-        const [show, selk, nx1, ny1, kfr, kre, kel, fill1h] = [
-          "SHOW",
-          "SELK",
-          "NX1",
-          "NY1",
-          "KFR",
-          "KRE",
-          "KEL",
-          "FILL1H"
-        ].map((n) => b.out(n));
-        const seld = L.dec(b.in("SEL"), "seldec");
+        const inv = (bus, out) => bus.forEach((n, i) => L.g("NOT", [n], out[i]));
+        inv(b.in("SEL"), b.out("NSEL"));
         for (let k = 0; k < LAYERS; k++) {
-          L.g("AND", [f(k, REC.used)[0], f(k, REC.vis)[0]], show[k]);
-          L.g("AND", [b.in1("HASSEL"), seld[k]], selk[k]);
-          f(k, REC.x1, 4).forEach((n, i) => L.g("NOT", [n], nx1[k * 4 + i]));
-          f(k, REC.y1, 4).forEach((n, i) => L.g("NOT", [n], ny1[k * 4 + i]));
+          inv(f(k, REC.kind, 2), b.out("NKIND").slice(2 * k, 2 * k + 2));
           const [k0, k1] = f(k, REC.kind, 2);
-          L.g("AND", [k0, L.NOT(k1)], kfr[k]);
-          L.g("AND", [L.NOT(k0), k1], kre[k]);
-          L.g("AND", [k0, k1], kel[k]);
-          L.dec(f(k, REC.fill, 4), `fill${k}`, fill1h.slice(k * 16, k * 16 + 16));
+          const ell = L.g("AND", [k0, k1], b.out("ELL")[k]);
+          L.g("NOT", [ell], b.out("NELL")[k]);
+          inv(f(k, REC.fill, 4), b.out("NFILL").slice(4 * k, 4 * k + 4));
         }
-        L.dec(b.in("CUR"), "curdec", b.out("CUR1H"));
-        const tool1h = L.dec(b.in("TOOL"), "tooldec", b.out("TOOL1H"));
-        const dg2 = L.dec(b.in("DRAG"), "dragdec");
+        inv(b.in("CUR"), b.out("NCUR"));
+        const [t0, t1] = b.in("TOOL");
+        const [d0, d1] = b.in("DRAG");
+        const idle = L.g("NOR", [d0, d1]);
+        const moveTool = L.g("NOR", [t0, t1]);
         const hot = b.out("HOT");
-        L.g("AND", [dg2[0], tool1h[0]], hot[0]);
-        L.g("AND", [dg2[0], L.NOT(tool1h[0])], hot[1]);
-        L.buf(dg2[1], hot[2]);
-        L.g("OR", [dg2[2], dg2[3]], hot[3]);
+        L.g("AND", [idle, moveTool], hot[0]);
+        L.g("AND", [idle, L.NOT(moveTool)], hot[1]);
+        L.g("AND", [d0, L.NOT(d1)], hot[2]);
+        L.buf(d1, hot[3]);
       },
-      "the screen: the registers decoded into the lines the UI layers are bound to (visibility only, no code)"
+      "the screen: the few lines the UI layers need besides the registers (inverted bits pick a colour, a kind, the selected layer; hot picks the click layer)"
     );
   }
   function defineEngine(lib) {
@@ -3988,20 +4017,15 @@
           {
             REC: allRecs,
             SEL: sel,
-            HASSEL: hassel,
             TOOL: tool,
             DRAG: drag,
             CUR: cur,
-            SHOW: b.wire("show", 8),
-            SELK: b.wire("selk", 8),
-            NX1: b.wire("nx1", 32),
-            NY1: b.wire("ny1", 32),
-            KFR: b.wire("kfr", 8),
-            KRE: b.wire("kre", 8),
-            KEL: b.wire("kel", 8),
-            FILL1H: b.wire("fill1h", 128),
-            CUR1H: b.wire("cur1h", 16),
-            TOOL1H: b.wire("tool1h", 4),
+            NSEL: b.wire("nsel", 3),
+            NKIND: b.wire("nkind", 16),
+            NFILL: b.wire("nfill", 32),
+            NCUR: b.wire("ncur", 4),
+            ELL: b.wire("ell", 8),
+            NELL: b.wire("nell", 8),
             HOT: b.wire("hot", 4)
           },
           "disp"
@@ -4018,6 +4042,9 @@
     buildCells(lib);
     defineEngine(lib);
     return lib;
+  }
+  function nathanNetlist(lib = nathanLibrary()) {
+    return flatten(lib, "ENGINE");
   }
   function nathanPowerOn(net) {
     const pokes = {};
@@ -4065,9 +4092,24 @@
     return { c: "X", group: "" };
   }
   function synthesize(net, tie, opts = {}) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     const nNets = net.netNames.length;
     const clk = net.aliases.get("CLK");
+    const givenNet = /* @__PURE__ */ new Map();
+    for (const [name, value] of Object.entries((_a = opts.given) != null ? _a : {})) {
+      const one = net.aliases.get(name);
+      const ids = one !== void 0 ? [one] : Array.from({ length: 32 }, (_, i) => net.aliases.get(`${name}[${i}]`)).filter(
+        (id2) => id2 !== void 0
+      );
+      if (!ids.length) throw new Error(`cannot assume ${name}: no such net`);
+      ids.forEach((id2, i) => givenNet.set(id2, value >> i & 1 ? NET1 : NET0));
+    }
+    const source = givenNet.size ? net.gates.map(
+      (g) => classify(g).c === "D" || !g.in.some((n) => givenNet.has(n)) ? g : __spreadProps(__spreadValues({}, g), { in: g.in.map((n) => {
+        var _a2;
+        return (_a2 = givenNet.get(n)) != null ? _a2 : n;
+      }) })
+    ) : net.gates;
     const Kv = new Int8Array(nNets).fill(2);
     Kv[NET0] = 0;
     Kv[NET1] = 1;
@@ -4082,7 +4124,7 @@
     }
     for (let changed = true; changed; ) {
       changed = false;
-      for (const g of net.gates) {
+      for (const g of source) {
         const y = eval32(
           g.type,
           Kv[g.in[0]],
@@ -4097,14 +4139,14 @@
     const lit2 = (id2) => Kv[id2] === 0 ? NET0 : Kv[id2] === 1 ? NET1 : id2;
     const inert = /* @__PURE__ */ new Set();
     const live = /* @__PURE__ */ new Set();
-    for (const g of net.gates) {
+    for (const g of source) {
       const c = classify(g);
       if (c.c === "C" && g.path.endsWith("/men"))
         (Kv[g.out] === 0 ? inert : live).add(c.group);
     }
     let gates = [];
     let folded = 0;
-    for (const g of net.gates) {
+    for (const g of source) {
       if (Kv[g.out] !== 2) {
         folded++;
         continue;
@@ -4123,10 +4165,34 @@
       return x;
     };
     let aliased = 0;
+    let merged = 0;
+    const COMMUTES = /* @__PURE__ */ new Set([
+      "AND",
+      "OR",
+      "NAND",
+      "NOR",
+      "XOR",
+      "XNOR"
+    ]);
     if (opts.alias !== false) {
       const dead = new Uint8Array(gates.length);
       for (let changed = true; changed; ) {
         changed = false;
+        const first = /* @__PURE__ */ new Map();
+        gates.forEach((g, i) => {
+          if (dead[i] || classify(g).c !== "X" || g.path === NCLK_PATH) return;
+          const ins = g.in.map(find);
+          if (COMMUTES.has(g.type)) ins.sort((x, y) => x - y);
+          const key = `${g.type}:${ins.join(",")}`;
+          const to = first.get(key);
+          if (to === void 0) first.set(key, g.out);
+          else if (find(to) !== find(g.out)) {
+            alias[g.out] = find(to);
+            dead[i] = 1;
+            merged++;
+            changed = true;
+          }
+        });
         gates.forEach((g, i) => {
           if (dead[i] || classify(g).c !== "X" || g.path === NCLK_PATH) return;
           const a = find(g.in[0]);
@@ -4226,7 +4292,7 @@
     for (const gi of kept) {
       const c = info[gi];
       if (c.c !== "M" && c.c !== "S" && c.c !== "C") continue;
-      const e = (_a = groups.get(c.group)) != null ? _a : {
+      const e = (_b = groups.get(c.group)) != null ? _b : {
         m: [],
         s: [],
         men: -1,
@@ -4257,6 +4323,90 @@
       if (e.men < 0) throw new Error(`register group ${grp} has no enable gate`);
       menOf.set(grp, gates[e.men].out);
     }
+    const moved = new Uint8Array(gates.length);
+    const inside = /* @__PURE__ */ new Map();
+    let implied = 0;
+    if (opts.alias !== false && opts.inside !== false) {
+      const readers = /* @__PURE__ */ new Map();
+      for (const gi of kept)
+        for (const n of gates[gi].in) {
+          const r = readers.get(n);
+          if (r) r.push(gi);
+          else readers.set(n, [gi]);
+        }
+      const position = new Int32Array(gates.length).fill(-1);
+      order.forEach((gi, k) => position[gi] = k);
+      const nclkNet = nclkGate >= 0 ? gates[nclkGate].out : -1;
+      const plain = (d) => d >= 0 && keep[d] && info[d].c === "X" && d !== nclkGate && !moved[d];
+      for (const [grp, e] of groups) {
+        const load = gates[e.men].in.find((n) => n !== nclkNet);
+        if (load === void 0 || load <= NET1) continue;
+        const takes = /* @__PURE__ */ new Set();
+        for (const b of e.bits.values()) if (b.take >= 0) takes.add(b.take);
+        const mine = /* @__PURE__ */ new Set();
+        let frontier = [...takes].map((t) => driver[gates[t].in[0]]).filter(plain);
+        while (frontier.length) {
+          const next = [];
+          for (const gi of frontier) {
+            if (mine.has(gi)) continue;
+            const rs = (_c = readers.get(gates[gi].out)) != null ? _c : [];
+            if (!rs.every((r) => takes.has(r) || mine.has(r))) continue;
+            mine.add(gi);
+            for (const n of gates[gi].in)
+              if (plain(driver[n])) next.push(driver[n]);
+          }
+          frontier = next;
+        }
+        if (!mine.size) continue;
+        const known = /* @__PURE__ */ new Map();
+        const imply = (n, v) => {
+          if (n <= NET1 || known.has(n)) return;
+          known.set(n, v);
+          const d = driver[n];
+          if (d < 0) return;
+          const g = gates[d];
+          if (g.type === "AND" && v === 1) g.in.forEach((x) => imply(x, 1));
+          else if (g.type === "OR" && v === 0) g.in.forEach((x) => imply(x, 0));
+          else if (g.type === "NOT") imply(g.in[0], v === 1 ? 0 : 1);
+          else if (g.type === "BUF") imply(g.in[0], v);
+        };
+        imply(load, 1);
+        const same = /* @__PURE__ */ new Map();
+        const res = (n) => {
+          var _a2;
+          const v = known.get(n);
+          if (v !== void 0) return v ? NET1 : NET0;
+          return (_a2 = same.get(n)) != null ? _a2 : n;
+        };
+        const kOf = (n) => n === NET0 ? 0 : n === NET1 ? 1 : 2;
+        const body2 = [];
+        for (const gi of [...mine].sort((a, b) => position[a] - position[b])) {
+          const g = gates[gi];
+          const ins = g.in.map(res);
+          const [a, b] = [ins[0], ins.length > 1 ? ins[1] : -1];
+          const y = eval32(g.type, kOf(a), b < 0 ? 0 : kOf(b));
+          let to = -1;
+          if (y !== 2) to = y ? NET1 : NET0;
+          else if (g.type === "BUF") to = a;
+          else if (g.type === "AND")
+            to = a === NET1 ? b : b === NET1 ? a : a === b ? a : -1;
+          else if (g.type === "OR")
+            to = a === NET0 ? b : b === NET0 ? a : a === b ? a : -1;
+          else if (g.type === "XOR") to = a === NET0 ? b : b === NET0 ? a : -1;
+          else if (g.type === "XNOR") to = a === NET1 ? b : b === NET1 ? a : -1;
+          if (to >= 0) {
+            same.set(g.out, to);
+            implied++;
+          } else body2.push(__spreadProps(__spreadValues({}, g), { in: ins }));
+        }
+        for (const gi of mine) moved[gi] = 1;
+        inside.set(grp, { gates: body2, res });
+      }
+    }
+    const blockOf = (grp) => {
+      var _a2;
+      return (_a2 = inside.get(grp)) != null ? _a2 : { gates: [], res: (n) => n };
+    };
     const var_ = (n) => ({ var: n });
     const isOn = (n) => ({ eq: [{ var: n }, { const: 1 }] });
     const blocks = /* @__PURE__ */ new Map();
@@ -4275,7 +4425,7 @@
     for (const gi of dorder) {
       const sup = [...supportOf(gi)].filter((grp) => live.has(grp)).sort();
       const key = sup.join("|");
-      const b = (_b = blocks.get(key)) != null ? _b : { groups: sup, gates: [] };
+      const b = (_d = blocks.get(key)) != null ? _d : { groups: sup, gates: [] };
       blocks.set(key, b);
       b.gates.push(gi);
     }
@@ -4284,68 +4434,208 @@
       const guard = b.groups.map((grp) => isOn(menOf.get(grp))).reduce((x, y) => ({ or: [x, y] }));
       screen.push({ if: guard, then: b.gates.map((gi) => set(gates[gi])) });
     });
-    const emit = (compact2) => {
+    const emit = (commit2) => {
       const nclk = nclkGate >= 0 ? [set(gates[nclkGate])] : [];
       const low = [
         { set: clk, to: C0 },
         ...nclk,
         ...order.filter(
-          (gi) => !(compact2 && info[gi].c === "C" && gates[gi].path.endsWith("/nmen"))
+          (gi) => !moved[gi] && !(commit2 !== "gates" && info[gi].c === "C" && gates[gi].path.endsWith("/nmen"))
         ).map((gi) => set(gates[gi]))
       ];
       const high = [{ set: clk, to: C1 }, ...nclk];
+      if (commit2 === "direct") {
+        const { early, writes } = directCommit();
+        low.push(...early);
+        const commitAt2 = low.length;
+        low.push(...writes);
+        return {
+          actions: [...low, ...high, ...screen],
+          screenAt: low.length + high.length,
+          commitAt: commitAt2
+        };
+      }
+      const commitAt = low.length;
       for (const [grp, e] of groups) {
         const men = menOf.get(grp);
-        if (!compact2) {
-          low.push({ if: isOn(men), then: e.m.map((gi) => set(gates[gi])) });
+        const { gates: cone, res } = blockOf(grp);
+        const first = cone.map(set);
+        if (commit2 === "gates") {
+          low.push({
+            if: isOn(men),
+            then: [
+              ...first,
+              ...e.m.map(
+                (gi) => set(__spreadProps(__spreadValues({}, gates[gi]), { in: gates[gi].in.map(res) }))
+              )
+            ]
+          });
           high.push({ if: isOn(men), then: e.s.map((gi) => set(gates[gi])) });
           continue;
         }
-        const bits = [...e.bits.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+        const bits2 = latchBits(grp, e);
         low.push({
           if: isOn(men),
-          // a take gate folded away means D is the constant 0
-          then: bits.map((b) => ({
-            set: gates[b.mmerge].out,
-            to: b.take >= 0 ? litExpr(gates[b.take].in[0]) : C0
-          }))
+          then: [
+            ...first,
+            ...bits2.map((b) => ({ set: b.m, to: litExpr(b.d) }))
+          ]
         });
         high.push({
           if: isOn(men),
-          then: bits.map((b) => ({
-            set: gates[b.smerge].out,
-            to: var_(gates[b.mmerge].out)
-          }))
+          then: bits2.map((b) => ({ set: b.q, to: var_(b.m) }))
         });
       }
       return {
         actions: [...low, ...high, ...screen],
-        screenAt: low.length + high.length
+        screenAt: low.length + high.length,
+        commitAt
+      };
+    };
+    const latchBits = (grp, e) => {
+      const { res } = blockOf(grp);
+      return [...e.bits.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => ({
+        d: b.take >= 0 ? res(gates[b.take].in[0]) : NET0,
+        m: gates[b.mmerge].out,
+        q: gates[b.smerge].out
+      }));
+    };
+    const directCommit = () => {
+      const list = [...groups.entries()].map(([grp, e]) => ({
+        men: menOf.get(grp),
+        bits: latchBits(grp, e),
+        cone: blockOf(grp).gates
+      }));
+      const all = list.map((_, i) => i);
+      const owner = /* @__PURE__ */ new Map();
+      list.forEach((g, i) => g.bits.forEach((b) => owner.set(b.q, i)));
+      const before = list.map(() => []);
+      const reads = list.map(() => []);
+      const viaMaster = new Uint8Array(list.length);
+      list.forEach((g, i) => {
+        g.bits.forEach((b) => {
+          const j = owner.get(b.d);
+          if (j === void 0) return;
+          if (j !== i) before[i].push(j);
+          else if (b.d !== b.q) viaMaster[i] = 1;
+        });
+        for (const cg of g.cone)
+          for (const n of cg.in) {
+            const j = owner.get(n);
+            if (j !== void 0 && j !== i) reads[i].push(j);
+          }
+      });
+      const cycles = (nodes, edges2) => {
+        const index = new Int32Array(list.length).fill(-1);
+        const low = new Int32Array(list.length);
+        const onStack = new Uint8Array(list.length);
+        const stack2 = [];
+        const out = [];
+        let next = 0;
+        const strong = (v) => {
+          index[v] = low[v] = next++;
+          stack2.push(v);
+          onStack[v] = 1;
+          for (const w2 of edges2(v)) {
+            if (index[w2] < 0) {
+              strong(w2);
+              low[v] = Math.min(low[v], low[w2]);
+            } else if (onStack[w2]) low[v] = Math.min(low[v], index[w2]);
+          }
+          if (low[v] !== index[v]) return;
+          const scc = [];
+          let w;
+          do {
+            w = stack2.pop();
+            onStack[w] = 0;
+            scc.push(w);
+          } while (w !== v);
+          if (scc.length > 1) out.push(scc);
+        };
+        nodes.forEach((v) => index[v] < 0 && strong(v));
+        return out;
+      };
+      for (const scc of cycles(all, (v) => before[v]))
+        for (const x of scc) viaMaster[x] = 1;
+      const rest = all.filter((v) => !viaMaster[v]);
+      const early = new Uint8Array(list.length);
+      const edges = (v) => [...before[v], ...early[v] ? [] : reads[v]].filter((w) => !viaMaster[w]);
+      for (const scc of cycles(rest, edges)) {
+        const inside2 = new Set(scc);
+        for (const x of scc) if (reads[x].some((w) => inside2.has(w))) early[x] = 1;
+      }
+      const seen2 = new Uint8Array(list.length);
+      const post2 = [];
+      const visit2 = (v) => {
+        if (seen2[v]) return;
+        seen2[v] = 1;
+        for (const w of edges(v)) visit2(w);
+        post2.push(v);
+      };
+      rest.forEach(visit2);
+      const block = (i, f, withCone) => ({
+        if: isOn(list[i].men),
+        then: [
+          ...withCone ? list[i].cone.map(set) : [],
+          ...list[i].bits.map(f)
+        ]
+      });
+      const cyc = all.filter((i) => viaMaster[i]);
+      return {
+        early: all.filter((i) => early[i]).map((i) => ({ if: isOn(list[i].men), then: list[i].cone.map(set) })),
+        writes: [
+          ...cyc.map(
+            (i) => block(i, (b) => ({ set: b.m, to: litExpr(b.d) }), true)
+          ),
+          ...post2.reverse().map(
+            (i) => block(i, (b) => ({ set: b.q, to: litExpr(b.d) }), !early[i])
+          ),
+          ...cyc.map(
+            (i) => block(i, (b) => ({ set: b.q, to: var_(b.m) }), false)
+          )
+        ]
       };
     };
     const litExpr = (n) => n === NET0 ? C0 : n === NET1 ? C1 : { var: n };
-    const mode = (_c = opts.latch) != null ? _c : "auto";
-    let compact = mode === "compact";
-    let emitted = emit(compact);
-    if (mode === "auto" && staticSize(emitted.actions) > ((_d = opts.budget) != null ? _d : 900)) {
-      compact = true;
-      emitted = emit(true);
+    const mode = (_e = opts.latch) != null ? _e : "auto";
+    let commit = mode === "auto" ? "gates" : mode;
+    let emitted = emit(commit);
+    if (mode === "auto" && staticSize(emitted.actions) > ((_f = opts.budget) != null ? _f : 900)) {
+      commit = "direct";
+      emitted = emit(commit);
     }
     return {
       actions: emitted.actions,
       screenAt: emitted.screenAt,
+      commitAt: emitted.commitAt,
       men: menOf,
       stats: {
         kept: kept.length,
         folded,
         aliased,
+        merged,
+        implied,
         groupsLive: live.size,
         groupsInert: inert.size,
         displayGates: displayKept.length,
         displayBlocks: blocks.size,
-        compact
+        latch: commit
       }
     };
+  }
+  function masterToQ(net) {
+    const q = /* @__PURE__ */ new Map();
+    for (const g of net.gates) {
+      const m = /^(.*)\/s(\d+)_merge$/.exec(g.path);
+      if (m) q.set(`${m[1]}/${m[2]}`, g.out);
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const g of net.gates) {
+      const m = /^(.*)\/m(\d+)_merge$/.exec(g.path);
+      const to = m ? q.get(`${m[1]}/${m[2]}`) : void 0;
+      if (to !== void 0) out.set(g.out, to);
+    }
+    return out;
   }
   var staticSize = (a) => a.reduce(
     (n, x) => {
@@ -4361,11 +4651,7 @@
     "dg[0]": v0,
     "dg[1]": v1
   }, v2 === void 0 ? {} : { "dg[2]": v2 }), v3 === void 0 ? {} : { "dg[3]": v3 });
-  var cell = (rnd) => ({
-    x: rnd(GRID_W),
-    y: rnd(GRID_H)
-  });
-  var CLICK_SPECS = [
+  var HOTSPOT_SETS = [
     {
       name: "click/idle-move",
       ties: __spreadProps(__spreadValues({
@@ -4375,8 +4661,7 @@
         is_move_tool: 1,
         creating: 0
       }),
-      valid: (s) => !s.drag && s.tool === "move",
-      event: (rnd) => __spreadValues({ k: "click" }, cell(rnd))
+      valid: (s) => !s.drag && s.tool === "move"
     },
     {
       name: "click/idle-create",
@@ -4387,8 +4672,7 @@
         is_move_tool: 0,
         creating: 1
       }),
-      valid: (s) => !s.drag && s.tool !== "move",
-      event: (rnd) => __spreadValues({ k: "click" }, cell(rnd))
+      valid: (s) => !s.drag && s.tool !== "move"
     },
     {
       name: "click/drag-move",
@@ -4396,8 +4680,7 @@
       valid: (s) => {
         var _a;
         return ((_a = s.drag) == null ? void 0 : _a.mode) === "move";
-      },
-      event: (rnd) => __spreadValues({ k: "click" }, cell(rnd))
+      }
     },
     {
       name: "click/drag-span",
@@ -4405,16 +4688,18 @@
       valid: (s) => {
         var _a, _b;
         return ((_a = s.drag) == null ? void 0 : _a.mode) === "create" || ((_b = s.drag) == null ? void 0 : _b.mode) === "resize";
-      },
-      event: (rnd) => __spreadValues({ k: "click" }, cell(rnd))
+      }
     }
   ];
-  var HOTSPOT_REACTIONS = [
-    "click/idle-move",
-    "click/idle-create",
-    "click/drag-move",
-    "click/drag-span"
-  ];
+  var HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
+  var clickRun = (set, row) => `${HOTSPOT_REACTIONS[set]}/${row}`;
+  var CLICK_SPECS = HOTSPOT_SETS.flatMap(
+    (h) => Array.from({ length: GRID_H }, (_, y) => __spreadProps(__spreadValues({}, h), {
+      name: `${h.name}/${y}`,
+      ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
+      event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+    }))
+  );
   function reactionSpecs() {
     const out = [...CLICK_SPECS];
     for (let t = 0; t < 4; t++)
@@ -4465,24 +4750,20 @@
       valid: always,
       event: () => ({ k: "delete" })
     });
-    out.push({
-      name: "dup",
-      ties: { EVT: EV.DUP },
-      valid: always,
-      event: () => ({ k: "dup" })
-    });
-    out.push({
-      name: "fwd",
-      ties: { EVT: EV.FWD },
-      valid: always,
-      event: () => ({ k: "fwd" })
-    });
-    out.push({
-      name: "back",
-      ties: { EVT: EV.BACK },
-      valid: always,
-      event: () => ({ k: "back" })
-    });
+    for (const [name, evt, k] of [
+      ["dup", EV.DUP, "dup"],
+      ["fwd", EV.FWD, "fwd"],
+      ["back", EV.BACK, "back"]
+    ]) {
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `${name}@${sel}`,
+          ties: { EVT: evt },
+          given: { sel },
+          valid: always,
+          event: () => ({ k })
+        });
+    }
     out.push({
       name: "esc",
       ties: { EVT: EV.ESC },
@@ -4491,45 +4772,828 @@
     });
     return out;
   }
-  function buildCatalog(net, specs = reactionSpecs(), opts = {}) {
+  async function buildCatalogGently(net, specs, opts, rest) {
     const out = /* @__PURE__ */ new Map();
-    for (const spec of specs)
-      out.set(spec.name, { spec, reaction: synthesize(net, spec.ties, opts) });
+    for (const [i, spec] of specs.entries()) {
+      out.set(spec.name, entryOf(net, spec, opts));
+      if (i % 4 === 3) await rest();
+    }
+    return out;
+  }
+  var entryOf = (net, spec, opts) => ({
+    spec,
+    reaction: synthesize(net, spec.ties, __spreadProps(__spreadValues({}, opts), { given: spec.given }))
+  });
+
+  // nathan/src/ui/render.ts
+  var BREATHE_EVERY = 150;
+  function make(api, s) {
+    switch (s.type) {
+      case "frame":
+        return api.createFrame();
+      case "rect":
+        return api.createRectangle();
+      case "ellipse":
+        return api.createEllipse();
+      case "text":
+        return api.createText();
+    }
+  }
+  async function render(ctx, parent, spec) {
+    const out = {
+      root: void 0,
+      nodes: /* @__PURE__ */ new Map(),
+      created: 0,
+      bound: 0,
+      missing: [],
+      reactions: 0
+    };
+    const pending = [];
+    const build = async (s, into, parentSpec, path) => {
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+      const api = ctx.api;
+      const node = make(api, s);
+      node.name = s.name;
+      out.created++;
+      if (ctx.breathe && out.created % BREATHE_EVERY === 0) await ctx.breathe();
+      if (node.type === "TEXT") {
+        const t = s.text;
+        node.fontName = t.bold ? FONT_BOLD : FONT;
+        node.fontSize = (_a = t.size) != null ? _a : 12;
+        node.characters = t.chars;
+        node.fills = solid2((_b = t.color) != null ? _b : "#FFFFFF");
+      } else {
+        const shape = node;
+        if (s.w !== void 0 || s.h !== void 0)
+          shape.resize(
+            Math.max((_c = s.w) != null ? _c : shape.width, 0.01),
+            Math.max((_d = s.h) != null ? _d : shape.height, 0.01)
+          );
+        shape.fills = s.fill ? solid2(s.fill) : [];
+        shape.strokes = s.stroke ? solid2(s.stroke) : [];
+        if (s.stroke) {
+          shape.strokeWeight = (_e = s.strokeWeight) != null ? _e : 1;
+          shape.strokeAlign = "INSIDE";
+        }
+        if (s.radius) shape.cornerRadius = s.radius;
+        if (node.type === "FRAME") {
+          node.clipsContent = !!s.clip;
+          if (s.layout) {
+            node.layoutMode = s.layout.dir === "H" ? "HORIZONTAL" : "VERTICAL";
+            node.itemSpacing = (_f = s.layout.gap) != null ? _f : 0;
+            const pad = (_g = s.layout.pad) != null ? _g : 0;
+            node.paddingLeft = node.paddingRight = node.paddingTop = node.paddingBottom = pad;
+            node.primaryAxisAlignItems = (_h = s.layout.main) != null ? _h : "MIN";
+            node.counterAxisAlignItems = (_i = s.layout.cross) != null ? _i : "MIN";
+          }
+        }
+      }
+      if (s.hidden) node.visible = false;
+      into.appendChild(node);
+      const inAutoLayout = !!(parentSpec == null ? void 0 : parentSpec.layout);
+      if (!inAutoLayout && s.x !== void 0 && s.y !== void 0) {
+        node.x = s.x;
+        node.y = s.y;
+      }
+      if (inAutoLayout) {
+        if (s.absolute) {
+          node.layoutPositioning = "ABSOLUTE";
+          node.x = (_j = s.x) != null ? _j : 0;
+          node.y = (_k = s.y) != null ? _k : 0;
+        } else {
+          node.layoutSizingHorizontal = (_l = s.sizeH) != null ? _l : "FIXED";
+          node.layoutSizingVertical = (_m = s.sizeV) != null ? _m : "FIXED";
+        }
+      } else if (node.type === "FRAME" && s.layout) {
+        node.layoutSizingHorizontal = s.sizeH === "HUG" ? "HUG" : "FIXED";
+        node.layoutSizingVertical = s.sizeV === "HUG" ? "HUG" : "FIXED";
+      }
+      if (s.visibleNet) {
+        const v = ctx.variable(s.visibleNet);
+        if (v) {
+          node.setBoundVariable("visible", v);
+          out.bound++;
+        } else out.missing.push(s.visibleNet);
+      }
+      if ((_n = s.reactions) == null ? void 0 : _n.length) {
+        pending.push([
+          node,
+          s.reactions.flatMap((r) => ctx.reactionsFor(r))
+        ]);
+        out.reactions += s.reactions.length;
+      }
+      const here = `${path}/${s.name}`;
+      out.nodes.set(here, node);
+      for (const c of (_o = s.children) != null ? _o : [])
+        await build(c, node, s, here);
+      return node;
+    };
+    out.root = await build(spec, parent, null, "");
+    for (let i = 0; i < pending.length; i++) {
+      await pending[i][0].setReactionsAsync(pending[i][1]);
+      if (ctx.breathe && i % 25 === 24) await ctx.breathe();
+    }
     return out;
   }
 
-  // nathan/src/react/stage.ts
-  function splitStages(actions, screenAt, parts = 3) {
-    const n = actions.length;
-    if (parts < 2 || n < parts) return [actions];
-    const cost = actions.map((a) => staticSize([a]));
-    const prefix = [0];
-    for (const c of cost) prefix.push(prefix[prefix.length - 1] + c);
-    const limit = Math.min(screenAt, n - 1);
-    const seg = (a, b) => prefix[b] - prefix[a];
-    if (parts === 2) {
-      let best2 = 1;
-      for (let i = 1; i <= limit; i++)
-        if (Math.max(seg(0, i), seg(i, n)) < Math.max(seg(0, best2), seg(best2, n)))
-          best2 = i;
-      return [actions.slice(0, best2), actions.slice(best2)];
-    }
-    if (parts !== 3) throw new Error("splitStages supports 2 or 3 parts");
-    let best = [1, 2];
-    let bestMax = Infinity;
-    for (let i = 1; i < limit; i++)
-      for (let j = i + 1; j <= limit; j++) {
-        const m = Math.max(seg(0, i), seg(i, j), seg(j, n));
-        if (m < bestMax) {
-          bestMax = m;
-          best = [i, j];
-        }
-      }
-    return [
-      actions.slice(0, best[0]),
-      actions.slice(best[0], best[1]),
-      actions.slice(best[1])
+  // nathan/src/ui/spec.ts
+  var PALETTE_HEX = [
+    "#000000",
+    "#1D2B53",
+    "#7E2553",
+    "#008751",
+    "#AB5236",
+    "#5F574F",
+    "#C2C3C7",
+    "#FFF1E8",
+    "#FF004D",
+    "#FFA300",
+    "#FFEC27",
+    "#00E436",
+    "#29ADFF",
+    "#83769C",
+    "#FF77A8",
+    "#FFCCAA"
+  ];
+  var COLOR = {
+    canvas: "#1E1E1E",
+    panel: "#2C2C2C",
+    field: "#383838",
+    selected: "#394360",
+    accent: "#0C8CE9",
+    text: "#FFFFFF",
+    dim: "#B3B3B3",
+    faint: "#808080",
+    line: "#444444",
+    grid: "#262626",
+    frame: "#141414"
+  };
+  var CELL = 48;
+  var CANVAS_W = GRID_W * CELL;
+  var CANVAS_H = GRID_H * CELL;
+  var LEFT_W = 240;
+  var RIGHT_W = 240;
+  var TOP_H = 48;
+  var MID_W = 720;
+  var UI_W = LEFT_W + MID_W + RIGHT_W;
+  var UI_H = 704;
+  var CANVAS_X = LEFT_W + (MID_W - CANVAS_W) / 2;
+  var CANVAS_Y = TOP_H + 32;
+  var frame = (name, p = {}) => __spreadValues({
+    type: "frame",
+    name
+  }, p);
+  var rect = (name, p = {}) => __spreadValues({
+    type: "rect",
+    name
+  }, p);
+  var label = (name, chars, p = {}) => {
+    const _a = p, { size: size2, bold, color } = _a, rest = __objRest(_a, ["size", "bold", "color"]);
+    return __spreadValues({ type: "text", name, text: { chars, size: size2, bold, color } }, rest);
+  };
+  var bit = (bus, i) => `${bus}[${i}]`;
+  var THIN = 0.01;
+  var bits = (net) => (i) => bit(net, i);
+  function spacer(prefix, dir, unit, n, netOf) {
+    return Array.from(
+      { length: n },
+      (_, i) => frame(`${prefix}${i}`, {
+        w: dir === "H" ? unit << i : THIN,
+        h: dir === "H" ? THIN : unit << i,
+        visibleNet: netOf(i)
+      })
+    );
+  }
+  var layerNets = (k) => ({
+    x0: bits(STATE_NETS.x0(k)),
+    x1: bits(STATE_NETS.x1(k)),
+    y0: bits(STATE_NETS.y0(k)),
+    y1: bits(STATE_NETS.y1(k))
+  });
+  function placedBy(name, nets, unit, body2, inner = {}) {
+    return frame(name, {
+      x: 0,
+      y: 0,
+      layout: { dir: "H" },
+      sizeH: "HUG",
+      sizeV: "HUG",
+      children: [
+        frame("y1", {
+          layout: { dir: "V" },
+          sizeH: "HUG",
+          sizeV: "HUG",
+          children: spacer("y1/", "V", unit, 4, nets.y1)
+        }),
+        frame("col", __spreadProps(__spreadValues({
+          layout: { dir: "V" },
+          sizeH: "HUG",
+          sizeV: "FILL"
+        }, inner), {
+          children: [
+            ...spacer("y0/", "V", unit, 4, nets.y0),
+            frame("xbox", {
+              layout: { dir: "V" },
+              sizeH: "HUG",
+              sizeV: "FILL",
+              children: [
+                frame("x1", {
+                  layout: { dir: "H" },
+                  sizeH: "HUG",
+                  sizeV: "HUG",
+                  children: spacer("x1/", "H", unit, 4, nets.x1)
+                }),
+                frame("row", {
+                  layout: { dir: "H" },
+                  sizeH: "FILL",
+                  sizeV: "FILL",
+                  children: [
+                    ...spacer("x0/", "H", unit, 4, nets.x0),
+                    __spreadProps(__spreadValues({}, body2), { sizeH: "FILL", sizeV: "FILL" })
+                  ]
+                })
+              ]
+            })
+          ]
+        }))
+      ]
+    });
+  }
+  var placed = (name, k, body2, inner = {}) => placedBy(name, layerNets(k), CELL, body2, inner);
+  function pick(n, bitNet, invNet, node, leaf) {
+    const level = (i, v) => i < 0 ? leaf(v) : node(`pick/${i}`, [
+      __spreadProps(__spreadValues({}, level(i - 1, v)), { visibleNet: invNet(i) }),
+      __spreadProps(__spreadValues({}, level(i - 1, v | 1 << i)), { visibleNet: bitNet(i) })
+    ]);
+    return level(n - 1, 0);
+  }
+  var fillNode = (name, children) => frame(name, { layout: { dir: "H" }, sizeH: "FILL", sizeV: "FILL", children });
+  function colourPick(bitNet, invNet, radius = 0, leaf) {
+    return pick(
+      4,
+      bitNet,
+      invNet,
+      fillNode,
+      leaf != null ? leaf : ((c) => rect(`swatch/${c}`, {
+        fill: PALETTE_HEX[c],
+        radius,
+        sizeH: "FILL",
+        sizeV: "FILL"
+      }))
+    );
+  }
+  function layerBox(k) {
+    return __spreadProps(__spreadValues({}, placed(
+      `layer/${k}`,
+      k,
+      __spreadProps(__spreadValues({}, colourPick(
+        bits(STATE_NETS.fill(k)),
+        (i) => bit(SCREEN_NETS.nfill, 4 * k + i),
+        0,
+        (c) => fillNode(`swatch/${c}`, [
+          rect("rect", {
+            fill: PALETTE_HEX[c],
+            sizeH: "FILL",
+            sizeV: "FILL",
+            visibleNet: bit(SCREEN_NETS.nell, k)
+          }),
+          {
+            type: "ellipse",
+            name: "ellipse",
+            fill: PALETTE_HEX[c],
+            sizeH: "FILL",
+            sizeV: "FILL",
+            visibleNet: bit(SCREEN_NETS.ell, k)
+          }
+        ])
+      )), {
+        name: "body"
+      }),
+      { visibleNet: STATE_NETS.vis(k) }
+    )), {
+      visibleNet: STATE_NETS.used(k)
+    });
+  }
+  var HANDLE = 12;
+  function overlayBox(k) {
+    const handle = (corner, code) => frame(`handle/${corner}`, {
+      w: HANDLE,
+      h: HANDLE,
+      fill: COLOR.text,
+      stroke: COLOR.accent,
+      strokeWeight: 2,
+      reactions: [{ trigger: { on: "click" }, run: `handle/${code}` }]
+    });
+    const handleRow = (a, b) => frame("handles", {
+      sizeH: "FILL",
+      h: HANDLE,
+      layout: { dir: "H", main: "SPACE_BETWEEN" },
+      children: [a, b]
+    });
+    return placed(
+      `overlay/${k}`,
+      k,
+      frame("outline", {
+        stroke: COLOR.accent,
+        strokeWeight: 2,
+        layout: { dir: "V", main: "SPACE_BETWEEN" },
+        // corner codes: bit0 = west handle, bit1 = north handle
+        children: [
+          handleRow(handle("nw", 3), handle("ne", 2)),
+          handleRow(handle("sw", 1), handle("se", 0))
+        ]
+      })
+    );
+  }
+  function selection() {
+    const level = (name, children) => frame(name, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, children });
+    return __spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, overlayBox)), {
+      name: "selection",
+      visibleNet: STATE_NETS.hassel
+    });
+  }
+  function hotspotSet(i) {
+    const rows = [];
+    for (let r = 0; r < GRID_H; r++)
+      rows.push(
+        frame(`row/${r}`, {
+          x: 0,
+          y: r * CELL,
+          w: CANVAS_W,
+          h: CELL,
+          reactions: [{ trigger: { on: "click" }, run: clickRun(i, r) }],
+          children: Array.from(
+            { length: GRID_W },
+            (_, c) => frame(`cell/${c}`, {
+              x: c * CELL,
+              y: 0,
+              w: CELL,
+              h: CELL,
+              reactions: [{ trigger: { on: "enter" }, run: `pointer/${c}` }]
+            })
+          )
+        })
+      );
+    return frame(`hot/${HOT[i]}`, {
+      x: 0,
+      y: 0,
+      w: CANVAS_W,
+      h: CANVAS_H,
+      visibleNet: bit(SCREEN_NETS.hot, i),
+      children: rows
+    });
+  }
+  function canvas() {
+    const grid = [];
+    for (let c = 1; c < GRID_W; c++)
+      grid.push(
+        rect(`grid/x${c}`, {
+          x: c * CELL,
+          y: 0,
+          w: 1,
+          h: CANVAS_H,
+          fill: COLOR.grid
+        })
+      );
+    for (let r = 1; r < GRID_H; r++)
+      grid.push(
+        rect(`grid/y${r}`, {
+          x: 0,
+          y: r * CELL,
+          w: CANVAS_W,
+          h: 1,
+          fill: COLOR.grid
+        })
+      );
+    return frame("canvas", {
+      x: CANVAS_X,
+      y: CANVAS_Y,
+      w: CANVAS_W,
+      h: CANVAS_H,
+      fill: COLOR.canvas,
+      stroke: COLOR.line,
+      strokeWeight: 1,
+      clip: true,
+      children: [
+        ...grid,
+        ...Array.from({ length: LAYERS }, (_, k) => layerBox(k)),
+        ...HOT.map((_, i) => hotspotSet(i)),
+        selection()
+      ]
+    });
+  }
+  var ROW_H = 32;
+  function layerRow(k, r) {
+    const eye = (bright) => frame(bright ? "eye" : "eye-dim", __spreadProps(__spreadValues({
+      x: 14,
+      y: 11,
+      w: 16,
+      h: 10,
+      stroke: bright ? COLOR.text : COLOR.faint,
+      strokeWeight: 1.5,
+      radius: 5
+    }, bright ? { visibleNet: STATE_NETS.vis(k) } : {}), {
+      children: [
+        rect("pupil", {
+          x: 5,
+          y: 2,
+          w: 6,
+          h: 6,
+          radius: 3,
+          fill: bright ? COLOR.text : COLOR.faint
+        })
+      ]
+    }));
+    const hug = (name2, children) => frame(name2, { layout: { dir: "H" }, sizeH: "HUG", sizeV: "HUG", children });
+    const name = __spreadProps(__spreadValues({}, pick(
+      2,
+      bits(STATE_NETS.kind(k)),
+      (i) => bit(SCREEN_NETS.nkind, 2 * k + i),
+      hug,
+      (v) => label(`name/${KIND_NAMES[v]}`, KIND_NAMES[v], {
+        size: 12,
+        color: COLOR.text,
+        sizeH: "HUG",
+        sizeV: "HUG"
+      })
+    )), {
+      name: "name",
+      x: 76,
+      y: 8,
+      sizeH: "HUG",
+      sizeV: "HUG"
+    });
+    return frame(`row/${k}`, {
+      x: 0,
+      y: TOP_H + 40 + r * ROW_H,
+      w: LEFT_W,
+      h: ROW_H,
+      visibleNet: STATE_NETS.used(k),
+      reactions: [{ trigger: { on: "click" }, run: `select/${k}` }],
+      children: [
+        frame("eye-hit", {
+          x: 6,
+          y: 0,
+          w: 32,
+          h: ROW_H,
+          reactions: [{ trigger: { on: "click" }, run: `vis/${k}` }],
+          children: [eye(false), eye(true)]
+        }),
+        label("slot", String(k + 1), {
+          x: 50,
+          y: 8,
+          size: 12,
+          color: COLOR.faint
+        }),
+        name
+      ]
+    });
+  }
+  var KIND_NAMES = ["Layer", "Frame", "Rectangle", "Ellipse"];
+  function leftPanel() {
+    return frame("layers", {
+      x: 0,
+      y: TOP_H,
+      w: LEFT_W,
+      h: UI_H - TOP_H,
+      fill: COLOR.panel,
+      children: [
+        label("title", "Layers", {
+          x: 16,
+          y: 14,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        rect("rule", { x: 0, y: 40, w: LEFT_W, h: 1, fill: COLOR.line }),
+        // the selected row's highlight: rows are listed top = slot 7, so its row is ¬sel
+        frame("highlight", {
+          x: 8,
+          y: 48,
+          w: LEFT_W - 16,
+          h: 24,
+          layout: { dir: "V" },
+          sizeH: "FIXED",
+          sizeV: "HUG",
+          visibleNet: STATE_NETS.hassel,
+          children: [
+            ...spacer("nsel/", "V", ROW_H, 3, bits(SCREEN_NETS.nsel)),
+            rect("bar", {
+              w: LEFT_W - 16,
+              h: 24,
+              radius: 5,
+              fill: COLOR.selected
+            })
+          ]
+        }),
+        ...Array.from({ length: LAYERS }, (_, r) => __spreadProps(__spreadValues({}, layerRow(LAYERS - 1 - r, r)), {
+          y: 48 + r * ROW_H
+        }))
+      ]
+    });
+  }
+  function rightPanel() {
+    const sw = 40;
+    const gap = 8;
+    const swatches = Array.from(
+      { length: PALETTE_SIZE },
+      (_, c) => frame(`color/${c}`, {
+        x: 16 + c % 4 * (sw + gap),
+        y: 112 + Math.floor(c / 4) * (sw + gap),
+        w: sw,
+        h: sw,
+        radius: 4,
+        fill: PALETTE_HEX[c],
+        stroke: COLOR.line,
+        strokeWeight: 1,
+        reactions: [{ trigger: { on: "click" }, run: `fill/${c}` }]
+      })
+    );
+    return frame("design", {
+      x: UI_W - RIGHT_W,
+      y: TOP_H,
+      w: RIGHT_W,
+      h: UI_H - TOP_H,
+      fill: COLOR.panel,
+      children: [
+        label("title", "Design", {
+          x: 16,
+          y: 14,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        rect("rule", { x: 0, y: 40, w: RIGHT_W, h: 1, fill: COLOR.line }),
+        label("fill", "Fill", {
+          x: 16,
+          y: 56,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        __spreadProps(__spreadValues({}, colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 4)), {
+          name: "current",
+          x: 16,
+          y: 76,
+          w: 56,
+          h: 24,
+          radius: 4,
+          stroke: COLOR.line,
+          strokeWeight: 1,
+          clip: true,
+          sizeH: "FIXED",
+          sizeV: "FIXED"
+        }),
+        label("current-hint", "current colour", {
+          x: 84,
+          y: 82,
+          size: 11,
+          color: COLOR.faint
+        }),
+        ...swatches,
+        label("arrange", "Arrange", {
+          x: 16,
+          y: 320,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        ...arrangeButtons(),
+        label(
+          "keys",
+          "Shortcuts\nV F R O  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge",
+          { x: 16, y: 520, size: 11, color: COLOR.faint }
+        )
+      ]
+    });
+  }
+  function pushButton(name, text2, x, y, w, run) {
+    return frame(`button/${name}`, {
+      x,
+      y,
+      w,
+      h: 28,
+      radius: 5,
+      fill: COLOR.field,
+      reactions: [{ trigger: { on: "click" }, run }],
+      children: [
+        label("label", text2, {
+          x: 10,
+          y: 8,
+          size: 11,
+          bold: true,
+          color: COLOR.text
+        })
+      ]
+    });
+  }
+  function slotButton(name, text2, x, y, w, run) {
+    const level = (n, children) => frame(n, { x: 0, y: 0, w, h: 28, children });
+    return __spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => __spreadProps(__spreadValues({}, pushButton(name, text2, 0, 0, w, `${run}@${k}`)), {
+      name: `sel/${k}`
+    }))), {
+      name: `button/${name}`,
+      x,
+      y
+    });
+  }
+  function arrangeButtons() {
+    const big2 = [
+      ["duplicate", "Duplicate", "dup", true],
+      ["delete", "Delete", "delete", false],
+      ["forward", "Bring forward", "fwd", true],
+      ["backward", "Send backward", "back", true]
     ];
+    const out = big2.map(
+      ([n, t, run, perSlot], i) => (perSlot ? slotButton : pushButton)(
+        n,
+        t,
+        16 + i % 2 * 112,
+        344 + Math.floor(i / 2) * 36,
+        104,
+        run
+      )
+    );
+    const arrows = [
+      ["left", "Left", "nudge/0"],
+      ["right", "Right", "nudge/1"],
+      ["up", "Up", "nudge/2"],
+      ["down", "Down", "nudge/3"]
+    ];
+    out.push(
+      label("nudge", "Nudge one cell", {
+        x: 16,
+        y: 426,
+        size: 11,
+        color: COLOR.faint
+      })
+    );
+    arrows.forEach(
+      ([n, t, run], i) => out.push(pushButton(n, t, 16 + i * 56, 446, 52, run))
+    );
+    return out;
+  }
+  function toolbar() {
+    const tools = [
+      { name: "Move", key: "V" },
+      { name: "Frame", key: "F" },
+      { name: "Rectangle", key: "R" },
+      { name: "Ellipse", key: "O" }
+    ];
+    const w = 104;
+    const total = tools.length * w + (tools.length - 1) * 8;
+    return frame("toolbar", {
+      x: LEFT_W + (MID_W - total) / 2,
+      y: CANVAS_Y + CANVAS_H + 24,
+      w: total,
+      h: 44,
+      radius: 8,
+      fill: COLOR.panel,
+      stroke: COLOR.line,
+      strokeWeight: 1,
+      children: [
+        frame("highlight", {
+          x: 0,
+          y: 0,
+          layout: { dir: "H" },
+          sizeH: "HUG",
+          sizeV: "HUG",
+          children: [
+            ...spacer("t/", "H", w + 8, 2, bits(STATE_NETS.tool)),
+            rect("active", { w, h: 44, radius: 8, fill: COLOR.accent })
+          ]
+        }),
+        ...tools.map(
+          (t, i) => frame(`tool/${t.name}`, {
+            x: i * (w + 8),
+            y: 0,
+            w,
+            h: 44,
+            radius: 8,
+            reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
+            children: [
+              label("label", t.name, {
+                x: 12,
+                y: 15,
+                size: 12,
+                bold: true,
+                color: COLOR.text
+              }),
+              label("key", t.key, { x: w - 22, y: 15, size: 11, color: COLOR.dim })
+            ]
+          })
+        )
+      ]
+    });
+  }
+  function status() {
+    const hint = [
+      "Click a layer to pick it up, or click empty canvas to deselect",
+      "Click a cell to start the shape",
+      "Click the cell to drop it on (Esc cancels)",
+      "Click the opposite corner (Esc cancels)"
+    ];
+    return frame("status", {
+      x: LEFT_W,
+      y: CANVAS_Y + CANVAS_H + 84,
+      w: MID_W,
+      h: 24,
+      children: hint.map(
+        (t, i) => label(`hint/${HOT[i]}`, t, {
+          x: 0,
+          y: 0,
+          size: 12,
+          color: COLOR.dim,
+          visibleNet: bit(SCREEN_NETS.hot, i)
+        })
+      )
+    });
+  }
+  function topBar(note) {
+    return frame("topbar", {
+      x: 0,
+      y: 0,
+      w: UI_W,
+      h: TOP_H,
+      fill: COLOR.panel,
+      children: [
+        label("file", "Drafts / Untitled", {
+          x: 16,
+          y: 17,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        label("note", note, {
+          x: UI_W - 420,
+          y: 18,
+          size: 11,
+          color: COLOR.faint
+        }),
+        rect("rule", { x: 0, y: TOP_H - 1, w: UI_W, h: 1, fill: COLOR.line })
+      ]
+    });
+  }
+  var KEYS = [
+    { codes: [86], run: "tool/0" },
+    { codes: [70], run: "tool/1" },
+    { codes: [82], run: "tool/2" },
+    { codes: [79], run: "tool/3" },
+    // one key per reaction: Figma reads a keyCodes list as a chord (all held at once)
+    { codes: [46], run: "delete" },
+    { codes: [8], run: "delete" },
+    { codes: [37], run: "nudge/0" },
+    { codes: [39], run: "nudge/1" },
+    { codes: [38], run: "nudge/2" },
+    { codes: [40], run: "nudge/3" },
+    { codes: [27], run: "esc" }
+  ];
+  var SLOT_KEYS = [
+    { code: 68, run: "dup" },
+    { code: 219, run: "back" },
+    { code: 221, run: "fwd" }
+  ];
+  function slotKeys(fill) {
+    const level = (name, children) => frame(name, { x: 0, y: 0, w: 8, h: 8, children });
+    return __spreadProps(__spreadValues({}, pick(
+      3,
+      bits(STATE_NETS.sel),
+      bits(SCREEN_NETS.nsel),
+      level,
+      (k) => frame(`keys/${k}`, {
+        x: 0,
+        y: 0,
+        w: 8,
+        h: 8,
+        fill,
+        reactions: SLOT_KEYS.map((s) => ({
+          trigger: { on: "key", codes: [s.code] },
+          run: `${s.run}@${k}`
+        }))
+      })
+    )), {
+      name: "shortcuts",
+      x: 0,
+      y: 0
+    });
+  }
+  function uiSpec(note = "every pixel of this screen is a gate-level machine \u2014 scroll down") {
+    return frame("editor", {
+      x: 0,
+      y: 0,
+      w: UI_W,
+      h: UI_H,
+      fill: COLOR.frame,
+      clip: true,
+      children: [
+        topBar(note),
+        leftPanel(),
+        canvas(),
+        toolbar(),
+        status(),
+        rightPanel(),
+        slotKeys(COLOR.panel)
+      ]
+    });
   }
 
   // nathan/src/platform/tests.ts
@@ -4570,6 +5634,19 @@
       specs.push({ name: `t8/b${i}`, type: "BOOLEAN", init: false });
     for (const k of ["a", "delete", "left", "bracket"]) counter(`t9/${k}`);
     specs.push({ name: "t10/seq", type: "STRING", init: "" });
+    for (const r of PLACE_REGS)
+      for (let i = 0; i < 4; i++)
+        specs.push({ name: `t11/${r}/${i}`, type: "BOOLEAN", init: r === "nf" });
+    for (const c of PLACE_CASES)
+      specs.push({ name: `t11/case/${c.name}`, type: "BOOLEAN", init: false });
+    for (const k of KEY_LAYERS) counter(`t12/${k.name}`);
+    specs.push({ name: "t12/off", type: "BOOLEAN", init: false });
+    for (let i = 0; i < 3; i++)
+      specs.push(
+        { name: `t13/b${i}`, type: "BOOLEAN", init: false },
+        { name: `t13/n${i}`, type: "BOOLEAN", init: true }
+      );
+    specs.push({ name: "t13/which", type: "STRING", init: "\u2013" });
     return specs;
   }
   var bindText = (t, v) => t.setBoundVariable("characters", v);
@@ -4763,7 +5840,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     const n = 5;
     for (let r = 0; r < n; r++)
       for (let c = 0; c < n; c++) {
-        const cell2 = put(
+        const cell = put(
           f,
           box(
             ctx.api,
@@ -4776,7 +5853,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           20 + c * 48,
           80 + r * 48
         );
-        await react(cell2, mouseEnter(0), [
+        await react(cell, mouseEnter(0), [
           setVariable(id(ctx, "t4/cx"), floatData(c)),
           setVariable(id(ctx, "t4/cy"), floatData(r)),
           setVariable(id(ctx, "t4/text"), strData(`pointer: ${c}, ${r}`))
@@ -4803,14 +5880,14 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       parent.clipsContent = true;
       for (let r = 0; r < 3; r++)
         for (let c = 0; c < 3; c++) {
-          const cell2 = put(
+          const cell = put(
             parent,
             box(ctx.api, `cell/${c},${r}`, 44, 44, COLORS.lampOff, 4),
             2 + c * 48,
             2 + r * 48
           );
           if (withHover)
-            await react(cell2, mouseEnter(0), [
+            await react(cell, mouseEnter(0), [
               setVariable(id(ctx, "t4/cx"), floatData(c))
             ]);
         }
@@ -4955,13 +6032,13 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       "each key adds 1 to its own number"
     );
     const table = [
-      ["A", [65], "t9/a"],
-      ["Delete / Backspace", [46, 8], "t9/delete"],
-      ["\u2190", [37], "t9/left"],
-      ["]", [221], "t9/bracket"]
+      ["A", [[65]], "t9/a"],
+      ["Delete or Backspace", [[46], [8]], "t9/delete"],
+      ["\u2190", [[37]], "t9/left"],
+      ["]", [[221]], "t9/bracket"]
     ];
     const reactions = [];
-    table.forEach(([label2, codes, name], i) => {
+    table.forEach(([label2, keys2, name], i) => {
       put(
         f,
         text(ctx.api, label2, { size: 13, color: COLORS.dim }),
@@ -4969,21 +6046,183 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         100 + i * 44
       );
       num2(ctx, f, name, 240, 92 + i * 44, 24);
-      reactions.push({ trigger: keyDown(codes), actions: bump(ctx, name) });
+      for (const codes of keys2)
+        reactions.push({ trigger: keyDown(codes), actions: bump(ctx, name) });
     });
     await f.setReactionsAsync(reactions);
   }
   async function triple(ctx) {
-    const f = testFrame(ctx, 10, "one click is three events", "Click the button a few times.", "every click appends D U C, in that order (mouse down, mouse up, click)");
+    const f = testFrame(
+      ctx,
+      10,
+      "one click is two events",
+      "Click each button a few times.",
+      "button 1 appends D U for every click (button 2 shows whether C also fires)"
+    );
     const t = put(f, text(ctx.api, "", { size: 22, bold: true, color: COLORS.amber, name: "value" }), 20, 160);
     t.setBoundVariable("characters", ctx.v.get("t10/seq"));
-    const b = put(f, button(ctx.api, "click me", COLORS.step, 160, 44), 20, 100);
-    const add = (letter) => [setVariable(id(ctx, "t10/seq"), exprData("ADDITION", [aliasData(id(ctx, "t10/seq"), "STRING"), strData(letter)], "STRING"))];
-    await b.setReactionsAsync([
+    const add = (letter) => [
+      setVariable(
+        id(ctx, "t10/seq"),
+        exprData("ADDITION", [aliasData(id(ctx, "t10/seq"), "STRING"), strData(letter)], "STRING")
+      )
+    ];
+    const one = put(f, button(ctx.api, "1: down + up", COLORS.step, 160, 44), 20, 100);
+    await one.setReactionsAsync([
       { trigger: mouseDown(0), actions: add("D") },
-      { trigger: mouseUp(0), actions: add("U") },
-      { trigger: onClick(), actions: add("C ") }
+      { trigger: mouseUp(0), actions: add("U ") }
     ]);
+    const two = put(f, button(ctx.api, "2: down + up + click", COLORS.run, 200, 44), 200, 100);
+    await two.setReactionsAsync([
+      { trigger: mouseDown(0), actions: add("d") },
+      { trigger: mouseUp(0), actions: add("u") },
+      { trigger: onClick(), actions: add("c") }
+    ]);
+  }
+  var PLACE_REGS = ["x0", "x1", "y0", "y1", "f", "nf"];
+  var PLACE_CASES = [
+    { name: "A", x0: 1, x1: 5, y0: 1, y1: 4, f: 8, colour: "red" },
+    { name: "B", x0: 3, x1: 11, y0: 5, y1: 7, f: 10, colour: "yellow" },
+    { name: "C", x0: 0, x1: 14, y0: 0, y1: 10, f: 3, colour: "green" }
+  ];
+  async function placement(ctx) {
+    const f = testFrame(
+      ctx,
+      11,
+      "a rectangle from register bits",
+      "Click case A, B and C. Each sets 24 bits; the layout alone draws the rectangle.",
+      "the coloured rectangle exactly fills the dashed outline, in the colour named"
+    );
+    const U = 20;
+    const grid = put(f, box(ctx.api, "grid", 14 * U, 10 * U, COLORS.lampOff, 0), 20, 96);
+    grid.clipsContent = false;
+    const net = (r) => (i) => `t11/${r}/${i}`;
+    await render(
+      { api: ctx.api, variable: (n) => ctx.v.get(n), reactionsFor: () => [] },
+      grid,
+      placedBy("rect", { x0: net("x0"), x1: net("x1"), y0: net("y0"), y1: net("y1") }, U, __spreadProps(__spreadValues({}, colourPick(net("f"), net("nf"))), {
+        name: "body"
+      }))
+    );
+    for (const c of PLACE_CASES) {
+      const show = ctx.v.get(`t11/case/${c.name}`);
+      const outline = put(grid, box(ctx.api, `expect ${c.name}`, (c.x1 - c.x0) * U, (c.y1 - c.y0) * U, COLORS.bg, 0), c.x0 * U, c.y0 * U);
+      outline.fills = [];
+      outline.strokes = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+      outline.strokeWeight = 2;
+      outline.dashPattern = [6, 4];
+      outline.setBoundVariable("visible", show);
+      const note = put(f, text(ctx.api, `${c.name}: ${c.colour} (${PALETTE_HEX[c.f]})`, { size: 12, bold: true, name: `colour ${c.name}` }), 320, 150);
+      note.setBoundVariable("visible", show);
+    }
+    for (let n = 0; n < PLACE_CASES.length; n++) {
+      const c = PLACE_CASES[n];
+      const value = { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, f: c.f, nf: ~c.f };
+      const b = put(f, button(ctx.api, `case ${c.name}`, COLORS.step, 60, 36), 320 + n * 64, 96);
+      await react(b, onClick(), [
+        ...PLACE_REGS.flatMap(
+          (r) => [0, 1, 2, 3].map((i) => setVariable(id(ctx, `t11/${r}/${i}`), boolData((value[r] >> i & 1) === 1)))
+        ),
+        ...PLACE_CASES.map((o) => setVariable(id(ctx, `t11/case/${o.name}`), boolData(o === c)))
+      ]);
+    }
+  }
+  var KEY_LAYERS = [
+    { name: "frame", label: "the frame itself" },
+    { name: "shown", label: "a layer in it" },
+    { name: "deep", label: "a layer 3 frames deep" },
+    { name: "hidden", label: "a hidden layer (bound to false)" },
+    { name: "inside", label: "a shown layer in a hidden frame" },
+    { name: "only", label: "J: only on the shown layer" }
+  ];
+  async function keyLayers(ctx) {
+    const f = testFrame(
+      ctx,
+      12,
+      "keys on layers inside the frame",
+      "Click once on the frame's background for focus (not on a box), then press K once, then J once. Each number counts its own reaction.",
+      "write down which numbers grew: K on the frame, shown, deep, hidden, inside; J"
+    );
+    KEY_LAYERS.forEach((k, i) => {
+      put(f, text(ctx.api, k.label, { size: 12, color: COLORS.dim }), 40, 96 + i * 30);
+      num2(ctx, f, `t12/${k.name}`, 300, 90 + i * 30, 20);
+    });
+    const K = 75;
+    const J = 74;
+    const at = (parent, name, x) => put(parent, box(ctx.api, name, 28, 28, COLORS.panel, 4), x, 0);
+    const tray = put(f, box(ctx.api, "tray", 200, 28, COLORS.bg, 0), 300, H - 76);
+    const shown = at(tray, "shown", 0);
+    const deep1 = at(tray, "deep 1", 36);
+    const deep2 = put(deep1, box(ctx.api, "deep 2", 28, 28, COLORS.panel, 4), 0, 0);
+    const deep = put(deep2, box(ctx.api, "deep", 28, 28, COLORS.lampOff, 4), 0, 0);
+    const hidden = at(tray, "hidden", 72);
+    hidden.setBoundVariable("visible", ctx.v.get("t12/off"));
+    const hider = at(tray, "hidden frame", 108);
+    hider.setBoundVariable("visible", ctx.v.get("t12/off"));
+    const inside = put(hider, box(ctx.api, "inside", 28, 28, COLORS.lampOff, 4), 0, 0);
+    await f.setReactionsAsync([{ trigger: keyDown([K]), actions: bump(ctx, "t12/frame") }]);
+    await shown.setReactionsAsync([
+      { trigger: keyDown([K]), actions: bump(ctx, "t12/shown") },
+      { trigger: keyDown([J]), actions: bump(ctx, "t12/only") }
+    ]);
+    await react(deep, keyDown([K]), bump(ctx, "t12/deep"));
+    await react(hidden, keyDown([K]), bump(ctx, "t12/hidden"));
+    await react(inside, keyDown([K]), bump(ctx, "t12/inside"));
+  }
+  async function keyPick(ctx) {
+    const f = testFrame(
+      ctx,
+      13,
+      "a shortcut picked by 3 bits",
+      "Click the frame's background, press P: the big number says which of 8 stacked layers took it. Toggle bits with the buttons (the square shows the layer that is up) and press P again, a few times.",
+      "after every P the number equals the number in the square"
+    );
+    const t = put(f, text(ctx.api, "\u2013", { size: 40, bold: true, color: COLORS.amber, name: "which" }), 400, 90);
+    t.setBoundVariable("characters", ctx.v.get("t13/which"));
+    put(f, text(ctx.api, "P went to:", { size: 13, color: COLORS.dim }), 300, 108);
+    const level = (name, children) => ({
+      type: "frame",
+      name,
+      x: 0,
+      y: 0,
+      w: 72,
+      h: 72,
+      children
+    });
+    const leaf = (k) => ({
+      type: "frame",
+      name: `leaf/${k}`,
+      x: 0,
+      y: 0,
+      w: 72,
+      h: 72,
+      fill: "#2f6fed",
+      radius: 6,
+      reactions: [{ trigger: { on: "key", codes: [80] }, run: `t13/${k}` }],
+      children: [{ type: "text", name: "n", x: 26, y: 18, text: { chars: String(k), size: 28, bold: true, color: "#ffffff" } }]
+    });
+    const holder = put(f, box(ctx.api, "stack", 72, 72, COLORS.bg, 0), 40, 100);
+    await render(
+      {
+        api: ctx.api,
+        variable: (n) => ctx.v.get(n),
+        reactionsFor: (ref2) => [
+          {
+            trigger: keyDown([80]),
+            actions: [setVariable(id(ctx, "t13/which"), strData(ref2.run.slice("t13/".length)))]
+          }
+        ]
+      },
+      holder,
+      pick(3, (i) => `t13/b${i}`, (i) => `t13/n${i}`, level, leaf)
+    );
+    for (let i = 0; i < 3; i++) {
+      const b = put(f, button(ctx.api, `bit ${i} (${1 << i})`, COLORS.step, 100, 36), 40 + i * 110, 200);
+      await react(b, onClick(), [
+        setVariable(id(ctx, `t13/b${i}`), exprData("NOT", [aliasData(id(ctx, `t13/b${i}`))])),
+        setVariable(id(ctx, `t13/n${i}`), exprData("NOT", [aliasData(id(ctx, `t13/n${i}`))]))
+      ]);
+    }
   }
   async function buildPlatformTests(api, page, log = () => {
   }) {
@@ -5005,7 +6244,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       info: [],
       at: { x: 0, y: bottom + 1200 }
     };
-    for (const t of [size, big, nesting, hover, bubbling, passThrough, switching, spacers, keys, triple])
+    for (const t of [size, big, nesting, hover, bubbling, passThrough, switching, spacers, keys, triple, placement, keyLayers, keyPick])
       try {
         await t(ctx);
       } catch (e) {
@@ -5021,760 +6260,121 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     return { frames: ctx.frames, tests: ctx.info };
   }
 
-  // nathan/src/ui/render.ts
-  function make(api, s) {
-    switch (s.type) {
-      case "frame":
-        return api.createFrame();
-      case "rect":
-        return api.createRectangle();
-      case "ellipse":
-        return api.createEllipse();
-      case "text":
-        return api.createText();
-    }
-  }
-  async function render(ctx, parent, spec) {
-    const out = {
-      root: void 0,
-      nodes: /* @__PURE__ */ new Map(),
-      created: 0,
-      bound: 0,
-      missing: [],
-      reactions: 0
-    };
-    const pending = [];
-    const build = (s, into, parentSpec, path) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-      const api = ctx.api;
-      const node = make(api, s);
-      node.name = s.name;
-      out.created++;
-      if (node.type === "TEXT") {
-        const t = s.text;
-        node.fontName = t.bold ? FONT_BOLD : FONT;
-        node.fontSize = (_a = t.size) != null ? _a : 12;
-        node.characters = t.chars;
-        node.fills = solid2((_b = t.color) != null ? _b : "#FFFFFF");
-      } else {
-        const shape = node;
-        if (s.w !== void 0 && s.h !== void 0)
-          shape.resize(Math.max(s.w, 0.01), Math.max(s.h, 0.01));
-        shape.fills = s.fill ? solid2(s.fill) : [];
-        shape.strokes = s.stroke ? solid2(s.stroke) : [];
-        if (s.stroke) {
-          shape.strokeWeight = (_c = s.strokeWeight) != null ? _c : 1;
-          shape.strokeAlign = "INSIDE";
-        }
-        if (s.radius) shape.cornerRadius = s.radius;
-        if (node.type === "FRAME") {
-          node.clipsContent = !!s.clip;
-          if (s.layout) {
-            node.layoutMode = s.layout.dir === "H" ? "HORIZONTAL" : "VERTICAL";
-            node.itemSpacing = (_d = s.layout.gap) != null ? _d : 0;
-            const pad = (_e = s.layout.pad) != null ? _e : 0;
-            node.paddingLeft = node.paddingRight = node.paddingTop = node.paddingBottom = pad;
-            node.primaryAxisAlignItems = (_f = s.layout.main) != null ? _f : "MIN";
-            node.counterAxisAlignItems = (_g = s.layout.cross) != null ? _g : "MIN";
-          }
-        }
-      }
-      if (s.hidden) node.visible = false;
-      into.appendChild(node);
-      const inAutoLayout = !!(parentSpec == null ? void 0 : parentSpec.layout);
-      if (!inAutoLayout && s.x !== void 0 && s.y !== void 0) {
-        node.x = s.x;
-        node.y = s.y;
-      }
-      if (inAutoLayout) {
-        if (s.absolute) {
-          node.layoutPositioning = "ABSOLUTE";
-          node.x = (_h = s.x) != null ? _h : 0;
-          node.y = (_i = s.y) != null ? _i : 0;
-        } else {
-          node.layoutSizingHorizontal = (_j = s.sizeH) != null ? _j : "FIXED";
-          node.layoutSizingVertical = (_k = s.sizeV) != null ? _k : "FIXED";
-        }
-      } else if (node.type === "FRAME" && s.layout) {
-        node.layoutSizingHorizontal = "FIXED";
-        node.layoutSizingVertical = "FIXED";
-      }
-      if (s.visibleNet) {
-        const v = ctx.variable(s.visibleNet);
-        if (v) {
-          node.setBoundVariable("visible", v);
-          out.bound++;
-        } else out.missing.push(s.visibleNet);
-      }
-      if ((_l = s.reactions) == null ? void 0 : _l.length) {
-        pending.push([node, s.reactions.flatMap((r) => ctx.reactionsFor(r))]);
-        out.reactions += s.reactions.length;
-      }
-      const here = `${path}/${s.name}`;
-      out.nodes.set(here, node);
-      for (const c of (_m = s.children) != null ? _m : [])
-        build(c, node, s, here);
-      return node;
-    };
-    out.root = build(spec, parent, null, "");
-    for (const [node, reactions] of pending)
-      await node.setReactionsAsync(reactions);
-    return out;
-  }
-
-  // nathan/src/model/screen.ts
-  var BOX_CELLS = 15;
-  var bit = (p, bus, i) => p.peek(`${bus}[${i}]`);
-  var word = (p, bus, at, w) => {
-    let v = 0;
-    for (let i = 0; i < w; i++) v |= bit(p, bus, at + i) << i;
-    return v;
-  };
-  var onehot = (p, bus, at, n) => {
-    const on = [];
-    for (let i = 0; i < n; i++) if (bit(p, bus, at + i)) on.push(i);
-    return on.length === 1 ? on[0] : -1;
-  };
-  function readScreen(p) {
+  // nathan/src/ui/gatemap.ts
+  var ORDER = [
+    "evdec",
+    "conds",
+    "hit",
+    "free",
+    "plane",
+    "geom",
+    "layerctl",
+    "newrec",
+    "l0",
+    "l1",
+    "l2",
+    "l3",
+    "l4",
+    "l5",
+    "l6",
+    "l7",
+    "state",
+    "disp"
+  ];
+  var GLUE = "glue";
+  var TITLE_H2 = 18;
+  var PAD2 = 6;
+  var BLOCK_GAP = 10;
+  function gateMap(net, o) {
     var _a, _b;
-    const layers = [];
-    for (let k = 0; k < LAYERS; k++) {
-      const x0 = p.peek(STATE_NETS.x0(k), 4);
-      const y0 = p.peek(STATE_NETS.y0(k), 4);
-      const rightSpacer = word(p, SCREEN_NETS.nx1, 4 * k, 4);
-      const bottomSpacer = word(p, SCREEN_NETS.ny1, 4 * k, 4);
-      const kinds = [
-        [SCREEN_NETS.kfr, "frame"],
-        [SCREEN_NETS.kre, "rect"],
-        [SCREEN_NETS.kel, "ellipse"]
-      ];
-      const kind = (_b = (_a = kinds.find(([bus]) => bit(p, bus, k))) == null ? void 0 : _a[1]) != null ? _b : null;
-      layers.push({
-        slot: k,
-        shown: bit(p, SCREEN_NETS.show, k) === 1,
-        x: x0,
-        y: y0,
-        w: BOX_CELLS - x0 - rightSpacer,
-        h: BOX_CELLS - y0 - bottomSpacer,
-        color: onehot(p, SCREEN_NETS.fill1h, 16 * k, 16),
-        kind,
-        selected: bit(p, SCREEN_NETS.selk, k) === 1,
-        row: p.peek(STATE_NETS.used(k)) === 1
+    const groups = /* @__PURE__ */ new Map();
+    net.gates.forEach((g, i) => {
+      const top = g.path.includes("/") ? g.path.split("/")[0] : GLUE;
+      if (!groups.has(top)) groups.set(top, []);
+      groups.get(top).push(i);
+    });
+    const rank = (n) => n === GLUE ? ORDER.length + 1 : ORDER.includes(n) ? ORDER.indexOf(n) : ORDER.length;
+    const names = [...groups.keys()].sort(
+      (a, b) => rank(a) - rank(b) || a.localeCompare(b)
+    );
+    const colW = (o.width - (o.columns - 1) * BLOCK_GAP) / o.columns;
+    const pitch = o.lamp + o.gap;
+    const perRow = Math.max(1, Math.floor((colW - 2 * PAD2 + o.gap) / pitch));
+    const heights = new Array(o.columns).fill(0);
+    const blocks = [];
+    for (const name of names) {
+      const gates = groups.get(name).sort(
+        (a, b) => net.gates[a].path.localeCompare(net.gates[b].path, void 0, {
+          numeric: true
+        })
+      );
+      const rows = Math.ceil(gates.length / perRow);
+      const h = TITLE_H2 + rows * pitch - o.gap + PAD2;
+      const col = heights.indexOf(Math.min(...heights));
+      blocks.push({
+        type: "frame",
+        name: `block/${name}`,
+        x: col * (colW + BLOCK_GAP),
+        y: heights[col],
+        w: colW,
+        h,
+        fill: o.colours.block,
+        radius: 4,
+        children: [
+          {
+            type: "text",
+            name: "title",
+            x: PAD2,
+            y: 3,
+            text: {
+              chars: (_b = (_a = o.title) == null ? void 0 : _a.call(o, name, gates.length)) != null ? _b : `${name} \xB7 ${gates.length}`,
+              size: 10,
+              bold: true,
+              color: o.colours.text
+            }
+          },
+          // every gate is a dark square; its lamp lights over it while its output is 1
+          ...gates.flatMap((gi, k) => {
+            var _a2, _b2;
+            const x = PAD2 + k % perRow * pitch;
+            const y = TITLE_H2 + Math.floor(k / perRow) * pitch;
+            const square2 = {
+              type: "rect",
+              x,
+              y,
+              w: o.lamp,
+              h: o.lamp,
+              radius: 1
+            };
+            return [
+              __spreadProps(__spreadValues({}, square2), { name: "off", fill: o.colours.off }),
+              __spreadProps(__spreadValues({}, square2), {
+                name: `gate/${net.gates[gi].path}`,
+                fill: o.colours.lamp,
+                visibleNet: (_b2 = (_a2 = o.netOf) == null ? void 0 : _a2.call(o, gi)) != null ? _b2 : net.netNames[net.gates[gi].out]
+              })
+            ];
+          })
+        ]
       });
+      heights[col] += h + BLOCK_GAP;
     }
     return {
-      layers,
-      tool: onehot(p, SCREEN_NETS.tool1h, 0, 4),
-      color: onehot(p, SCREEN_NETS.cur1h, 0, 16),
-      hot: onehot(p, SCREEN_NETS.hot, 0, 4)
+      type: "frame",
+      name: "gate map",
+      x: 0,
+      y: 0,
+      w: o.width,
+      h: Math.max(...heights) - BLOCK_GAP,
+      children: blocks
     };
-  }
-  function expectedScreen(s) {
-    var _a, _b, _c, _d, _e, _f;
-    const layers = [];
-    for (let k = 0; k < LAYERS; k++) {
-      const l = s.layers[k];
-      layers.push({
-        slot: k,
-        shown: !!l && l.visible,
-        x: (_a = l == null ? void 0 : l.x) != null ? _a : NaN,
-        y: (_b = l == null ? void 0 : l.y) != null ? _b : NaN,
-        w: (_c = l == null ? void 0 : l.w) != null ? _c : NaN,
-        h: (_d = l == null ? void 0 : l.h) != null ? _d : NaN,
-        color: (_e = l == null ? void 0 : l.fill) != null ? _e : NaN,
-        kind: (_f = l == null ? void 0 : l.kind) != null ? _f : null,
-        selected: !!l && l.id === s.selected,
-        row: !!l
-      });
-    }
-    const hot = s.drag ? s.drag.mode === "move" ? 2 : 3 : s.tool === "move" ? 0 : 1;
-    return { layers, tool: TOOLS.indexOf(s.tool), color: s.fill, hot };
-  }
-  function compareScreen(s, p) {
-    const got = readScreen(p);
-    const want = expectedScreen(s);
-    for (let k = 0; k < LAYERS; k++) {
-      const [g, w] = [got.layers[k], want.layers[k]];
-      if (g.row !== w.row) return `slot ${k}: row ${g.row}, spec ${w.row}`;
-      if (!w.row) {
-        if (g.shown) return `slot ${k}: shown although empty`;
-        if (g.selected) return `slot ${k}: selected although empty`;
-        continue;
-      }
-      if (g.shown !== w.shown)
-        return `slot ${k}: shown ${g.shown}, spec ${w.shown}`;
-      if (g.selected !== w.selected)
-        return `slot ${k}: selected ${g.selected}, spec ${w.selected}`;
-      if (g.kind !== w.kind) return `slot ${k}: kind ${g.kind}, spec ${w.kind}`;
-      if (g.color !== w.color)
-        return `slot ${k}: colour ${g.color}, spec ${w.color}`;
-      if (g.x !== w.x || g.y !== w.y || g.w !== w.w || g.h !== w.h)
-        return `slot ${k}: rectangle ${g.x},${g.y} ${g.w}\xD7${g.h}, spec ${w.x},${w.y} ${w.w}\xD7${w.h}`;
-    }
-    if (got.tool !== want.tool) return `tool lamp ${got.tool}, spec ${want.tool}`;
-    if (got.color !== want.color)
-      return `current colour lamp ${got.color}, spec ${want.color}`;
-    if (got.hot !== want.hot) return `hotspot set ${got.hot}, spec ${want.hot}`;
-    return null;
-  }
-
-  // nathan/src/ui/spec.ts
-  var PALETTE_HEX = [
-    "#000000",
-    "#1D2B53",
-    "#7E2553",
-    "#008751",
-    "#AB5236",
-    "#5F574F",
-    "#C2C3C7",
-    "#FFF1E8",
-    "#FF004D",
-    "#FFA300",
-    "#FFEC27",
-    "#00E436",
-    "#29ADFF",
-    "#83769C",
-    "#FF77A8",
-    "#FFCCAA"
-  ];
-  var COLOR = {
-    canvas: "#1E1E1E",
-    panel: "#2C2C2C",
-    field: "#383838",
-    selected: "#394360",
-    accent: "#0C8CE9",
-    text: "#FFFFFF",
-    dim: "#B3B3B3",
-    faint: "#808080",
-    line: "#444444",
-    grid: "#262626",
-    frame: "#141414"
-  };
-  var CELL = 48;
-  var CANVAS_W = GRID_W * CELL;
-  var CANVAS_H = GRID_H * CELL;
-  var BOX_PX = BOX_CELLS * CELL;
-  var LEFT_W = 240;
-  var RIGHT_W = 240;
-  var TOP_H = 48;
-  var MID_W = 720;
-  var UI_W = LEFT_W + MID_W + RIGHT_W;
-  var UI_H = 704;
-  var CANVAS_X = LEFT_W + (MID_W - CANVAS_W) / 2;
-  var CANVAS_Y = TOP_H + 32;
-  var frame = (name, p = {}) => __spreadValues({
-    type: "frame",
-    name
-  }, p);
-  var rect = (name, p = {}) => __spreadValues({
-    type: "rect",
-    name
-  }, p);
-  var label = (name, chars, p = {}) => {
-    const _a = p, { size: size2, bold, color } = _a, rest = __objRest(_a, ["size", "bold", "color"]);
-    return __spreadValues({ type: "text", name, text: { chars, size: size2, bold, color } }, rest);
-  };
-  var bit2 = (bus, i) => `${bus}[${i}]`;
-  function spacer(prefix, dir, netOf) {
-    return [0, 1, 2, 3].map(
-      (i) => frame(
-        `${prefix}${i}`,
-        dir === "H" ? {
-          w: CELL << i,
-          h: 1,
-          sizeH: "FIXED",
-          sizeV: "FILL",
-          visibleNet: netOf(i)
-        } : {
-          w: BOX_PX,
-          h: CELL << i,
-          sizeH: "FILL",
-          sizeV: "FIXED",
-          visibleNet: netOf(i)
-        }
-      )
-    );
-  }
-  function layerBox(k) {
-    const swatches = Array.from(
-      { length: PALETTE_SIZE },
-      (_, c) => rect(`swatch/${c}`, {
-        fill: PALETTE_HEX[c],
-        sizeH: "FILL",
-        sizeV: "FILL",
-        visibleNet: bit2(SCREEN_NETS.fill1h, k * PALETTE_SIZE + c)
-      })
-    );
-    return frame(`layer/${k}`, {
-      w: BOX_PX,
-      h: BOX_PX,
-      layout: { dir: "V" },
-      visibleNet: bit2(SCREEN_NETS.show, k),
-      children: [
-        ...spacer("top", "V", (i) => bit2(STATE_NETS.y0(k), i)),
-        frame("row", {
-          sizeH: "FILL",
-          sizeV: "FILL",
-          layout: { dir: "H" },
-          children: [
-            ...spacer("left", "H", (i) => bit2(STATE_NETS.x0(k), i)),
-            frame("body", {
-              sizeH: "FILL",
-              sizeV: "FILL",
-              layout: { dir: "H" },
-              children: swatches
-            }),
-            ...spacer("right", "H", (i) => bit2(SCREEN_NETS.nx1, k * 4 + i))
-          ]
-        }),
-        ...spacer("bottom", "V", (i) => bit2(SCREEN_NETS.ny1, k * 4 + i))
-      ]
-    });
-  }
-  var HANDLE = 12;
-  function overlayBox(k) {
-    const handle = (corner, code) => frame(`handle/${corner}`, {
-      w: HANDLE,
-      h: HANDLE,
-      fill: COLOR.text,
-      stroke: COLOR.accent,
-      strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}` }]
-    });
-    const handleRow = (a, b) => frame("handles", {
-      sizeH: "FILL",
-      h: HANDLE,
-      layout: { dir: "H", main: "SPACE_BETWEEN" },
-      children: [a, b]
-    });
-    return frame(`overlay/${k}`, {
-      w: BOX_PX,
-      h: BOX_PX,
-      layout: { dir: "V" },
-      visibleNet: bit2(SCREEN_NETS.selk, k),
-      children: [
-        ...spacer("top", "V", (i) => bit2(STATE_NETS.y0(k), i)),
-        frame("row", {
-          sizeH: "FILL",
-          sizeV: "FILL",
-          layout: { dir: "H" },
-          children: [
-            ...spacer("left", "H", (i) => bit2(STATE_NETS.x0(k), i)),
-            frame("outline", {
-              sizeH: "FILL",
-              sizeV: "FILL",
-              stroke: COLOR.accent,
-              strokeWeight: 2,
-              layout: { dir: "V", main: "SPACE_BETWEEN" },
-              // corner codes: bit0 = west handle, bit1 = north handle
-              children: [
-                handleRow(handle("nw", 3), handle("ne", 2)),
-                handleRow(handle("sw", 1), handle("se", 0))
-              ]
-            }),
-            ...spacer("right", "H", (i) => bit2(SCREEN_NETS.nx1, k * 4 + i))
-          ]
-        }),
-        ...spacer("bottom", "V", (i) => bit2(SCREEN_NETS.ny1, k * 4 + i))
-      ]
-    });
-  }
-  function hotspotSet(i) {
-    const cells = [];
-    for (let r = 0; r < GRID_H; r++)
-      for (let c = 0; c < GRID_W; c++)
-        cells.push(
-          frame(`cell/${c},${r}`, {
-            x: c * CELL,
-            y: r * CELL,
-            w: CELL,
-            h: CELL,
-            reactions: [{ trigger: { on: "enter" }, run: `pointer/${c},${r}` }]
-          })
-        );
-    return frame(`hot/${HOT[i]}`, {
-      x: 0,
-      y: 0,
-      w: CANVAS_W,
-      h: CANVAS_H,
-      visibleNet: bit2(SCREEN_NETS.hot, i),
-      reactions: [{ trigger: { on: "click" }, run: HOTSPOT_REACTIONS[i] }],
-      children: cells
-    });
-  }
-  function canvas() {
-    const grid = [];
-    for (let c = 1; c < GRID_W; c++)
-      grid.push(
-        rect(`grid/x${c}`, {
-          x: c * CELL,
-          y: 0,
-          w: 1,
-          h: CANVAS_H,
-          fill: COLOR.grid
-        })
-      );
-    for (let r = 1; r < GRID_H; r++)
-      grid.push(
-        rect(`grid/y${r}`, {
-          x: 0,
-          y: r * CELL,
-          w: CANVAS_W,
-          h: 1,
-          fill: COLOR.grid
-        })
-      );
-    return frame("canvas", {
-      x: CANVAS_X,
-      y: CANVAS_Y,
-      w: CANVAS_W,
-      h: CANVAS_H,
-      fill: COLOR.canvas,
-      stroke: COLOR.line,
-      strokeWeight: 1,
-      clip: true,
-      children: [
-        ...grid,
-        ...Array.from({ length: LAYERS }, (_, k) => __spreadProps(__spreadValues({}, layerBox(k)), {
-          x: 0,
-          y: 0
-        })),
-        ...HOT.map((_, i) => hotspotSet(i)),
-        ...Array.from({ length: LAYERS }, (_, k) => __spreadProps(__spreadValues({}, overlayBox(k)), {
-          x: 0,
-          y: 0
-        }))
-      ]
-    });
-  }
-  var ROW_H = 32;
-  function layerRow(k, r) {
-    const eye = (bright) => frame(bright ? "eye" : "eye-dim", __spreadProps(__spreadValues({
-      x: 14,
-      y: 11,
-      w: 16,
-      h: 10,
-      stroke: bright ? COLOR.text : COLOR.faint,
-      strokeWeight: 1.5,
-      radius: 5
-    }, bright ? { visibleNet: STATE_NETS.vis(k) } : {}), {
-      children: [
-        rect("pupil", {
-          x: 5,
-          y: 2,
-          w: 6,
-          h: 6,
-          radius: 3,
-          fill: bright ? COLOR.text : COLOR.faint
-        })
-      ]
-    }));
-    const name = (text2, net) => label(`name/${text2}`, text2, {
-      x: 76,
-      y: 8,
-      size: 12,
-      color: COLOR.text,
-      visibleNet: bit2(net, k)
-    });
-    return frame(`row/${k}`, {
-      x: 0,
-      y: TOP_H + 40 + r * ROW_H,
-      w: LEFT_W,
-      h: ROW_H,
-      visibleNet: STATE_NETS.used(k),
-      reactions: [{ trigger: { on: "click" }, run: `select/${k}` }],
-      children: [
-        rect("selected", {
-          x: 8,
-          y: 0,
-          w: LEFT_W - 16,
-          h: 24,
-          radius: 5,
-          fill: COLOR.selected,
-          visibleNet: bit2(SCREEN_NETS.selk, k)
-        }),
-        frame("eye-hit", {
-          x: 6,
-          y: 0,
-          w: 32,
-          h: ROW_H,
-          reactions: [{ trigger: { on: "click" }, run: `vis/${k}` }],
-          children: [eye(false), eye(true)]
-        }),
-        label("slot", String(k + 1), {
-          x: 50,
-          y: 8,
-          size: 12,
-          color: COLOR.faint
-        }),
-        name("Frame", SCREEN_NETS.kfr),
-        name("Rectangle", SCREEN_NETS.kre),
-        name("Ellipse", SCREEN_NETS.kel)
-      ]
-    });
-  }
-  function leftPanel() {
-    return frame("layers", {
-      x: 0,
-      y: TOP_H,
-      w: LEFT_W,
-      h: UI_H - TOP_H,
-      fill: COLOR.panel,
-      children: [
-        label("title", "Layers", {
-          x: 16,
-          y: 14,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        rect("rule", { x: 0, y: 40, w: LEFT_W, h: 1, fill: COLOR.line }),
-        ...Array.from({ length: LAYERS }, (_, r) => __spreadProps(__spreadValues({}, layerRow(LAYERS - 1 - r, r)), {
-          y: 48 + r * ROW_H
-        }))
-      ]
-    });
-  }
-  function rightPanel() {
-    const sw = 40;
-    const gap = 8;
-    const swatches = Array.from(
-      { length: PALETTE_SIZE },
-      (_, c) => frame(`color/${c}`, {
-        x: 16 + c % 4 * (sw + gap),
-        y: 112 + Math.floor(c / 4) * (sw + gap),
-        w: sw,
-        h: sw,
-        radius: 4,
-        fill: PALETTE_HEX[c],
-        stroke: COLOR.line,
-        strokeWeight: 1,
-        reactions: [{ trigger: { on: "click" }, run: `fill/${c}` }]
-      })
-    );
-    const current = Array.from(
-      { length: PALETTE_SIZE },
-      (_, c) => rect(`current/${c}`, {
-        x: 0,
-        y: 0,
-        w: 56,
-        h: 24,
-        radius: 4,
-        fill: PALETTE_HEX[c],
-        visibleNet: bit2(SCREEN_NETS.cur1h, c)
-      })
-    );
-    return frame("design", {
-      x: UI_W - RIGHT_W,
-      y: TOP_H,
-      w: RIGHT_W,
-      h: UI_H - TOP_H,
-      fill: COLOR.panel,
-      children: [
-        label("title", "Design", {
-          x: 16,
-          y: 14,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        rect("rule", { x: 0, y: 40, w: RIGHT_W, h: 1, fill: COLOR.line }),
-        label("fill", "Fill", {
-          x: 16,
-          y: 56,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        frame("current", {
-          x: 16,
-          y: 76,
-          w: 56,
-          h: 24,
-          radius: 4,
-          stroke: COLOR.line,
-          strokeWeight: 1,
-          clip: true,
-          children: current
-        }),
-        label("current-hint", "current colour", {
-          x: 84,
-          y: 82,
-          size: 11,
-          color: COLOR.faint
-        }),
-        ...swatches,
-        label("arrange", "Arrange", { x: 16, y: 320, size: 12, bold: true, color: COLOR.text }),
-        ...arrangeButtons(),
-        label(
-          "keys",
-          "Shortcuts\nV F R O  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge",
-          { x: 16, y: 520, size: 11, color: COLOR.faint }
-        )
-      ]
-    });
-  }
-  function pushButton(name, text2, x, y, w, run) {
-    return frame(`button/${name}`, {
-      x,
-      y,
-      w,
-      h: 28,
-      radius: 5,
-      fill: COLOR.field,
-      reactions: [{ trigger: { on: "click" }, run }],
-      children: [label("label", text2, { x: 10, y: 8, size: 11, bold: true, color: COLOR.text })]
-    });
-  }
-  function arrangeButtons() {
-    const big2 = [
-      ["duplicate", "Duplicate", "dup"],
-      ["delete", "Delete", "delete"],
-      ["forward", "Bring forward", "fwd"],
-      ["backward", "Send backward", "back"]
-    ];
-    const out = big2.map(([n, t, run], i) => pushButton(n, t, 16 + i % 2 * 112, 344 + Math.floor(i / 2) * 36, 104, run));
-    const arrows = [
-      ["left", "Left", "nudge/0"],
-      ["right", "Right", "nudge/1"],
-      ["up", "Up", "nudge/2"],
-      ["down", "Down", "nudge/3"]
-    ];
-    out.push(label("nudge", "Nudge one cell", { x: 16, y: 426, size: 11, color: COLOR.faint }));
-    arrows.forEach(([n, t, run], i) => out.push(pushButton(n, t, 16 + i * 56, 446, 52, run)));
-    return out;
-  }
-  function toolbar() {
-    const tools = [
-      { name: "Move", key: "V" },
-      { name: "Frame", key: "F" },
-      { name: "Rectangle", key: "R" },
-      { name: "Ellipse", key: "O" }
-    ];
-    const w = 104;
-    const total = tools.length * w + (tools.length - 1) * 8;
-    return frame("toolbar", {
-      x: LEFT_W + (MID_W - total) / 2,
-      y: CANVAS_Y + CANVAS_H + 24,
-      w: total,
-      h: 44,
-      radius: 8,
-      fill: COLOR.panel,
-      stroke: COLOR.line,
-      strokeWeight: 1,
-      children: tools.map(
-        (t, i) => frame(`tool/${t.name}`, {
-          x: i * (w + 8),
-          y: 0,
-          w,
-          h: 44,
-          radius: 8,
-          reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
-          children: [
-            rect("active", {
-              w,
-              h: 44,
-              radius: 8,
-              fill: COLOR.accent,
-              visibleNet: bit2(SCREEN_NETS.tool1h, i)
-            }),
-            label("label", t.name, {
-              x: 12,
-              y: 15,
-              size: 12,
-              bold: true,
-              color: COLOR.text
-            }),
-            label("key", t.key, { x: w - 22, y: 15, size: 11, color: COLOR.dim })
-          ]
-        })
-      )
-    });
-  }
-  function status() {
-    const hint = [
-      "Click a layer to pick it up, or click empty canvas to deselect",
-      "Click a cell to start the shape",
-      "Click the cell to drop it on (Esc cancels)",
-      "Click the opposite corner (Esc cancels)"
-    ];
-    return frame("status", {
-      x: LEFT_W,
-      y: CANVAS_Y + CANVAS_H + 84,
-      w: MID_W,
-      h: 24,
-      children: hint.map(
-        (t, i) => label(`hint/${HOT[i]}`, t, {
-          x: 0,
-          y: 0,
-          size: 12,
-          color: COLOR.dim,
-          visibleNet: bit2(SCREEN_NETS.hot, i)
-        })
-      )
-    });
-  }
-  function topBar() {
-    return frame("topbar", {
-      x: 0,
-      y: 0,
-      w: UI_W,
-      h: TOP_H,
-      fill: COLOR.panel,
-      children: [
-        label("file", "Drafts / Untitled", {
-          x: 16,
-          y: 17,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        label(
-          "note",
-          "every pixel of this screen is a gate-level machine \u2014 scroll down",
-          { x: UI_W - 420, y: 18, size: 11, color: COLOR.faint }
-        ),
-        rect("rule", { x: 0, y: TOP_H - 1, w: UI_W, h: 1, fill: COLOR.line })
-      ]
-    });
-  }
-  var KEYS = [
-    { codes: [86], run: "tool/0" },
-    { codes: [70], run: "tool/1" },
-    { codes: [82], run: "tool/2" },
-    { codes: [79], run: "tool/3" },
-    { codes: [46, 8], run: "delete" },
-    { codes: [68], run: "dup" },
-    { codes: [221], run: "fwd" },
-    { codes: [219], run: "back" },
-    { codes: [37], run: "nudge/0" },
-    { codes: [39], run: "nudge/1" },
-    { codes: [38], run: "nudge/2" },
-    { codes: [40], run: "nudge/3" },
-    { codes: [27], run: "esc" }
-  ];
-  function uiSpec() {
-    return frame("editor", {
-      x: 0,
-      y: 0,
-      w: UI_W,
-      h: UI_H,
-      fill: COLOR.frame,
-      clip: true,
-      children: [
-        topBar(),
-        leftPanel(),
-        canvas(),
-        toolbar(),
-        status(),
-        rightPanel()
-      ]
-    });
   }
 
   // nathan/plugin/src/names.ts
   var PAGE_NAME = "CPU NATHAN";
   var PRESENT = "NATHAN \xB7 Figma OS";
+  var MACHINE = "NATHAN \xB7 the machine";
+  var CIRCUIT = "NATHAN \xB7 the circuit";
   var FLOW = "CPU NATHAN";
   var COLLECTION = "NATHAN";
   var UI_COLLECTION = "NATHAN \xB7 UI";
@@ -5878,6 +6478,103 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
       return Math.floor(((t ^ t >>> 14) >>> 0) / 4294967296 * n);
     };
+  }
+
+  // nathan/src/model/screen.ts
+  var bit2 = (p, bus, i) => p.peek(`${bus}[${i}]`);
+  var onehot = (p, bus, at, n) => {
+    const on = [];
+    for (let i = 0; i < n; i++) if (bit2(p, bus, at + i)) on.push(i);
+    return on.length === 1 ? on[0] : -1;
+  };
+  function picked(p, bus, inv, at, n) {
+    let v = 0;
+    for (let i = 0; i < n; i++) {
+      const b = bit2(p, bus, i);
+      if (b === bit2(p, inv, at + i)) return -1;
+      v |= b << i;
+    }
+    return v;
+  }
+  function readScreen(p) {
+    const layers = [];
+    const sel = p.peek(STATE_NETS.hassel) ? picked(p, STATE_NETS.sel, SCREEN_NETS.nsel, 0, 3) : -1;
+    for (let k = 0; k < LAYERS; k++) {
+      const x0 = p.peek(STATE_NETS.x0(k), 4);
+      const y0 = p.peek(STATE_NETS.y0(k), 4);
+      const used = p.peek(STATE_NETS.used(k)) === 1;
+      const kind = picked(p, STATE_NETS.kind(k), SCREEN_NETS.nkind, 2 * k, 2);
+      layers.push({
+        slot: k,
+        shown: used && p.peek(STATE_NETS.vis(k)) === 1,
+        x: x0,
+        y: y0,
+        w: p.peek(STATE_NETS.x1(k), 4) - x0,
+        h: p.peek(STATE_NETS.y1(k), 4) - y0,
+        color: picked(p, STATE_NETS.fill(k), SCREEN_NETS.nfill, 4 * k, 4),
+        kind: kind > 0 ? KINDS[kind - 1] : null,
+        shape: bit2(p, SCREEN_NETS.ell, k) === bit2(p, SCREEN_NETS.nell, k) ? null : bit2(p, SCREEN_NETS.ell, k) ? "ellipse" : "rect",
+        selected: sel === k,
+        row: used
+      });
+    }
+    return {
+      layers,
+      tool: p.peek(STATE_NETS.tool, 2),
+      color: picked(p, STATE_NETS.cur, SCREEN_NETS.ncur, 0, 4),
+      hot: onehot(p, SCREEN_NETS.hot, 0, 4)
+    };
+  }
+  function expectedScreen(s) {
+    var _a, _b, _c, _d, _e, _f;
+    const layers = [];
+    for (let k = 0; k < LAYERS; k++) {
+      const l = s.layers[k];
+      layers.push({
+        slot: k,
+        shown: !!l && l.visible,
+        x: (_a = l == null ? void 0 : l.x) != null ? _a : NaN,
+        y: (_b = l == null ? void 0 : l.y) != null ? _b : NaN,
+        w: (_c = l == null ? void 0 : l.w) != null ? _c : NaN,
+        h: (_d = l == null ? void 0 : l.h) != null ? _d : NaN,
+        color: (_e = l == null ? void 0 : l.fill) != null ? _e : NaN,
+        kind: (_f = l == null ? void 0 : l.kind) != null ? _f : null,
+        shape: l ? l.kind === "ellipse" ? "ellipse" : "rect" : null,
+        selected: !!l && l.id === s.selected,
+        row: !!l
+      });
+    }
+    const hot = s.drag ? s.drag.mode === "move" ? 2 : 3 : s.tool === "move" ? 0 : 1;
+    return { layers, tool: TOOLS.indexOf(s.tool), color: s.fill, hot };
+  }
+  function compareScreen(s, p) {
+    const got = readScreen(p);
+    const want = expectedScreen(s);
+    for (let k = 0; k < LAYERS; k++) {
+      const [g, w] = [got.layers[k], want.layers[k]];
+      if (g.row !== w.row) return `slot ${k}: row ${g.row}, spec ${w.row}`;
+      if (!w.row) {
+        if (g.shown) return `slot ${k}: shown although empty`;
+        if (g.selected) return `slot ${k}: selected although empty`;
+        continue;
+      }
+      if (g.shown !== w.shown)
+        return `slot ${k}: shown ${g.shown}, spec ${w.shown}`;
+      if (g.selected !== w.selected)
+        return `slot ${k}: selected ${g.selected}, spec ${w.selected}`;
+      if (g.kind !== w.kind) return `slot ${k}: kind ${g.kind}, spec ${w.kind}`;
+      if (g.shape !== w.shape)
+        return `slot ${k}: drawn ${g.shape}, spec ${w.shape}`;
+      if (g.color !== w.color)
+        return `slot ${k}: colour ${g.color}, spec ${w.color}`;
+      if (g.x !== w.x || g.y !== w.y || g.w !== w.w || g.h !== w.h)
+        return `slot ${k}: rectangle ${g.x},${g.y} ${g.w}\xD7${g.h}, spec ${w.x},${w.y} ${w.w}\xD7${w.h}`;
+    }
+    if (got.tool !== want.tool) return `tool lamp ${got.tool}, spec ${want.tool}`;
+    if (got.color !== want.color)
+      return `current colour lamp ${got.color}, spec ${want.color}`;
+    if (got.hot !== want.hot) return `hotspot set ${got.hot}, spec ${want.hot}`;
+    return null;
   }
 
   // nathan/plugin/src/where.ts
@@ -5987,7 +6684,9 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
 
   // nathan/plugin/src/selftest.ts
   var TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse"];
+  var TOOL_CODES = [86, 70, 82, 79];
   var ARROW_CODES = [37, 39, 38, 40];
+  var ARROW_BUTTONS = ["left", "right", "up", "down"];
   var CORNER = ["se", "sw", "ne", "nw"];
   async function selfTest(api, o) {
     var _a, _b;
@@ -6001,7 +6700,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     if (!present) throw new Error(`no "${PRESENT}" frame: Build the OS first`);
     const editor = present.children.find((n) => n.name === "editor");
     if (!editor) throw new Error("the editor frame is missing");
-    const net = flatten(await extract([page]), TOP);
+    const net = nathanNetlist();
     const colls = (await api.variables.getLocalVariableCollectionsAsync()).filter(
       (c) => c.name === COLLECTION || c.name.startsWith(`${COLLECTION} \xB7 `)
     );
@@ -6049,94 +6748,172 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       const id2 = (_b2 = (_a2 = n.boundVariables) == null ? void 0 : _a2.visible) == null ? void 0 : _b2.id;
       return id2 !== void 0 ? values.get(id2) === true : n.visible;
     };
-    const fire = (n, type, key) => {
+    const stored = /* @__PURE__ */ new Map();
+    const reactionsOf = (n) => {
       var _a2;
-      const r = (_a2 = n.reactions) == null ? void 0 : _a2.find(
+      let r = stored.get(n.id);
+      if (!r) {
+        r = (_a2 = n.reactions) != null ? _a2 : [];
+        stored.set(n.id, r);
+      }
+      return r;
+    };
+    const fire = (n, type, key) => {
+      const r = reactionsOf(n).find(
         (x) => {
-          var _a3, _b2;
-          return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === type && (key === void 0 || ((_b2 = x.trigger.keyCodes) == null ? void 0 : _b2.includes(key)));
+          var _a2, _b2;
+          return ((_a2 = x.trigger) == null ? void 0 : _a2.type) === type && (key === void 0 || ((_b2 = x.trigger.keyCodes) == null ? void 0 : _b2.includes(key)));
         }
       );
       if (!(r == null ? void 0 : r.actions))
         throw new Error(
           `${n.name} has no ${type} reaction${key !== void 0 ? ` for key ${key}` : ""}`
         );
-      return runFigmaActions(r.actions, values);
+      return runChain(r.actions);
     };
-    const readUi = () => {
-      const sum = (box2, prefix) => [0, 1, 2, 3].reduce(
-        (s, i) => {
+    const runChain = (first) => {
+      var _a2;
+      let acts = first;
+      let worst2 = 0;
+      for (let hop = 0; hop < 64; hop++) {
+        const last = acts[acts.length - 1];
+        const control = (last == null ? void 0 : last.type) === "NODE" || (last == null ? void 0 : last.type) === "CLOSE" ? last : void 0;
+        const body2 = control ? acts.slice(0, -1) : acts;
+        worst2 = Math.max(worst2, runFigmaActions(body2, values) + (control ? 1 : 0));
+        if (hop > 0 && !control)
+          throw new Error("an overlay's timer neither swaps in the next overlay nor closes");
+        if (!control || control.type !== "NODE") return worst2;
+        const nav = String(control.navigation);
+        if (nav !== (hop === 0 ? "OVERLAY" : "SWAP"))
+          throw new Error(`a reaction ${hop === 0 ? "opens" : "continues with"} ${nav}`);
+        const overlay = page.children.find(
+          (n) => n.id === control.destinationId
+        );
+        const timed = overlay ? reactionsOf(overlay).find((x) => {
+          var _a3;
+          return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === "AFTER_TIMEOUT";
+        }) : void 0;
+        if (!(timed == null ? void 0 : timed.actions))
+          throw new Error(
+            `a reaction continues to ${(_a2 = overlay == null ? void 0 : overlay.name) != null ? _a2 : control.destinationId}, which has no timer`
+          );
+        acts = timed.actions;
+      }
+      throw new Error("a reaction's chain of overlays never closes");
+    };
+    const press = (n) => {
+      const stages = ["MOUSE_DOWN", "MOUSE_UP", "ON_CLICK"].filter(
+        (type) => reactionsOf(n).some((x) => {
           var _a2;
-          return s + (shown((_a2 = find(box2, prefix + i)) != null ? _a2 : find(box2, "row", prefix + i)) ? 1 << i : 0);
-        },
+          return ((_a2 = x.trigger) == null ? void 0 : _a2.type) === type;
+        })
+      );
+      if (!stages.length) throw new Error(`${n.name} has no click reaction`);
+      return Math.max(...stages.map((type) => fire(n, type)));
+    };
+    const spacers2 = (n, prefix) => {
+      var _a2;
+      return ((_a2 = n.children) != null ? _a2 : []).reduce(
+        (v, c) => c.name.startsWith(prefix) && shown(c) ? v + (1 << Number(c.name.slice(prefix.length))) : v,
         0
       );
+    };
+    const pickedLeaf = (root) => {
+      var _a2;
+      let n = root;
+      do {
+        const on = ((_a2 = n.children) != null ? _a2 : []).filter(shown);
+        if (on.length !== 1) return null;
+        n = on[0];
+      } while (n.name.startsWith("pick/"));
+      return n;
+    };
+    const leafIndex = (leaf) => leaf ? Number(leaf.name.split("/")[1]) : -1;
+    const readUi = () => {
+      const selection2 = find(canvas2, "selection");
+      const outlined = shown(selection2) ? pickedLeaf(selection2) : null;
+      const highlight = find(editor, "layers", "highlight");
+      const lit2 = shown(highlight) ? LAYERS - 1 - spacers2(highlight, "nsel/") : -1;
       const layers = [];
       for (let k = 0; k < LAYERS; k++) {
         const box2 = find(canvas2, `layer/${k}`);
-        const row = find(box2, "row");
-        const body2 = find(row, "body");
-        const swatches = body2.children.filter((c) => shown(c)).map((c) => Number(c.name.split("/")[1]));
-        const x = sum(row, "left");
-        const y = sum(box2, "top");
-        const panelRow = find(present, "editor", "layers", `row/${k}`);
-        const kinds = ["Frame", "Rectangle", "Ellipse"].filter(
-          (nm) => shown(find(panelRow, `name/${nm}`))
+        const col = find(box2, "col");
+        const row = find(col, "xbox", "row");
+        const x0 = spacers2(row, "x0/");
+        const y0 = spacers2(col, "y0/");
+        const panelRow = find(editor, "layers", `row/${k}`);
+        const name = pickedLeaf(find(panelRow, "name"));
+        const swatch = pickedLeaf(find(row, "body"));
+        const [square2, round] = ["rect", "ellipse"].map(
+          (s) => swatch ? shown(find(swatch, s)) : false
         );
+        const kind = name ? KIND_NAMES.indexOf(name.name.slice("name/".length)) : -1;
         layers.push({
           slot: k,
-          shown: shown(box2),
-          x,
-          y,
-          w: BOX_CELLS - x - sum(row, "right"),
-          h: BOX_CELLS - y - sum(box2, "bottom"),
-          color: swatches.length === 1 ? swatches[0] : -1,
-          kind: kinds.length === 1 ? {
-            Frame: "frame",
-            Rectangle: "rect",
-            Ellipse: "ellipse"
-          }[kinds[0]] : null,
-          selected: shown(find(canvas2, `overlay/${k}`)),
+          shown: shown(box2) && shown(col),
+          x: x0,
+          y: y0,
+          w: spacers2(find(col, "xbox", "x1"), "x1/") - x0,
+          h: spacers2(find(box2, "y1"), "y1/") - y0,
+          color: leafIndex(swatch),
+          kind: kind > 0 ? KINDS[kind - 1] : null,
+          shape: square2 === round ? null : round ? "ellipse" : "rect",
+          selected: (outlined == null ? void 0 : outlined.name) === `overlay/${k}` && lit2 === k,
           row: shown(panelRow)
         });
       }
-      const tools = TOOL_NAMES.map(
-        (n) => shown(find(present, "editor", "toolbar", `tool/${n}`, "active"))
-      );
-      const cur = Array.from(
-        { length: 16 },
-        (_, c) => shown(find(present, "editor", "design", "current", `current/${c}`))
-      );
       const sets = canvas2.children.filter((c) => c.name.startsWith("hot/"));
       return {
         layers,
-        tool: tools.filter(Boolean).length === 1 ? tools.indexOf(true) : -1,
-        color: cur.filter(Boolean).length === 1 ? cur.indexOf(true) : -1,
+        tool: spacers2(find(editor, "toolbar", "highlight"), "t/"),
+        color: leafIndex(pickedLeaf(find(editor, "design", "current"))),
         hot: sets.filter((s) => shown(s)).length === 1 ? sets.findIndex((s) => shown(s)) : -1
       };
     };
-    const act = (ev, spec2) => {
-      const key = (code) => fire(present, "ON_KEY_DOWN", code);
+    const keyed = (n, code) => reactionsOf(n).some(
+      (x) => {
+        var _a2;
+        return ((_a2 = x.trigger) == null ? void 0 : _a2.type) === "ON_KEY_DOWN" && x.trigger.keyCodes.includes(code);
+      }
+    );
+    const shortcuts = find(editor, "shortcuts");
+    const holderOf = (code) => {
+      if (keyed(present, code)) return present;
+      const leaf = shortcuts ? pickedLeaf(shortcuts) : null;
+      return leaf && keyed(leaf, code) ? leaf : null;
+    };
+    let viaKeys = 0;
+    const act = (ev, spec2, preferKey) => {
+      var _a2;
+      const keyOr = (code, button3) => {
+        if (!preferKey) return button3();
+        const holder = holderOf(code);
+        if (!holder) throw new Error(`no layer that shows takes key ${code}`);
+        viaKeys++;
+        return fire(holder, "ON_KEY_DOWN", code);
+      };
+      const button2 = (name) => () => {
+        var _a3;
+        const b = find(present, "editor", "design", `button/${name}`);
+        const leaf = ((_a3 = b.children) == null ? void 0 : _a3.some((c) => c.name.startsWith("pick/"))) ? pickedLeaf(b) : b;
+        if (!leaf) throw new Error(`button/${name}: no single slot button shows`);
+        return press(leaf);
+      };
       switch (ev.k) {
         case "tool":
-          return fire(
-            find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`),
-            "ON_CLICK"
+          return keyOr(
+            TOOL_CODES[ev.t],
+            () => press(
+              find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)
+            )
           );
         case "fill":
-          return fire(
-            find(present, "editor", "design", `color/${ev.c}`),
-            "ON_CLICK"
-          );
+          return press(find(present, "editor", "design", `color/${ev.c}`));
         case "select":
-          return fire(
-            find(present, "editor", "layers", `row/${ev.slot}`),
-            "ON_CLICK"
-          );
+          return press(find(present, "editor", "layers", `row/${ev.slot}`));
         case "vis":
-          return fire(
-            find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit"),
-            "ON_CLICK"
+          return press(
+            find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit")
           );
         case "click": {
           const sets = canvas2.children.filter(
@@ -6152,32 +6929,37 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
             throw new Error(
               `the visible click layer is ${sets[0].name}, expected ${name}`
             );
-          const cell2 = find(sets[0], `cell/${ev.x},${ev.y}`);
-          return fire(cell2, "MOUSE_ENTER") + fire(sets[0], "ON_CLICK");
+          const row = find(sets[0], `row/${ev.y}`);
+          const cell = find(row, `cell/${ev.x}`);
+          return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
         }
         case "handle": {
           const k = spec2.layers.findIndex((l) => l.id === spec2.selected);
-          const overlay = find(canvas2, `overlay/${k}`);
-          if (!shown(overlay))
-            throw new Error(`the selection overlay of slot ${k} is not visible`);
+          const selection2 = find(canvas2, "selection");
+          const overlay = shown(selection2) ? pickedLeaf(selection2) : null;
+          if ((overlay == null ? void 0 : overlay.name) !== `overlay/${k}`)
+            throw new Error(
+              `the visible selection outline is ${(_a2 = overlay == null ? void 0 : overlay.name) != null ? _a2 : "none"}, expected overlay/${k}`
+            );
           const walk = (n) => {
-            var _a2, _b2;
-            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b2 = ((_a2 = n.children) != null ? _a2 : []).map(walk).find(Boolean)) != null ? _b2 : null;
+            var _a3, _b2;
+            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b2 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b2 : null;
           };
-          return fire(walk(overlay), "ON_CLICK");
+          return press(walk(overlay));
         }
         case "delete":
-          return key(46);
+          return keyOr(46, button2("delete"));
         case "dup":
-          return key(68);
+          return keyOr(68, button2("duplicate"));
         case "fwd":
-          return key(221);
+          return keyOr(221, button2("forward"));
         case "back":
-          return key(219);
+          return keyOr(219, button2("backward"));
         case "nudge":
-          return key(ARROW_CODES[ev.dir]);
+          return keyOr(ARROW_CODES[ev.dir], button2(ARROW_BUTTONS[ev.dir]));
         case "esc":
-          return key(27);
+          viaKeys++;
+          return fire(present, "ON_KEY_DOWN", 27);
         default:
           throw new Error(`the editor has no control for ${ev.k}`);
       }
@@ -6190,7 +6972,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       const ev = uiEvent(rnd, spec);
       const next = applyRef(spec, ev);
       try {
-        worst = Math.max(worst, act(ev, spec));
+        worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
       } catch (e) {
         return {
           ok: false,
@@ -6211,7 +6993,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     return {
       ok: true,
       events: o.events,
-      text: `\u2713 ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest action: ${worst} executed; used: ${[...cov].sort().join(", ")})`
+      text: `\u2713 ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`
     };
   }
   function uiDiff(spec, ui) {
@@ -6230,6 +7012,8 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         return `UI: layer ${k} selected=${g.selected}, spec ${w.selected}`;
       if (g.kind !== w.kind)
         return `UI: layer ${k} name ${g.kind}, spec ${w.kind}`;
+      if (g.shape !== w.shape)
+        return `UI: layer ${k} drawn ${g.shape}, spec ${w.shape}`;
       if (g.color !== w.color)
         return `UI: layer ${k} colour ${g.color}, spec ${w.color}`;
       if (g.x !== w.x || g.y !== w.y || g.w !== w.w || g.h !== w.h)
@@ -6263,9 +7047,11 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
   }
 
   // nathan/plugin/src/app.ts
-  var PAD2 = 48;
+  var PAD3 = 48;
   var HEADER = 132;
   var GAP2 = 160;
+  var CHAIN_PREFIX = "NATHAN \xB7 then ";
+  var WARMUP = "NATHAN \xB7 warm-up";
   var errText = (e) => e instanceof Error ? e.message : String(e);
   var NathanApp = class {
     constructor(api, post2, opts = {}) {
@@ -6296,8 +7082,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
               () => this.os({
                 latch: msg.latch,
                 budget: msg.budget,
-                alias: msg.alias,
-                longKeys: msg.longKeys
+                alias: msg.alias
               })
             );
             return;
@@ -6469,15 +7254,26 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       }
       return stats;
     }
-    /** Takes the machine out of the editor frame (if it is in one) and removes the frame. */
+    /** Takes the machine out of the editor / machine frames (where Build the OS put it) and removes
+     * those frames. The machine keeps its place on the page. */
     async releaseMachine(page, alsoRemove) {
-      for (const f of page.children.filter((n) => n.name === PRESENT)) {
+      for (const f of page.children.filter(
+        (n) => n.name.startsWith(CHAIN_PREFIX) || n.name === WARMUP
+      ))
+        f.remove();
+      for (const f of page.children.filter(
+        (n) => n.name === PRESENT || n.name === MACHINE || n.name === CIRCUIT
+      )) {
         for (const c of f.findAllWithCriteria({
           types: ["COMPONENT"]
         })) {
-          if (c.name !== `${CELL_PREFIX}${TOP}` || c.parent !== f) continue;
-          const x = f.x + c.x;
-          const y = f.y + c.y;
+          if (c.name !== `${CELL_PREFIX}${TOP}`) continue;
+          let x = 0;
+          let y = 0;
+          for (let n = c; n && n !== page; n = n.parent) {
+            x += n.x;
+            y += n.y;
+          }
           page.appendChild(c);
           c.x = x;
           c.y = y;
@@ -6514,16 +7310,20 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       );
       const catalog = await this.phase(
         "reactions",
-        () => buildCatalog(net, reactionSpecs(), {
-          latch: o.latch,
-          budget: o.budget,
-          alias: o.alias
-        })
+        () => {
+          var _a2;
+          return buildCatalogGently(
+            net,
+            reactionSpecs(),
+            { latch: o.latch, budget: (_a2 = o.gatesUpTo) != null ? _a2 : o.budget, alias: o.alias },
+            () => this.breathe()
+          );
+        }
       );
       await this.breathe();
       this.progress("os", 2, steps, "variables");
-      await removeCollections(this.api, COLLECTION);
-      await removeCollections(this.api, UI_COLLECTION);
+      await this.removeGently(COLLECTION);
+      await this.removeGently(UI_COLLECTION);
       const init = nathanPowerOn(net);
       const used = /* @__PURE__ */ new Set();
       for (const g of net.gates) {
@@ -6542,38 +7342,52 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       const { collections, vars } = await this.phase(
         "variables",
         () => createVariables(this.api, COLLECTION, specs, {
-          log: (m) => this.log("info", m)
+          log: (m) => this.log("info", m),
+          yieldEvery: 250
         })
       );
       const variables = new Map(
         ids.map((id2, i) => [id2, vars[i]])
       );
-      const ptrSpecs = [0, 1].flatMap(
-        (a) => [0, 1, 2, 3].map((i) => ({
-          name: `ui/${a ? "py" : "px"}/${i}`,
+      const ptrSpecs = [
+        ...[0, 1, 2, 3].map((i) => ({
+          name: `ui/px/${i}`,
           type: "BOOLEAN",
           init: false
-        }))
-      );
+        })),
+        // the warm-up when ▶ Present opens: done once, and a bit it flips to get the viewer going
+        { name: "ui/warm", type: "BOOLEAN", init: false },
+        { name: "ui/scratch", type: "BOOLEAN", init: false }
+      ];
       const ptr = await this.phase(
         "hover variables",
         () => createVariables(this.api, UI_COLLECTION, ptrSpecs)
       );
-      const [pxh, pyh] = [ptr.vars.slice(0, 4), ptr.vars.slice(4, 8)];
+      const pxh = ptr.vars.slice(0, 4);
+      const [warmed, scratch] = [ptr.vars[4], ptr.vars[5]];
       await this.breathe();
       this.progress("os", 3, steps, "lamps on the gates and wires");
       const engine = findCell(page, TOP);
       const lits = collectBindings(engine, net);
+      const shadow = masterToQ(net);
       let bound = 0;
-      const bindNet = (node, id2) => {
+      const bindNet = (node, wire) => {
+        var _a2;
+        const id2 = (_a2 = shadow.get(wire)) != null ? _a2 : wire;
         const v = id2 <= 1 ? id2 === 1 : variables.get(id2);
         if (v === void 0) return;
         bindVisible(node, v);
         bound++;
       };
-      for (const [gi, node] of lits.gateLit) bindNet(node, net.gates[gi].out);
+      for (const [gi, node] of lits.gateLit) {
+        bindNet(node, net.gates[gi].out);
+        if (bound % 400 === 399) await this.breathe();
+      }
       for (const [id2, nodes] of lits.wireLit)
-        for (const node of nodes) bindNet(node, id2);
+        for (const node of nodes) {
+          bindNet(node, id2);
+          if (bound % 400 === 399) await this.breathe();
+        }
       this.log(
         "info",
         `bound ${bound} lit layers${lits.missing.length ? `, ${lits.missing.length} gate(s) without a lit layer` : ""}`
@@ -6583,11 +7397,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         [...variables].map(([id2, v]) => [id2, v.id])
       );
       const port = (n) => net.ports.find((p) => p.name === n).nets;
-      const [pxNets, pyNets] = [port("PX"), port("PY")];
-      const copyPointer = [
-        ...pxNets.map((n, i) => ({ to: n, from: pxh[i] })),
-        ...pyNets.map((n, i) => ({ to: n, from: pyh[i] }))
-      ].map(
+      const copyPointer = port("PX").map((n, i) => ({ to: n, from: pxh[i] })).map(
         (c) => setVariable(
           varIds.get(c.to),
           exprData("EQUALS", [aliasData(c.from.id), boolData(true)])
@@ -6595,59 +7405,120 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       );
       const convert = (a) => figmaActions(a, varIds);
       const eventSizes = /* @__PURE__ */ new Map();
-      const noteSize = (name, n) => {
-        var _a2;
-        return eventSizes.set(name, [...(_a2 = eventSizes.get(name)) != null ? _a2 : [], ...n]);
+      this.progress("os", 4, steps, "reactions, cut into events");
+      await loadFonts2(this.api);
+      await this.releaseMachine(page, false);
+      const triggered = /* @__PURE__ */ new Map();
+      const chainFrames = [];
+      const torn = [];
+      const greedy = (list, first) => {
+        const out = [[]];
+        let size2 = first + 1;
+        for (const a of list) {
+          const n = staticSize([a]);
+          if (out[out.length - 1].length && size2 + n > o.budget) {
+            out.push([]);
+            size2 = 1;
+          }
+          out[out.length - 1].push(a);
+          size2 += n;
+        }
+        return out;
       };
+      for (const [run, entry] of catalog) {
+        const lead = run.startsWith("click/") ? copyPointer : [];
+        const eventsOf = (r) => {
+          const acts = r.actions;
+          if (lead.length + staticSize(acts) <= o.budget) return [acts];
+          const [head, tail] = [acts.slice(0, r.commitAt), acts.slice(r.commitAt)];
+          const tailSize = staticSize(tail);
+          if (tailSize + 1 > o.budget) return null;
+          const parts2 = greedy(head, lead.length);
+          const last = parts2[parts2.length - 1];
+          const lastSize = staticSize(last) + (parts2.length === 1 ? lead.length : 0) + 1;
+          if (lastSize + tailSize <= o.budget)
+            parts2[parts2.length - 1] = [...last, ...tail];
+          else parts2.push(tail);
+          return parts2;
+        };
+        let parts = eventsOf(entry.reaction);
+        if (!parts || parts.length > 1)
+          for (const alt of [
+            { latch: "direct" },
+            { latch: "direct", inside: false }
+          ]) {
+            const r = synthesize(net, entry.spec.ties, __spreadProps(__spreadValues({}, alt), {
+              alias: o.alias,
+              given: entry.spec.given
+            }));
+            const p = eventsOf(r);
+            if (p && (!parts || p.length < parts.length)) {
+              entry.reaction = r;
+              parts = p;
+            }
+          }
+        if (!parts) {
+          torn.push(run);
+          parts = greedy(entry.reaction.actions, lead.length);
+        }
+        const chained = parts.length > 1;
+        eventSizes.set(
+          run,
+          parts.map((p, k) => staticSize(p) + (k ? 0 : lead.length) + (chained ? 1 : 0))
+        );
+        if (!chained) {
+          triggered.set(run, [...lead, ...convert(parts[0])]);
+          continue;
+        }
+        const frames = parts.slice(1).map((_, k) => {
+          const f = box(this.api, `${CHAIN_PREFIX}${run} ${k + 1}`, 1, 1, COLORS.bg);
+          f.fills = [];
+          chainFrames.push(f);
+          return f;
+        });
+        for (let k = 1; k < parts.length; k++)
+          await frames[k - 1].setReactionsAsync([
+            {
+              trigger: afterTimeout(1e-3),
+              actions: [
+                ...convert(parts[k]),
+                k + 1 < parts.length ? navigateWith(frames[k].id, "SWAP") : { type: "CLOSE" }
+              ]
+            }
+          ]);
+        triggered.set(run, [
+          ...lead,
+          ...convert(parts[0]),
+          navigateWith(frames[0].id, "OVERLAY")
+        ]);
+        await this.breathe();
+      }
       const reactionsFor = (ref2) => {
         const t = ref2.trigger;
         if (ref2.run.startsWith("pointer/")) {
-          const [c, r] = ref2.run.slice("pointer/".length).split(",").map(Number);
+          const c = Number(ref2.run.slice("pointer/".length));
           return [
             {
               trigger: mouseEnter(0),
-              actions: [
-                ...pxh.map(
-                  (v, i) => setVariable(v.id, boolData((c >> i & 1) === 1))
-                ),
-                ...pyh.map(
-                  (v, i) => setVariable(v.id, boolData((r >> i & 1) === 1))
-                )
-              ]
+              actions: pxh.map(
+                (v, i) => setVariable(v.id, boolData((c >> i & 1) === 1))
+              )
             }
           ];
         }
-        const entry = catalog.get(ref2.run);
-        if (!entry)
+        const actions = triggered.get(ref2.run);
+        if (!actions)
           throw new Error(
             `the screen refers to a reaction that does not exist: ${ref2.run}`
           );
-        const { actions, screenAt } = entry.reaction;
-        if (t.on === "key") {
-          noteSize(ref2.run, [staticSize(actions)]);
-          return [{ trigger: keyDown(t.codes), actions: convert(actions) }];
-        }
-        const lead = ref2.run.startsWith("click/") ? copyPointer : [];
-        if (staticSize(actions) + lead.length <= o.budget) {
-          noteSize(ref2.run, [staticSize(actions) + lead.length]);
-          return [
-            { trigger: onClick(), actions: [...lead, ...convert(actions)] }
-          ];
-        }
-        const parts = splitStages(actions, screenAt, 3);
-        noteSize(
-          ref2.run,
-          parts.map((p, i) => staticSize(p) + (i === 0 ? lead.length : 0))
-        );
         return [
-          { trigger: mouseDown(0), actions: [...lead, ...convert(parts[0])] },
-          { trigger: mouseUp(0), actions: convert(parts[1]) },
-          { trigger: onClick(), actions: convert(parts[2]) }
+          {
+            trigger: t.on === "key" ? keyDown(t.codes) : onClick(),
+            actions
+          }
         ];
       };
-      this.progress("os", 4, steps, "the editor frame");
-      await loadFonts2(this.api);
-      await this.releaseMachine(page, false);
+      this.progress("os", 5, steps, "the editor, machine and circuit frames");
       const engineNow = findCell(page, TOP);
       const ctx = {
         api: this.api,
@@ -6655,45 +7526,125 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           const id2 = net.aliases.get(netName);
           return id2 === void 0 ? void 0 : variables.get(id2);
         },
-        reactionsFor
+        reactionsFor,
+        breathe: () => this.breathe()
       };
-      const frameW = Math.max(UI_W + 2 * PAD2, engineNow.width + 2 * PAD2);
-      const frameH = HEADER + UI_H + GAP2 + engineNow.height + 2 * PAD2;
-      const present = box(this.api, PRESENT, frameW, frameH, COLORS.bg);
-      present.clipsContent = true;
-      put(
-        page,
-        present,
-        engineNow.x - PAD2,
-        engineNow.y - (HEADER + UI_H + GAP2 + PAD2)
+      const frame2 = (name) => {
+        const f = box(this.api, name, UI_W + 2 * PAD3, HEADER + UI_H + PAD3, COLORS.bg);
+        f.clipsContent = true;
+        return f;
+      };
+      const present = frame2(PRESENT);
+      const machine = frame2(MACHINE);
+      const circuit = frame2(CIRCUIT);
+      put(page, circuit, engineNow.x - PAD3, engineNow.y - HEADER);
+      put(page, present, circuit.x, circuit.y - GAP2 - present.height);
+      put(page, machine, present.x + present.width + GAP2, present.y);
+      chainFrames.forEach(
+        (f, i) => put(page, f, machine.x + machine.width + GAP2, machine.y + i * 8)
       );
+      const view = box(this.api, "view", UI_W, UI_H, COLORS.bg);
+      view.clipsContent = true;
+      view.overflowDirection = "BOTH";
+      put(circuit, view, PAD3, HEADER);
+      put(view, engineNow, 0, 0);
       const result = await this.phase(
         "editor",
-        () => render(ctx, present, uiSpec())
+        () => (
+          // the gates are in their own frame here, one button away
+          render(
+            ctx,
+            present,
+            uiSpec("every pixel of this screen is a gate-level machine \u2014 see the machine \u25B8")
+          )
+        )
       );
-      result.root.x = PAD2;
+      result.root.x = PAD3;
       result.root.y = HEADER;
-      put(present, engineNow, PAD2, HEADER + UI_H + GAP2 + PAD2);
-      this.progress("os", 5, steps, "shortcut keys and the flow");
-      const skipped = [];
-      const keyReactions = KEYS.flatMap((k) => {
-        const size2 = staticSize(catalog.get(k.run).reaction.actions);
-        if (size2 > o.budget && o.longKeys === false) {
-          skipped.push(k.run);
-          return [];
-        }
-        return reactionsFor({
-          trigger: { on: "key", codes: k.codes },
-          run: k.run
-        });
-      });
-      await present.setReactionsAsync(keyReactions);
-      if (skipped.length)
-        this.log(
-          "info",
-          `left out ${skipped.length} shortcut(s) longer than ${o.budget} actions: ${skipped.join(", ")} (their buttons work)`
-        );
+      const blocks = new Map(lib.get(TOP).instances.map((i) => [i.name, i.cell]));
+      const map = await this.phase(
+        "gate map",
+        () => render(
+          ctx,
+          machine,
+          gateMap(net, {
+            width: UI_W,
+            columns: 5,
+            lamp: 7,
+            gap: 2,
+            netOf: (gi) => {
+              var _a2;
+              return net.netNames[(_a2 = shadow.get(net.gates[gi].out)) != null ? _a2 : net.gates[gi].out];
+            },
+            title: (b, n) => `${b}${blocks.has(b) ? ` \xB7 ${blocks.get(b).replace(CELL_PREFIX, "")}` : ""} \xB7 ${n} gates`,
+            colours: {
+              block: COLORS.panel,
+              text: COLORS.dim,
+              lamp: COLORS.lampOn,
+              off: COLORS.lampOff
+            }
+          })
+        )
+      );
+      map.root.x = PAD3;
+      map.root.y = HEADER;
+      let keysBound = 0;
+      for (const f of [machine, circuit])
+        keysBound += (await render(ctx, f, slotKeys(COLORS.bg))).bound;
+      const go = async (from, to, label2, slot = 0) => {
+        const b = put(from, button(this.api, label2, COLORS.step, 200, 40), from.width - PAD3 - 200 - slot * 216, 32);
+        await b.setReactionsAsync([{ trigger: onClick(), actions: [navigate(to.id)] }]);
+      };
+      await go(present, machine, "see the machine \u25B8");
+      await go(machine, present, "\u25C2 back to the editor");
+      await go(machine, circuit, "the circuit \u25B8", 1);
+      await go(circuit, machine, "\u25C2 back to the machine");
+      let bx = PAD3;
+      for (const part of engineNow.children) {
+        if (part.type !== "INSTANCE" || !blocks.has(part.name) || /^g\d+$/.test(part.name)) continue;
+        const w = 16 + part.name.length * 9;
+        const b = put(circuit, button(this.api, part.name, COLORS.panel, w, 28), bx, 92);
+        await b.setReactionsAsync([
+          { trigger: onClick(), actions: [navigateWith(part.id, "SCROLL_TO")] }
+        ]);
+        bx += w + 6;
+      }
+      this.progress("os", 6, steps, "shortcut keys and the flow");
+      const keyReactions = KEYS.flatMap(
+        (k) => reactionsFor({ trigger: { on: "key", codes: k.codes }, run: k.run })
+      );
+      let warmup = null;
+      if (chainFrames.length) {
+        warmup = box(this.api, WARMUP, 1, 1, COLORS.bg);
+        warmup.fills = [];
+        put(page, warmup, machine.x + machine.width + GAP2, machine.y - 40);
+        await warmup.setReactionsAsync([
+          { trigger: afterTimeout(1e-3), actions: [{ type: "CLOSE" }] }
+        ]);
+      }
+      const flip = setVariable(
+        scratch.id,
+        exprData("NOT", [aliasData(scratch.id)])
+      );
+      const warm = {
+        trigger: afterTimeout(1e-3),
+        actions: [
+          conditional(exprData("EQUALS", [aliasData(warmed.id), boolData(false)]), [
+            setVariable(warmed.id, boolData(true)),
+            ...Array.from({ length: Math.min(500, o.budget - 3) }, () => flip),
+            ...warmup ? [navigateWith(warmup.id, "OVERLAY")] : []
+          ])
+        ]
+      };
+      await present.setReactionsAsync([...keyReactions, warm]);
+      for (const f of [machine, circuit]) await f.setReactionsAsync(keyReactions);
       setFlows(page, [{ nodeId: present.id, name: FLOW }]);
+      const overlayIds = new Set(
+        [...chainFrames, ...warmup ? [warmup] : []].map((f) => f.id)
+      );
+      page.flowStartingPoints = page.flowStartingPoints.filter(
+        (f) => !overlayIds.has(f.nodeId)
+      );
       const worst = (_a = [...eventSizes.entries()].map(([name, sizes]) => ({ name, actions: Math.max(...sizes) })).sort((a, b) => b.actions - a.actions)[0]) != null ? _a : { name: "-", actions: 0 };
       put(
         present,
@@ -6702,7 +7653,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           "CPU NATHAN \u2014 the Figma OS editor as a gate-level machine",
           { size: 24, bold: true }
         ),
-        PAD2,
+        PAD3,
         28
       );
       put(
@@ -6712,26 +7663,51 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           `${net.gates.length} gates \xB7 ${ids.length} wires (variables) \xB7 ${catalog.size} reactions, longest ${worst.actions} actions in one event (${worst.name})`,
           { size: 13, color: COLORS.dim }
         ),
-        PAD2,
+        PAD3,
         64
       );
       put(
         present,
         text(
           this.api,
-          "Click in the editor: every layer, colour and lamp on it is a gate-level register bit, and the gates of the machine below light as it computes.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.",
+          'Click in the editor: every layer, colour and lamp on it is a gate-level register bit; "see the machine" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.',
           { size: 12, color: COLORS.dim }
         ),
-        PAD2,
+        PAD3,
         88
+      );
+      const heading = (f, title, sub) => {
+        put(f, text(this.api, title, { size: 24, bold: true }), PAD3, 28);
+        put(f, text(this.api, sub, { size: 13, color: COLORS.dim }), PAD3, 64);
+      };
+      heading(
+        machine,
+        "CPU NATHAN \u2014 the machine",
+        `All ${net.gates.length} gates, one lamp each, by module. Use the editor (or press its shortcut keys here) and watch them compute.`
+      );
+      heading(
+        circuit,
+        "CPU NATHAN \u2014 the circuit",
+        `Every gate and wire, live. Pick a module to scroll the window to it, or scroll inside the window.`
       );
       remember(this.api, page);
       this.progress("os", steps, steps, "done");
-      const over = [...eventSizes.entries()].filter(([, sizes]) => Math.max(...sizes) > o.budget).map(([name]) => name);
-      if (over.length)
+      if (torn.length)
+        this.log(
+          "error",
+          `the register writes of ${torn.join(", ")} do not fit one event of ${o.budget}: they are cut, so a fast second input could see them half done`
+        );
+      const chainedRuns = [...eventSizes.entries()].filter(([, sizes]) => sizes.length > 1);
+      if (chainedRuns.length)
         this.log(
           "info",
-          `${over.length} reaction(s) are longer than ${o.budget} actions in one event (keyboard shortcuts cannot be split): ${over.slice(0, 8).join(", ")}${over.length > 8 ? " \u2026" : ""}. Use the panel buttons for those, or raise the budget after the platform tests.`
+          `${chainedRuns.length} reaction(s) longer than ${o.budget} actions run as a few events through timed overlays: ${chainedRuns.map(([n, sizes]) => `${n} (${sizes.length})`).join(", ")}`
+        );
+      const tooLong = [...eventSizes.entries()].filter(([, sizes]) => Math.max(...sizes) > o.budget);
+      if (tooLong.length)
+        this.log(
+          "error",
+          `${tooLong.length} reaction(s) have a single step longer than ${o.budget} actions: ${tooLong.map(([n]) => n).join(", ")}`
         );
       if (result.missing.length)
         this.log(
@@ -6744,9 +7720,9 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         collections: collections.length + 1,
         reactions: catalog.size,
         worstReaction: worst,
-        bound: bound + result.bound,
-        missing: result.missing.length,
-        uiLayers: result.created,
+        bound: bound + result.bound + map.bound + keysBound,
+        missing: result.missing.length + map.missing.length,
+        uiLayers: result.created + map.created,
         ms: this.now() - t0
       };
       this.post({ type: "os", stats });
@@ -6759,6 +7735,21 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       } catch (e) {
       }
       return stats;
+    }
+    /** Removes the collections `createVariables(name)` made, a few hundred variables at a time with a
+     * breath in between: removing thousands at once can drop Figma's connection to its server. */
+    async removeGently(name) {
+      const isOurs = (c) => c === name || new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \xB7 \\d+$`).test(c);
+      const colls = (await this.api.variables.getLocalVariableCollectionsAsync()).filter((c) => isOurs(c.name));
+      if (!colls.length) return;
+      const ids = new Set(colls.map((c) => c.id));
+      const vars = (await this.api.variables.getLocalVariablesAsync()).filter((v) => ids.has(v.variableCollectionId));
+      for (let i = 0; i < vars.length; i++) {
+        vars[i].remove();
+        if (i % 250 === 249) await this.breathe();
+      }
+      for (const c of colls) c.remove();
+      await this.breathe();
     }
     // ---------- 3. self-test ----------
     async selftest(events, seed) {
@@ -6799,7 +7790,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         await page.loadAsync();
         await this.releaseMachine(page, false);
         for (const n of [...page.children])
-          if (n.name === PRESENT || n.name.startsWith(TEST_PREFIX)) {
+          if (n.name === PRESENT || n.name === MACHINE || n.name === CIRCUIT || n.name.startsWith(TEST_PREFIX)) {
             n.remove();
             removed++;
           }

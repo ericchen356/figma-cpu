@@ -8,7 +8,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "stats": "esbuild cli/stats.ts --bundle --platform=node --format=esm --log-level=warning --outfile=dist/stats.mjs && node dist/stats.mjs",
-    "spike": "node spike/build.mjs"
+    "gates": "esbuild cli/gates.ts --bundle --platform=node --format=esm --log-level=warning --outfile=dist/gates.mjs && node dist/gates.mjs",
+    "spike": "node spike/build.mjs",
+    "nathan": "esbuild deploy/build.ts --bundle --platform=node --format=esm --log-level=warning --outfile=dist/nathan-build.mjs --external:esbuild && node dist/nathan-build.mjs",
+    "cpu": "esbuild deploy/build-cpu.ts --bundle --platform=node --format=esm --log-level=warning --loader:.asm=text --outfile=dist/cpu-build.mjs --external:esbuild && node dist/cpu-build.mjs"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.142.0",

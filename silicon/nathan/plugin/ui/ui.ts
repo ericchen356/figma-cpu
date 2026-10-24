@@ -12,7 +12,7 @@ const num = (id: string, fallback: number) => {
 const busyButtons = ["hardware", "os", "selftest", "platform", "clean"];
 $("hardware").onclick = () => post({ type: "hardware", gateLabels: checked("labels"), redraw: checked("redraw") });
 $("os").onclick = () =>
-  post({ type: "os", budget: num("budget", 450), latch: $<HTMLSelectElement>("latch").value as "auto" | "gates" | "compact", alias: checked("alias"), longKeys: checked("longkeys") });
+  post({ type: "os", budget: num("budget", 700), latch: $<HTMLSelectElement>("latch").value as "auto" | "gates" | "compact" | "direct", alias: checked("alias") });
 $("selftest").onclick = () => post({ type: "selftest", events: num("events", 300), seed: num("seed", 1) });
 $("platform").onclick = () => post({ type: "platform" });
 $("clean").onclick = () => post({ type: "clean" });

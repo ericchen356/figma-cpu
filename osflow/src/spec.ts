@@ -73,8 +73,9 @@ export const ALIGNS = [
   "bottom",
 ] as const;
 
-/** One layer slot. Geometry is in px (cells × K) so that a Figma node's width, height and
- * padding can bind to it directly; the other numbers keep the reducer's units. */
+/** A layer's record: a slot, the clipboard and the scratch. Geometry is in px (cells × K) so that
+ * a Figma node's width, height and padding can bind to it directly; the other numbers keep the
+ * reducer's units. A slot's rendered radius `rr` is not a field: it is derived for the screen. */
 export const NUM_FIELDS = [
   "id",
   "kind",
@@ -87,7 +88,6 @@ export const NUM_FIELDS = [
   "radius",
   "stroke",
   "rot",
-  "rr",
 ] as const;
 export const BOOL_FIELDS = ["vis", "shadow", "flip"] as const;
 export const FIELDS: readonly string[] = [...NUM_FIELDS, ...BOOL_FIELDS];
@@ -95,6 +95,17 @@ export const FIELD_INIT: Record<string, number | boolean> = {
   opacity: 10,
   stroke: -1,
 };
+
+/** Feature groups an editor can leave out (buildEditor's `omit`), to measure and trim the gate-level chart. */
+export const FEATURES = ["clipboard", "align", "style"] as const;
+export type Feature = (typeof FEATURES)[number];
+/** The record fields of the "style" group (its events are the stroke, shadow, opacity and radius controls). */
+export const STYLE_FIELDS: readonly string[] = [
+  "opacity",
+  "radius",
+  "stroke",
+  "shadow",
+];
 
 /** `rr` (rendered corner radius) of an ellipse: Figma clamps a radius to half the smaller side. */
 export const ELLIPSE_RR = 9999;

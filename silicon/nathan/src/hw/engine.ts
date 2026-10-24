@@ -341,7 +341,11 @@ function defineConds(lib: Library): void {
       );
       L.g("OR", [b.in1("EV_NUDGE"), b.out1("DUP_OK")], b.out1("USE_NUDGE"));
       const arg = b.in("ARG");
-      const argIs = (v: number) => L.andAll([b.in1("EV_NUDGE"), ...[0, 1, 2].map((k) => ((v >> k) & 1 ? arg[k] : L.NOT(arg[k])))]);
+      const argIs = (v: number) =>
+        L.andAll([
+          b.in1("EV_NUDGE"),
+          ...[0, 1, 2].map((k) => ((v >> k) & 1 ? arg[k] : L.NOT(arg[k]))),
+        ]);
       L.g("OR", [argIs(1), b.out1("DUP_OK")], b.out1("NR"));
       L.buf(argIs(0), b.out1("NL"));
       L.g("OR", [argIs(3), b.out1("DUP_OK")], b.out1("ND"));
@@ -772,62 +776,41 @@ function defineDisplay(lib: Library): void {
       in: {
         REC: LAYERS * REC.bits,
         SEL: 3,
-        HASSEL: 1,
         TOOL: 2,
         DRAG: 2,
         CUR: 4,
       },
-      out: {
-        SHOW: 8,
-        SELK: 8,
-        NX1: 32,
-        NY1: 32,
-        KFR: 8,
-        KRE: 8,
-        KEL: 8,
-        FILL1H: 128,
-        CUR1H: 16,
-        TOOL1H: 4,
-        HOT: 4,
-      },
+      out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 4 },
     },
     (b) => {
       const L = logic(b);
       const rec = b.in("REC");
       const f = (k: number, at: number, w = 1) =>
         rec.slice(k * REC.bits + at, k * REC.bits + at + w);
-      const [show, selk, nx1, ny1, kfr, kre, kel, fill1h] = [
-        "SHOW",
-        "SELK",
-        "NX1",
-        "NY1",
-        "KFR",
-        "KRE",
-        "KEL",
-        "FILL1H",
-      ].map((n) => b.out(n));
-      const seld = L.dec(b.in("SEL"), "seldec");
+      const inv = (bus: Bus, out: Bus) =>
+        bus.forEach((n, i) => L.g("NOT", [n], out[i]));
+      // everything else on the screen is bound to the register bits themselves
+      inv(b.in("SEL"), b.out("NSEL"));
       for (let k = 0; k < LAYERS; k++) {
-        L.g("AND", [f(k, REC.used)[0], f(k, REC.vis)[0]], show[k]);
-        L.g("AND", [b.in1("HASSEL"), seld[k]], selk[k]);
-        f(k, REC.x1, 4).forEach((n, i) => L.g("NOT", [n], nx1[k * 4 + i]));
-        f(k, REC.y1, 4).forEach((n, i) => L.g("NOT", [n], ny1[k * 4 + i]));
+        inv(f(k, REC.kind, 2), b.out("NKIND").slice(2 * k, 2 * k + 2));
+        // an ellipse (kind 3) is drawn round, everything else square
         const [k0, k1] = f(k, REC.kind, 2);
-        L.g("AND", [k0, L.NOT(k1)], kfr[k]);
-        L.g("AND", [L.NOT(k0), k1], kre[k]);
-        L.g("AND", [k0, k1], kel[k]);
-        L.dec(f(k, REC.fill, 4), `fill${k}`, fill1h.slice(k * 16, k * 16 + 16));
+        const ell = L.g("AND", [k0, k1], b.out("ELL")[k]);
+        L.g("NOT", [ell], b.out("NELL")[k]);
+        inv(f(k, REC.fill, 4), b.out("NFILL").slice(4 * k, 4 * k + 4));
       }
-      L.dec(b.in("CUR"), "curdec", b.out("CUR1H"));
-      const tool1h = L.dec(b.in("TOOL"), "tooldec", b.out("TOOL1H"));
-      const dg = L.dec(b.in("DRAG"), "dragdec");
+      inv(b.in("CUR"), b.out("NCUR"));
+      const [t0, t1] = b.in("TOOL");
+      const [d0, d1] = b.in("DRAG");
+      const idle = L.g("NOR", [d0, d1]);
+      const moveTool = L.g("NOR", [t0, t1]);
       const hot = b.out("HOT");
-      L.g("AND", [dg[0], tool1h[0]], hot[0]); // nothing pending, move tool
-      L.g("AND", [dg[0], L.NOT(tool1h[0])], hot[1]); // nothing pending, a creation tool
-      L.buf(dg[1], hot[2]); // a move is pending
-      L.g("OR", [dg[2], dg[3]], hot[3]); // a create / resize is pending
+      L.g("AND", [idle, moveTool], hot[0]); // nothing pending, move tool
+      L.g("AND", [idle, L.NOT(moveTool)], hot[1]); // nothing pending, a creation tool
+      L.g("AND", [d0, L.NOT(d1)], hot[2]); // a move is pending
+      L.buf(d1, hot[3]); // a create / resize is pending
     },
-    "the screen: the registers decoded into the lines the UI layers are bound to (visibility only, no code)",
+    "the screen: the few lines the UI layers need besides the registers (inverted bits pick a colour, a kind, the selected layer; hot picks the click layer)",
   );
 }
 
@@ -1171,20 +1154,15 @@ export function defineEngine(lib: Library): void {
         {
           REC: allRecs,
           SEL: sel,
-          HASSEL: hassel,
           TOOL: tool,
           DRAG: drag,
           CUR: cur,
-          SHOW: b.wire("show", 8),
-          SELK: b.wire("selk", 8),
-          NX1: b.wire("nx1", 32),
-          NY1: b.wire("ny1", 32),
-          KFR: b.wire("kfr", 8),
-          KRE: b.wire("kre", 8),
-          KEL: b.wire("kel", 8),
-          FILL1H: b.wire("fill1h", 128),
-          CUR1H: b.wire("cur1h", 16),
-          TOOL1H: b.wire("tool1h", 4),
+          NSEL: b.wire("nsel", 3),
+          NKIND: b.wire("nkind", 16),
+          NFILL: b.wire("nfill", 32),
+          NCUR: b.wire("ncur", 4),
+          ELL: b.wire("ell", 8),
+          NELL: b.wire("nell", 8),
           HOT: b.wire("hot", 4),
         },
         "disp",

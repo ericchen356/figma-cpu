@@ -1,0 +1,324 @@
+{
+  "stats": {
+    "gates": 4820,
+    "wires": 4843,
+    "reactions": 110,
+    "staticActions": 38973,
+    "longest": {
+      "name": "click/idle-move/3",
+      "actions": 694
+    },
+    "longestPart": 694,
+    "continued": 0,
+    "torn": 0,
+    "uiNodes": 1842,
+    "missing": []
+  },
+  "names": {
+    "frame": "CPU NATHAN · Figma OS (gate level)",
+    "editor": "editor",
+    "chart": "gate map"
+  },
+  "chunks": [
+    {
+      "file": "01-vars.js",
+      "step": "vars",
+      "chars": 27497,
+      "note": "4843 wire variables"
+    },
+    {
+      "file": "02-frame.js",
+      "step": "frame",
+      "chars": 10645,
+      "note": "the Present frame, its header, the empty editor and the chart area"
+    },
+    {
+      "file": "03-ui.js",
+      "step": "ui",
+      "chars": 19336,
+      "note": "2 screen subtree(s) under the editor"
+    },
+    {
+      "file": "04-ui.js",
+      "step": "ui",
+      "chars": 9919,
+      "note": "the shell of /canvas"
+    },
+    {
+      "file": "05-ui.js",
+      "step": "ui",
+      "chars": 28609,
+      "note": "25 screen subtree(s) under /canvas"
+    },
+    {
+      "file": "06-ui.js",
+      "step": "ui",
+      "chars": 27162,
+      "note": "3 screen subtree(s) under /canvas"
+    },
+    {
+      "file": "07-ui.js",
+      "step": "ui",
+      "chars": 28566,
+      "note": "4 screen subtree(s) under /canvas"
+    },
+    {
+      "file": "08-ui.js",
+      "step": "ui",
+      "chars": 17010,
+      "note": "2 screen subtree(s) under /canvas"
+    },
+    {
+      "file": "09-ui.js",
+      "step": "ui",
+      "chars": 24002,
+      "note": "1 screen subtree(s) under /canvas"
+    },
+    {
+      "file": "10-ui.js",
+      "step": "ui",
+      "chars": 23007,
+      "note": "4 screen subtree(s) under the editor"
+    },
+    {
+      "file": "11-react.js",
+      "step": "react",
+      "chars": 27254,
+      "note": "reactions of 18 node(s), 18 run(s)"
+    },
+    {
+      "file": "12-react.js",
+      "step": "react",
+      "chars": 29177,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "13-react.js",
+      "step": "react",
+      "chars": 28698,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "14-react.js",
+      "step": "react",
+      "chars": 26766,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "15-react.js",
+      "step": "react",
+      "chars": 28289,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "16-react.js",
+      "step": "react",
+      "chars": 28301,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "17-react.js",
+      "step": "react",
+      "chars": 28150,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "18-react.js",
+      "step": "react",
+      "chars": 23558,
+      "note": "reactions of 2 node(s), 2 run(s)"
+    },
+    {
+      "file": "19-react.js",
+      "step": "react",
+      "chars": 23559,
+      "note": "reactions of 2 node(s), 2 run(s)"
+    },
+    {
+      "file": "20-react.js",
+      "step": "react",
+      "chars": 23602,
+      "note": "reactions of 2 node(s), 2 run(s)"
+    },
+    {
+      "file": "21-react.js",
+      "step": "react",
+      "chars": 29263,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "22-react.js",
+      "step": "react",
+      "chars": 28108,
+      "note": "reactions of 6 node(s), 6 run(s)"
+    },
+    {
+      "file": "23-react.js",
+      "step": "react",
+      "chars": 26326,
+      "note": "reactions of 7 node(s), 6 run(s)"
+    },
+    {
+      "file": "24-react.js",
+      "step": "react",
+      "chars": 20502,
+      "note": "reactions of 7 node(s), 4 run(s)"
+    },
+    {
+      "file": "25-react.js",
+      "step": "react",
+      "chars": 20506,
+      "note": "reactions of 7 node(s), 4 run(s)"
+    },
+    {
+      "file": "26-react.js",
+      "step": "react",
+      "chars": 20510,
+      "note": "reactions of 7 node(s), 4 run(s)"
+    },
+    {
+      "file": "27-react.js",
+      "step": "react",
+      "chars": 24659,
+      "note": "reactions of 11 node(s), 9 run(s)"
+    },
+    {
+      "file": "28-react.js",
+      "step": "react",
+      "chars": 29426,
+      "note": "reactions of 6 node(s), 6 run(s)"
+    },
+    {
+      "file": "29-react.js",
+      "step": "react",
+      "chars": 26619,
+      "note": "reactions of 5 node(s), 5 run(s)"
+    },
+    {
+      "file": "30-react.js",
+      "step": "react",
+      "chars": 28859,
+      "note": "reactions of 5 node(s), 5 run(s)"
+    },
+    {
+      "file": "31-react.js",
+      "step": "react",
+      "chars": 25299,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "32-react.js",
+      "step": "react",
+      "chars": 25303,
+      "note": "reactions of 3 node(s), 3 run(s)"
+    },
+    {
+      "file": "33-react.js",
+      "step": "react",
+      "chars": 27368,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "34-react.js",
+      "step": "react",
+      "chars": 27425,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "35-react.js",
+      "step": "react",
+      "chars": 27588,
+      "note": "reactions of 6 node(s), 6 run(s)"
+    },
+    {
+      "file": "36-react.js",
+      "step": "react",
+      "chars": 27426,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "37-react.js",
+      "step": "react",
+      "chars": 28924,
+      "note": "reactions of 4 node(s), 4 run(s)"
+    },
+    {
+      "file": "38-react.js",
+      "step": "react",
+      "chars": 19319,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "39-react.js",
+      "step": "react",
+      "chars": 23604,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "40-react.js",
+      "step": "react",
+      "chars": 23634,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "41-react.js",
+      "step": "react",
+      "chars": 23643,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "42-react.js",
+      "step": "react",
+      "chars": 23648,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "43-react.js",
+      "step": "react",
+      "chars": 23657,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "44-react.js",
+      "step": "react",
+      "chars": 23686,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "45-react.js",
+      "step": "react",
+      "chars": 19361,
+      "note": "reactions of 1 node(s), 3 run(s)"
+    },
+    {
+      "file": "46-react.js",
+      "step": "react",
+      "chars": 38640,
+      "note": "reactions of 1 node(s), 11 run(s)"
+    },
+    {
+      "file": "47-chart.js",
+      "step": "chart",
+      "chars": 12098,
+      "note": "gate map: nclk, evdec, conds, layerctl, free, newrec"
+    },
+    {
+      "file": "48-chart.js",
+      "step": "chart",
+      "chars": 20420,
+      "note": "gate map: state, disp, glue, hit, plane, geom"
+    },
+    {
+      "file": "49-chart.js",
+      "step": "chart",
+      "chars": 18654,
+      "note": "gate map: l0, l1, l2, l3, l4, l5"
+    },
+    {
+      "file": "50-chart.js",
+      "step": "chart",
+      "chars": 12848,
+      "note": "gate map: l6, l7"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "stats": {
+    "gates": 2285,
+    "wires": 2295,
+    "cases": 128,
+    "groups": 30,
+    "dispatchStored": 3271,
+    "worstTick": 324,
+    "meanTick": 96,
+    "stateNets": 316
+  },
+  "names": {
+    "frame": "Silicon CPU · runs in Present (gate level)",
+    "root": "cpu",
+    "chart": "gate map",
+    "step": "/step",
+    "instruction": "/instruction",
+    "run": "/run",
+    "overlays": [
+      "running A",
+      "running B"
+    ],
+    "programs": {
+      "count": "/load/count",
+      "mul": "/load/mul",
+      "fib": "/load/fib"
+    }
+  },
+  "chunks": [
+    {
+      "file": "01-vars.js",
+      "step": "vars",
+      "chars": 18691,
+      "note": "2295 wire variables and the tick counter"
+    },
+    {
+      "file": "02-frame.js",
+      "step": "frame",
+      "chars": 49326,
+      "note": "the Present frame and the CPU panel"
+    },
+    {
+      "file": "03-react.js",
+      "step": "react",
+      "chars": 51840,
+      "note": "reactions of /step: step"
+    },
+    {
+      "file": "04-react.js",
+      "step": "react",
+      "chars": 9853,
+      "note": "reactions of /instruction: instruction"
+    },
+    {
+      "file": "05-react.js",
+      "step": "react",
+      "chars": 9828,
+      "note": "reactions of /run: run"
+    },
+    {
+      "file": "06-react.js",
+      "step": "react",
+      "chars": 11583,
+      "note": "reactions of /load/count: load/count"
+    },
+    {
+      "file": "07-react.js",
+      "step": "react",
+      "chars": 11575,
+      "note": "reactions of /load/mul: load/mul"
+    },
+    {
+      "file": "08-react.js",
+      "step": "react",
+      "chars": 11574,
+      "note": "reactions of /load/fib: load/fib"
+    },
+    {
+      "file": "09-react.js",
+      "step": "react",
+      "chars": 51904,
+      "note": "reactions of the frame: step, instruction"
+    },
+    {
+      "file": "10-react.js",
+      "step": "react",
+      "chars": 51942,
+      "note": "reactions of @running A: tick/0, pause"
+    },
+    {
+      "file": "11-react.js",
+      "step": "react",
+      "chars": 51943,
+      "note": "reactions of @running B: tick/1, pause"
+    },
+    {
+      "file": "12-chart.js",
+      "step": "chart",
+      "chars": 18693,
+      "note": "gate map: ram, regs, alu, ctrl, ir, mdr, alatch, ylatch"
+    },
+    {
+      "file": "13-chart.js",
+      "step": "chart",
+      "chars": 12425,
+      "note": "gate map: outreg, pc, seg_lo, seg_hi, busmux, tstate, mar, mdr_src"
+    },
+    {
+      "file": "14-chart.js",
+      "step": "chart",
+      "chars": 10823,
+      "note": "gate map: halt, fz, fc, fn, rsel0, rsel1, mdr_load, reg_out"
+    },
+    {
+      "file": "15-chart.js",
+      "step": "chart",
+      "chars": 10318,
+      "note": "gate map: mar_lo, mar_hi, at_out, out_load"
+    }
+  ]
+}

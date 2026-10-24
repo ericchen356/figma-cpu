@@ -33,6 +33,7 @@ import {
   COLORS,
   box,
   bindVisible,
+  button,
   createVariables,
   loadFonts,
   put,
@@ -46,24 +47,39 @@ import {
   boolData,
   exprData,
   figmaActions,
+  afterTimeout,
+  conditional,
   keyDown,
-  mouseDown,
   mouseEnter,
-  mouseUp,
+  navigate,
+  navigateWith,
   onClick,
   setVariable,
 } from "../../../src/prototype/figma-actions";
 import { nathanLibrary, nathanPowerOn } from "../../src/hw";
-import { buildCatalog, reactionSpecs } from "../../src/react/catalog";
-import { splitStages } from "../../src/react/stage";
-import { staticSize } from "../../src/react/synth";
+import { buildCatalogGently, reactionSpecs } from "../../src/react/catalog";
+import {
+  type Commit,
+  masterToQ,
+  type Reaction as Synthesized,
+  staticSize,
+  synthesize,
+} from "../../src/react/synth";
 import {
   buildPlatformTests,
   TEST_COLLECTION,
   TEST_PREFIX,
 } from "../../src/platform/tests";
+import { gateMap } from "../../src/ui/gatemap";
 import { render } from "../../src/ui/render";
-import { KEYS, UI_H, UI_W, uiSpec, type ReactionRef } from "../../src/ui/spec";
+import {
+  KEYS,
+  slotKeys,
+  UI_H,
+  UI_W,
+  uiSpec,
+  type ReactionRef,
+} from "../../src/ui/spec";
 import type {
   DocStatus,
   HardwareStats,
@@ -72,7 +88,15 @@ import type {
   ToMain,
   ToUi,
 } from "./messages";
-import { COLLECTION, FLOW, PRESENT, TOP, UI_COLLECTION } from "./names";
+import {
+  CIRCUIT,
+  COLLECTION,
+  FLOW,
+  MACHINE,
+  PRESENT,
+  TOP,
+  UI_COLLECTION,
+} from "./names";
 import { selfTest } from "./selftest";
 import {
   cellsBottom,
@@ -98,16 +122,24 @@ export interface AppOptions {
 }
 
 export interface OsOptions {
-  /** "auto": every latch gate is evaluated unless a reaction would exceed `budget`, then compact. */
-  latch: "auto" | "gates" | "compact";
-  /** Largest number of actions meant to run in ONE event. Longer click reactions are split across
-   * MOUSE_DOWN / MOUSE_UP / ON_CLICK of the same click (3 events, no timer). */
+  /** "auto": every latch gate is evaluated unless a reaction would exceed `gatesUpTo`, then Q = D. */
+  latch: "auto" | Commit;
+  /** Most actions ONE event may run. The viewer runs a reaction's actions recursively: on a cold
+   * page 1,200 overflowed its stack (and left the prototype dead to clicks), so a longer reaction
+   * continues through timed overlays, a part per event. */
   budget: number;
+  /** Largest reaction (actions) whose latches "auto" evaluates gate by gate. Default: the budget,
+   * so a reaction that fits one event shows every latch gate, and a longer one commits Q = D
+   * (fewer events). */
+  gatesUpTo?: number;
   /** Turn identity gates into wires (fewer actions; those gates' lamps keep their last colour). */
   alias: boolean;
-  /** Keep keyboard shortcuts even if one exceeds the budget (they cannot be split). */
-  longKeys?: boolean;
 }
+
+/** Prefix of the 1×1 overlay frames that continue a long reaction ("<prefix><run> <part>"). */
+export const CHAIN_PREFIX = "NATHAN · then ";
+/** The empty overlay the editor opens and closes once when ▶ Present starts (a warm-up). */
+export const WARMUP = "NATHAN · warm-up";
 
 export interface HardwareOptions {
   gateLabels?: boolean;
@@ -150,7 +182,6 @@ export class NathanApp {
               latch: msg.latch,
               budget: msg.budget,
               alias: msg.alias,
-              longKeys: msg.longKeys,
             }),
           );
           return;
@@ -342,18 +373,29 @@ export class NathanApp {
     return stats;
   }
 
-  /** Takes the machine out of the editor frame (if it is in one) and removes the frame. */
+  /** Takes the machine out of the editor / machine frames (where Build the OS put it) and removes
+   * those frames. The machine keeps its place on the page. */
   private async releaseMachine(
     page: PageNode,
     alsoRemove: boolean,
   ): Promise<void> {
-    for (const f of page.children.filter((n) => n.name === PRESENT)) {
+    for (const f of page.children.filter(
+      (n) => n.name.startsWith(CHAIN_PREFIX) || n.name === WARMUP,
+    ))
+      f.remove();
+    for (const f of page.children.filter(
+      (n) => n.name === PRESENT || n.name === MACHINE || n.name === CIRCUIT,
+    )) {
       for (const c of (f as FrameNode).findAllWithCriteria({
         types: ["COMPONENT"],
       })) {
-        if (c.name !== `${CELL_PREFIX}${TOP}` || c.parent !== f) continue;
-        const x = f.x + c.x;
-        const y = f.y + c.y;
+        if (c.name !== `${CELL_PREFIX}${TOP}`) continue;
+        let x = 0;
+        let y = 0;
+        for (let n: BaseNode | null = c; n && n !== page; n = n.parent) {
+          x += (n as SceneNode).x;
+          y += (n as SceneNode).y;
+        }
         page.appendChild(c);
         c.x = x;
         c.y = y;
@@ -391,17 +433,18 @@ export class NathanApp {
       `one reaction per control (${net.gates.length} gates)`,
     );
     const catalog = await this.phase("reactions", () =>
-      buildCatalog(net, reactionSpecs(), {
-        latch: o.latch,
-        budget: o.budget,
-        alias: o.alias,
-      }),
+      buildCatalogGently(
+        net,
+        reactionSpecs(),
+        { latch: o.latch, budget: o.gatesUpTo ?? o.budget, alias: o.alias },
+        () => this.breathe(),
+      ),
     );
     await this.breathe();
 
     this.progress("os", 2, steps, "variables");
-    await removeCollections(this.api, COLLECTION);
-    await removeCollections(this.api, UI_COLLECTION);
+    await this.removeGently(COLLECTION);
+    await this.removeGently(UI_COLLECTION);
     const init = nathanPowerOn(net);
     const used = new Set<number>();
     for (const g of net.gates) {
@@ -420,38 +463,54 @@ export class NathanApp {
     const { collections, vars } = await this.phase("variables", () =>
       createVariables(this.api, COLLECTION, specs, {
         log: (m) => this.log("info", m),
+        yieldEvery: 250,
       }),
     );
     const variables = new Map<number, Variable>(
       ids.map((id, i) => [id, vars[i]]),
     );
-    // the hover position: where the pointer was last seen (copied into the machine's PX / PY at the start of a click)
-    const ptrSpecs: VariableSpec[] = [0, 1].flatMap((a) =>
-      [0, 1, 2, 3].map((i): VariableSpec => ({
-        name: `ui/${a ? "py" : "px"}/${i}`,
+    // the hover column: where the pointer was last seen (copied into the machine's PX at the start
+    // of a click; the row is the clicked layer's own, its reaction has PY built in)
+    const ptrSpecs: VariableSpec[] = [
+      ...[0, 1, 2, 3].map((i): VariableSpec => ({
+        name: `ui/px/${i}`,
         type: "BOOLEAN",
         init: false,
       })),
-    );
+      // the warm-up when ▶ Present opens: done once, and a bit it flips to get the viewer going
+      { name: "ui/warm", type: "BOOLEAN", init: false },
+      { name: "ui/scratch", type: "BOOLEAN", init: false },
+    ];
     const ptr = await this.phase("hover variables", () =>
       createVariables(this.api, UI_COLLECTION, ptrSpecs),
     );
-    const [pxh, pyh] = [ptr.vars.slice(0, 4), ptr.vars.slice(4, 8)];
+    const pxh = ptr.vars.slice(0, 4);
+    const [warmed, scratch] = [ptr.vars[4], ptr.vars[5]];
     await this.breathe();
 
     this.progress("os", 3, steps, "lamps on the gates and wires");
     const engine = findCell(page, TOP)!;
     const lits = collectBindings(engine, net);
+    // a master latch equals its slave between events: its lamps show Q (the direct commit never writes it)
+    const shadow = masterToQ(net);
     let bound = 0;
-    const bindNet = (node: SceneNode, id: number) => {
+    const bindNet = (node: SceneNode, wire: number) => {
+      const id = shadow.get(wire) ?? wire;
       const v = id <= 1 ? id === 1 : variables.get(id);
       if (v === undefined) return;
       bindVisible(node, v);
       bound++;
     };
-    for (const [gi, node] of lits.gateLit) bindNet(node, net.gates[gi].out);
+    // a few hundred at a time: a long uninterrupted run starves Figma's connection to its server
+    for (const [gi, node] of lits.gateLit) {
+      bindNet(node, net.gates[gi].out);
+      if (bound % 400 === 399) await this.breathe();
+    }
     for (const [id, nodes] of lits.wireLit)
-      for (const node of nodes) bindNet(node, id);
+      for (const node of nodes) {
+        bindNet(node, id);
+        if (bound % 400 === 399) await this.breathe();
+      }
     this.log(
       "info",
       `bound ${bound} lit layers${lits.missing.length ? `, ${lits.missing.length} gate(s) without a lit layer` : ""}`,
@@ -463,11 +522,9 @@ export class NathanApp {
       [...variables].map(([id, v]) => [id, v.id]),
     );
     const port = (n: string) => net.ports.find((p) => p.name === n)!.nets;
-    const [pxNets, pyNets] = [port("PX"), port("PY")];
-    const copyPointer = [
-      ...pxNets.map((n, i) => ({ to: n, from: pxh[i] })),
-      ...pyNets.map((n, i) => ({ to: n, from: pyh[i] })),
-    ].map((c) =>
+    const copyPointer = port("PX")
+      .map((n, i) => ({ to: n, from: pxh[i] }))
+      .map((c) =>
       setVariable(
         varIds.get(c.to)!,
         exprData("EQUALS", [aliasData(c.from.id), boolData(true)]),
@@ -475,60 +532,145 @@ export class NathanApp {
     );
     const convert = (a: PlanAction[]) => figmaActions(a, varIds);
     const eventSizes = new Map<string, number[]>();
-    const noteSize = (name: string, n: number[]) =>
-      eventSizes.set(name, [...(eventSizes.get(name) ?? []), ...n]);
+
+    // The viewer runs a reaction's actions recursively, about three stack frames each: on a cold
+    // page 1,200 in one event overflowed its stack and left the prototype dead to clicks. So a
+    // reaction longer than the budget is cut between top-level actions: the event runs the first
+    // part and opens an invisible 1×1 overlay, whose timer runs the next part on a fresh stack and
+    // then swaps in the next overlay, or closes. The same machine, in a few events.
+    // Only the logic is cut: everything that changes what the machine holds or shows (the register
+    // commits and the screen lines, the reaction's tail from its first write) runs in the last event,
+    // so between two events nothing is half written. That needs the tail to fit one event (a budget
+    // of 352 or more with the default settings); below that a reaction is cut anywhere, and the build
+    // says so in an error.
+    this.progress("os", 4, steps, "reactions, cut into events");
+    // the previous build's frames go first (the new chain overlays are made right below)
+    await loadFonts(this.api);
+    await this.releaseMachine(page, false);
+    const triggered = new Map<string, Action[]>(); // run → what its trigger runs
+    const chainFrames: FrameNode[] = [];
+    const torn: string[] = [];
+    // every event ends with the action that opens, swaps in or closes an overlay: +1
+    const greedy = (list: PlanAction[], first: number) => {
+      const out: PlanAction[][] = [[]];
+      let size = first + 1;
+      for (const a of list) {
+        const n = staticSize([a]);
+        if (out[out.length - 1].length && size + n > o.budget) {
+          out.push([]);
+          size = 1;
+        }
+        out[out.length - 1].push(a);
+        size += n;
+      }
+      return out;
+    };
+    for (const [run, entry] of catalog) {
+      const lead = run.startsWith("click/") ? copyPointer : [];
+      // a reaction as events: the logic (everything before its first register write) cut anywhere,
+      // the writes and the screen lines all in the last event; null if those do not fit one
+      const eventsOf = (r: Synthesized): PlanAction[][] | null => {
+        const acts = r.actions;
+        if (lead.length + staticSize(acts) <= o.budget) return [acts];
+        const [head, tail] = [acts.slice(0, r.commitAt), acts.slice(r.commitAt)];
+        const tailSize = staticSize(tail);
+        if (tailSize + 1 > o.budget) return null;
+        const parts = greedy(head, lead.length);
+        const last = parts[parts.length - 1];
+        const lastSize =
+          staticSize(last) + (parts.length === 1 ? lead.length : 0) + 1;
+        if (lastSize + tailSize <= o.budget)
+          parts[parts.length - 1] = [...last, ...tail];
+        else parts.push(tail);
+        return parts;
+      };
+      let parts = eventsOf(entry.reaction);
+      // more than one event: the commit Q = D is much shorter, and logic kept out of the register
+      // blocks can go in the early events; take whichever needs the fewest
+      if (!parts || parts.length > 1)
+        for (const alt of [
+          { latch: "direct" },
+          { latch: "direct", inside: false },
+        ] as const) {
+          const r = synthesize(net, entry.spec.ties, {
+            ...alt,
+            alias: o.alias,
+            given: entry.spec.given,
+          });
+          const p = eventsOf(r);
+          if (p && (!parts || p.length < parts.length)) {
+            entry.reaction = r;
+            parts = p;
+          }
+        }
+      if (!parts) {
+        torn.push(run); // cannot keep the writes together: cut anywhere
+        parts = greedy(entry.reaction.actions, lead.length);
+      }
+      const chained = parts.length > 1;
+      eventSizes.set(
+        run,
+        parts.map((p, k) => staticSize(p) + (k ? 0 : lead.length) + (chained ? 1 : 0)),
+      );
+      if (!chained) {
+        triggered.set(run, [...lead, ...convert(parts[0])]);
+        continue;
+      }
+      const frames = parts.slice(1).map((_, k) => {
+        const f = box(this.api, `${CHAIN_PREFIX}${run} ${k + 1}`, 1, 1, COLORS.bg);
+        f.fills = [];
+        chainFrames.push(f);
+        return f;
+      });
+      for (let k = 1; k < parts.length; k++)
+        await frames[k - 1].setReactionsAsync([
+          {
+            trigger: afterTimeout(0.001),
+            actions: [
+              ...convert(parts[k]),
+              k + 1 < parts.length
+                ? navigateWith(frames[k].id, "SWAP")
+                : ({ type: "CLOSE" } as Action),
+            ],
+          },
+        ]);
+      triggered.set(run, [
+        ...lead,
+        ...convert(parts[0]),
+        navigateWith(frames[0].id, "OVERLAY"),
+      ]);
+      await this.breathe();
+    }
     const reactionsFor = (ref: ReactionRef): Reaction[] => {
       const t = ref.trigger;
       if (ref.run.startsWith("pointer/")) {
-        const [c, r] = ref.run.slice("pointer/".length).split(",").map(Number);
+        const c = Number(ref.run.slice("pointer/".length));
         return [
           {
             trigger: mouseEnter(0),
-            actions: [
-              ...pxh.map((v, i) =>
-                setVariable(v.id, boolData(((c >> i) & 1) === 1)),
-              ),
-              ...pyh.map((v, i) =>
-                setVariable(v.id, boolData(((r >> i) & 1) === 1)),
-              ),
-            ],
+            actions: pxh.map((v, i) =>
+              setVariable(v.id, boolData(((c >> i) & 1) === 1)),
+            ),
           },
         ];
       }
-      const entry = catalog.get(ref.run);
-      if (!entry)
+      const actions = triggered.get(ref.run);
+      if (!actions)
         throw new Error(
           `the screen refers to a reaction that does not exist: ${ref.run}`,
         );
-      const { actions, screenAt } = entry.reaction;
-      if (t.on === "key") {
-        noteSize(ref.run, [staticSize(actions)]);
-        return [{ trigger: keyDown(t.codes), actions: convert(actions) }];
-      }
-      const lead = ref.run.startsWith("click/") ? copyPointer : [];
-      if (staticSize(actions) + lead.length <= o.budget) {
-        noteSize(ref.run, [staticSize(actions) + lead.length]);
-        return [
-          { trigger: onClick(), actions: [...lead, ...convert(actions)] },
-        ];
-      }
-      // too long for one event: the three events of one click, each a consecutive piece
-      const parts = splitStages(actions, screenAt, 3);
-      noteSize(
-        ref.run,
-        parts.map((p, i) => staticSize(p) + (i === 0 ? lead.length : 0)),
-      );
       return [
-        { trigger: mouseDown(0), actions: [...lead, ...convert(parts[0])] },
-        { trigger: mouseUp(0), actions: convert(parts[1]) },
-        { trigger: onClick(), actions: convert(parts[2]) },
+        {
+          trigger: t.on === "key" ? keyDown(t.codes) : onClick(),
+          actions,
+        },
       ];
     };
 
-    // the editor frame, with the machine below it
-    this.progress("os", 4, steps, "the editor frame");
-    await loadFonts(this.api);
-    await this.releaseMachine(page, false);
+    // ▶ Present opens the editor. "see the machine" shows every gate as a lamp, all at once; "the
+    // circuit" a scrolling window over the full drawing. The frames share the variables, so all of
+    // them show the live state.
+    this.progress("os", 5, steps, "the editor, machine and circuit frames");
     const engineNow = findCell(page, TOP)!;
     const ctx = {
       api: this.api,
@@ -537,45 +679,129 @@ export class NathanApp {
         return id === undefined ? undefined : variables.get(id);
       },
       reactionsFor,
+      breathe: () => this.breathe(),
     };
-    const frameW = Math.max(UI_W + 2 * PAD, engineNow.width + 2 * PAD);
-    const frameH = HEADER + UI_H + GAP + engineNow.height + 2 * PAD;
-    const present = box(this.api, PRESENT, frameW, frameH, COLORS.bg);
-    present.clipsContent = true;
-    put(
-      page,
-      present,
-      engineNow.x - PAD,
-      engineNow.y - (HEADER + UI_H + GAP + PAD),
+    const frame = (name: string) => {
+      const f = box(this.api, name, UI_W + 2 * PAD, HEADER + UI_H + PAD, COLORS.bg);
+      f.clipsContent = true;
+      return f;
+    };
+    const present = frame(PRESENT);
+    const machine = frame(MACHINE);
+    const circuit = frame(CIRCUIT);
+    // the drawing stays where it is on the page: the circuit window opens on its top-left corner
+    put(page, circuit, engineNow.x - PAD, engineNow.y - HEADER);
+    put(page, present, circuit.x, circuit.y - GAP - present.height);
+    put(page, machine, present.x + present.width + GAP, present.y);
+    chainFrames.forEach((f, i) =>
+      put(page, f, machine.x + machine.width + GAP, machine.y + i * 8),
     );
+    const view = box(this.api, "view", UI_W, UI_H, COLORS.bg);
+    view.clipsContent = true;
+    view.overflowDirection = "BOTH";
+    put(circuit, view, PAD, HEADER);
+    put(view, engineNow, 0, 0);
     const result = await this.phase("editor", () =>
-      render(ctx, present, uiSpec()),
+      // the gates are in their own frame here, one button away
+      render(
+        ctx,
+        present,
+        uiSpec("every pixel of this screen is a gate-level machine — see the machine ▸"),
+      ),
     );
     result.root.x = PAD;
     result.root.y = HEADER;
-    put(present, engineNow, PAD, HEADER + UI_H + GAP + PAD);
-    this.progress("os", 5, steps, "shortcut keys and the flow");
+    const blocks = new Map(lib.get(TOP)!.instances.map((i) => [i.name, i.cell]));
+    const map = await this.phase("gate map", () =>
+      render(
+        ctx,
+        machine,
+        gateMap(net, {
+          width: UI_W,
+          columns: 5,
+          lamp: 7,
+          gap: 2,
+          netOf: (gi) => net.netNames[shadow.get(net.gates[gi].out) ?? net.gates[gi].out],
+          title: (b, n) => `${b}${blocks.has(b) ? ` · ${blocks.get(b)!.replace(CELL_PREFIX, "")}` : ""} · ${n} gates`,
+          colours: {
+            block: COLORS.panel,
+            text: COLORS.dim,
+            lamp: COLORS.lampOn,
+            off: COLORS.lampOff,
+          },
+        }),
+      ),
+    );
+    map.root.x = PAD;
+    map.root.y = HEADER;
+    // the Arrange shortcuts (D, [ and ]) work in the other two frames too: the same stack of key
+    // layers picked by the selection register
+    let keysBound = 0;
+    for (const f of [machine, circuit])
+      keysBound += (await render(ctx, f, slotKeys(COLORS.bg))).bound;
+    const go = async (from: FrameNode, to: FrameNode, label: string, slot = 0) => {
+      const b = put(from, button(this.api, label, COLORS.step, 200, 40), from.width - PAD - 200 - slot * 216, 32);
+      await b.setReactionsAsync([{ trigger: onClick(), actions: [navigate(to.id)] }]);
+    };
+    await go(present, machine, "see the machine ▸");
+    await go(machine, present, "◂ back to the editor");
+    await go(machine, circuit, "the circuit ▸", 1);
+    await go(circuit, machine, "◂ back to the machine");
+    // the drawing is 70,000 px wide: one button per module scrolls the window to it
+    let bx = PAD;
+    for (const part of engineNow.children) {
+      if (part.type !== "INSTANCE" || !blocks.has(part.name) || /^g\d+$/.test(part.name)) continue;
+      const w = 16 + part.name.length * 9;
+      const b = put(circuit, button(this.api, part.name, COLORS.panel, w, 28), bx, 92);
+      await b.setReactionsAsync([
+        { trigger: onClick(), actions: [navigateWith(part.id, "SCROLL_TO")] },
+      ]);
+      bx += w + 6;
+    }
+    this.progress("os", 6, steps, "shortcut keys and the flow");
 
-    // a shortcut cannot be split across events; past the budget it is left out unless asked for
-    const skipped: string[] = [];
-    const keyReactions: Reaction[] = KEYS.flatMap((k) => {
-      const size = staticSize(catalog.get(k.run)!.reaction.actions);
-      if (size > o.budget && o.longKeys === false) {
-        skipped.push(k.run);
-        return [];
-      }
-      return reactionsFor({
-        trigger: { on: "key", codes: k.codes },
-        run: k.run,
-      });
-    });
-    await present.setReactionsAsync(keyReactions);
-    if (skipped.length)
-      this.log(
-        "info",
-        `left out ${skipped.length} shortcut(s) longer than ${o.budget} actions: ${skipped.join(", ")} (their buttons work)`,
-      );
+    const keyReactions: Reaction[] = KEYS.flatMap((k) =>
+      reactionsFor({ trigger: { on: "key", codes: k.codes }, run: k.run }),
+    );
+    // the shortcuts work in every frame: press them while watching the gates
+    // A fresh viewer is slow at its first long reaction and first overlay (a canvas click took ~2 s
+    // and the click after it was lost behind the overlay): when the editor first shows, run a few
+    // hundred throwaway actions, and when some reactions run as chains of overlays, open and close
+    // an empty overlay, before the user's first click.
+    let warmup: FrameNode | null = null;
+    if (chainFrames.length) {
+      warmup = box(this.api, WARMUP, 1, 1, COLORS.bg);
+      warmup.fills = [];
+      put(page, warmup, machine.x + machine.width + GAP, machine.y - 40);
+      await warmup.setReactionsAsync([
+        { trigger: afterTimeout(0.001), actions: [{ type: "CLOSE" } as Action] },
+      ]);
+    }
+    const flip = setVariable(
+      scratch.id,
+      exprData("NOT", [aliasData(scratch.id)]),
+    );
+    const warm: Reaction = {
+      trigger: afterTimeout(0.001),
+      actions: [
+        conditional(exprData("EQUALS", [aliasData(warmed.id), boolData(false)]), [
+          setVariable(warmed.id, boolData(true)),
+          ...Array.from({ length: Math.min(500, o.budget - 3) }, () => flip),
+          ...(warmup ? [navigateWith(warmup.id, "OVERLAY")] : []),
+        ]),
+      ],
+    };
+    await present.setReactionsAsync([...keyReactions, warm]);
+    for (const f of [machine, circuit]) await f.setReactionsAsync(keyReactions);
     setFlows(page, [{ nodeId: present.id, name: FLOW }]);
+    // Figma makes a flow of its own for a top-level frame that gets a navigation (the overlays that
+    // swap in the next one): they are not places to start, so they go
+    const overlayIds = new Set(
+      [...chainFrames, ...(warmup ? [warmup] : [])].map((f) => f.id),
+    );
+    page.flowStartingPoints = page.flowStartingPoints.filter(
+      (f) => !overlayIds.has(f.nodeId),
+    );
 
     // header
     const worst = [...eventSizes.entries()]
@@ -605,22 +831,45 @@ export class NathanApp {
       present,
       text(
         this.api,
-        "Click in the editor: every layer, colour and lamp on it is a gate-level register bit, and the gates of the machine below light as it computes.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.",
+        "Click in the editor: every layer, colour and lamp on it is a gate-level register bit; \"see the machine\" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.",
         { size: 12, color: COLORS.dim },
       ),
       PAD,
       88,
     );
+    const heading = (f: FrameNode, title: string, sub: string) => {
+      put(f, text(this.api, title, { size: 24, bold: true }), PAD, 28);
+      put(f, text(this.api, sub, { size: 13, color: COLORS.dim }), PAD, 64);
+    };
+    heading(
+      machine,
+      "CPU NATHAN — the machine",
+      `All ${net.gates.length} gates, one lamp each, by module. Use the editor (or press its shortcut keys here) and watch them compute.`,
+    );
+    heading(
+      circuit,
+      "CPU NATHAN — the circuit",
+      `Every gate and wire, live. Pick a module to scroll the window to it, or scroll inside the window.`,
+    );
     remember(this.api, page);
     this.progress("os", steps, steps, "done");
 
-    const over = [...eventSizes.entries()]
-      .filter(([, sizes]) => Math.max(...sizes) > o.budget)
-      .map(([name]) => name);
-    if (over.length)
+    if (torn.length)
+      this.log(
+        "error",
+        `the register writes of ${torn.join(", ")} do not fit one event of ${o.budget}: they are cut, so a fast second input could see them half done`,
+      );
+    const chainedRuns = [...eventSizes.entries()].filter(([, sizes]) => sizes.length > 1);
+    if (chainedRuns.length)
       this.log(
         "info",
-        `${over.length} reaction(s) are longer than ${o.budget} actions in one event (keyboard shortcuts cannot be split): ${over.slice(0, 8).join(", ")}${over.length > 8 ? " …" : ""}. Use the panel buttons for those, or raise the budget after the platform tests.`,
+        `${chainedRuns.length} reaction(s) longer than ${o.budget} actions run as a few events through timed overlays: ${chainedRuns.map(([n, sizes]) => `${n} (${sizes.length})`).join(", ")}`,
+      );
+    const tooLong = [...eventSizes.entries()].filter(([, sizes]) => Math.max(...sizes) > o.budget);
+    if (tooLong.length)
+      this.log(
+        "error",
+        `${tooLong.length} reaction(s) have a single step longer than ${o.budget} actions: ${tooLong.map(([n]) => n).join(", ")}`,
       );
     if (result.missing.length)
       this.log(
@@ -633,9 +882,9 @@ export class NathanApp {
       collections: collections.length + 1,
       reactions: catalog.size,
       worstReaction: worst,
-      bound: bound + result.bound,
-      missing: result.missing.length,
-      uiLayers: result.created,
+      bound: bound + result.bound + map.bound + keysBound,
+      missing: result.missing.length + map.missing.length,
+      uiLayers: result.created + map.created,
       ms: this.now() - t0,
     };
     this.post({ type: "os", stats });
@@ -649,6 +898,23 @@ export class NathanApp {
       /* cosmetic */
     }
     return stats;
+  }
+
+  /** Removes the collections `createVariables(name)` made, a few hundred variables at a time with a
+   * breath in between: removing thousands at once can drop Figma's connection to its server. */
+  private async removeGently(name: string): Promise<void> {
+    const isOurs = (c: string) =>
+      c === name || new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} · \\d+$`).test(c);
+    const colls = (await this.api.variables.getLocalVariableCollectionsAsync()).filter((c) => isOurs(c.name));
+    if (!colls.length) return;
+    const ids = new Set(colls.map((c) => c.id));
+    const vars = (await this.api.variables.getLocalVariablesAsync()).filter((v) => ids.has(v.variableCollectionId));
+    for (let i = 0; i < vars.length; i++) {
+      vars[i].remove();
+      if (i % 250 === 249) await this.breathe();
+    }
+    for (const c of colls) c.remove();
+    await this.breathe();
   }
 
   // ---------- 3. self-test ----------
@@ -694,7 +960,12 @@ export class NathanApp {
       await page.loadAsync();
       await this.releaseMachine(page, false);
       for (const n of [...page.children])
-        if (n.name === PRESENT || n.name.startsWith(TEST_PREFIX)) {
+        if (
+          n.name === PRESENT ||
+          n.name === MACHINE ||
+          n.name === CIRCUIT ||
+          n.name.startsWith(TEST_PREFIX)
+        ) {
           n.remove();
           removed++;
         }

@@ -17,91 +17,269 @@
         --err: #ff5a5f;
         --busy: #f5c542;
       }
-      * { box-sizing: border-box; }
-      body { margin: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.45 Inter, system-ui, sans-serif; }
-      h1 { font-size: 14px; margin: 0 0 2px; }
-      .sub { color: var(--faint); font-size: 11px; }
-      .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-      .card { background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; padding: 10px; margin-top: 10px; }
-      .title { font-weight: 700; margin-bottom: 6px; }
-      .title span { color: var(--faint); margin-right: 4px; }
-      .pill { border-radius: 999px; padding: 2px 8px; font-size: 11px; background: var(--cell); color: var(--dim); }
-      .pill.ok { color: var(--ok); }
-      .pill.bad { color: var(--err); }
-      .pill.busy { color: var(--busy); }
-      button { font: inherit; font-weight: 600; color: var(--text); background: var(--field); border: 1px solid var(--stroke); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-      button.primary { background: var(--accent); border-color: var(--accent); }
-      button:disabled { opacity: 0.45; cursor: default; }
-      input, select { font: inherit; color: var(--text); background: var(--cell); border: 1px solid var(--stroke); border-radius: 6px; padding: 3px 6px; }
-      input[type="number"] { width: 70px; }
-      label.check { display: inline-flex; gap: 4px; align-items: center; color: var(--dim); cursor: pointer; }
-      .bar { height: 4px; background: var(--cell); border-radius: 2px; margin-top: 8px; overflow: hidden; }
-      .bar > div { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
-      .prog { color: var(--faint); font-size: 11px; margin-top: 4px; min-height: 15px; }
-      .help { color: var(--faint); font-size: 11px; margin-top: 6px; }
-      .verdict { margin-top: 6px; font-size: 11px; }
-      .verdict.ok { color: var(--ok); }
-      .verdict.bad { color: var(--err); }
-      #tests { margin-top: 6px; font-size: 11px; color: var(--dim); }
-      #tests div { margin-top: 4px; }
-      #log { height: 150px; overflow: auto; background: #0d0d0d; border-radius: 6px; padding: 6px; margin-top: 6px; font: 11px/1.4 "Roboto Mono", ui-monospace, Menlo, monospace; color: var(--dim); white-space: pre-wrap; }
-      #log .ok { color: var(--ok); }
-      #log .err { color: var(--err); }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          12px/1.45 Inter,
+          system-ui,
+          sans-serif;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 2px;
+      }
+      .sub {
+        color: var(--faint);
+        font-size: 11px;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 10px;
+        padding: 10px;
+        margin-top: 10px;
+      }
+      .title {
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+      .title span {
+        color: var(--faint);
+        margin-right: 4px;
+      }
+      .pill {
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: var(--cell);
+        color: var(--dim);
+      }
+      .pill.ok {
+        color: var(--ok);
+      }
+      .pill.bad {
+        color: var(--err);
+      }
+      .pill.busy {
+        color: var(--busy);
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        color: var(--text);
+        background: var(--field);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      input,
+      select {
+        font: inherit;
+        color: var(--text);
+        background: var(--cell);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        padding: 3px 6px;
+      }
+      input[type="number"] {
+        width: 70px;
+      }
+      label.check {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+        color: var(--dim);
+        cursor: pointer;
+      }
+      .bar {
+        height: 4px;
+        background: var(--cell);
+        border-radius: 2px;
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      .bar > div {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.15s;
+      }
+      .prog {
+        color: var(--faint);
+        font-size: 11px;
+        margin-top: 4px;
+        min-height: 15px;
+      }
+      .help {
+        color: var(--faint);
+        font-size: 11px;
+        margin-top: 6px;
+      }
+      .verdict {
+        margin-top: 6px;
+        font-size: 11px;
+      }
+      .verdict.ok {
+        color: var(--ok);
+      }
+      .verdict.bad {
+        color: var(--err);
+      }
+      #tests {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--dim);
+      }
+      #tests div {
+        margin-top: 4px;
+      }
+      #log {
+        height: 150px;
+        overflow: auto;
+        background: #0d0d0d;
+        border-radius: 6px;
+        padding: 6px;
+        margin-top: 6px;
+        font:
+          11px/1.4 "Roboto Mono",
+          ui-monospace,
+          Menlo,
+          monospace;
+        color: var(--dim);
+        white-space: pre-wrap;
+      }
+      #log .ok {
+        color: var(--ok);
+      }
+      #log .err {
+        color: var(--err);
+      }
     </style>
   </head>
   <body>
     <div class="row" style="justify-content: space-between">
-      <div><h1>CPU NATHAN</h1><div class="sub">the Figma OS editor as a gate-level machine</div></div>
+      <div>
+        <h1>CPU NATHAN</h1>
+        <div class="sub">the Figma OS editor as a gate-level machine</div>
+      </div>
       <span class="pill" id="busy">idle</span>
     </div>
     <div class="row" style="margin-top: 8px">
-      <span class="pill" id="s-page">no page</span><span class="pill" id="s-hw">no hardware</span><span class="pill" id="s-os">not built</span>
+      <span class="pill" id="s-page">no page</span
+      ><span class="pill" id="s-hw">no hardware</span
+      ><span class="pill" id="s-os">not built</span>
     </div>
 
     <div class="card">
       <div class="title"><span>1</span>Build hardware</div>
       <div class="row">
         <button class="primary" id="hardware">Build hardware</button>
-        <label class="check"><input type="checkbox" id="labels" checked /> gate labels</label>
-        <label class="check"><input type="checkbox" id="redraw" /> redraw</label>
+        <label class="check"
+          ><input type="checkbox" id="labels" checked /> gate labels</label
+        >
+        <label class="check"
+          ><input type="checkbox" id="redraw" /> redraw</label
+        >
       </div>
       <div class="bar"><div id="hardware-bar"></div></div>
       <div class="prog" id="hardware-prog"></div>
-      <div class="help">Draws the 8 gates, every module and cell/ENGINE on the page "CPU NATHAN" (made if missing).</div>
+      <div class="help">
+        Draws the 8 gates, every module and cell/ENGINE on the page "CPU NATHAN"
+        (made if missing).
+      </div>
     </div>
 
     <div class="card">
       <div class="title"><span>2</span>Build the OS</div>
       <div class="row">
         <button class="primary" id="os">Build the OS</button>
-        <label class="check">max actions / event <input type="number" id="budget" value="450" min="50" step="50" /></label>
+        <label class="check"
+          >max actions / event
+          <input type="number" id="budget" value="700" min="50" step="50"
+        /></label>
       </div>
       <div class="row" style="margin-top: 6px">
-        <label class="check">latches <select id="latch"><option value="auto" selected>auto</option><option value="gates">every gate</option><option value="compact">compact</option></select></label>
-        <label class="check"><input type="checkbox" id="alias" checked /> identity gates as wires</label>
-        <label class="check"><input type="checkbox" id="longkeys" checked /> keep long shortcuts</label>
+        <label class="check"
+          >latches
+          <select id="latch">
+            <option value="auto" selected>auto</option>
+            <option value="gates">every gate</option>
+            <option value="compact">compact</option>
+            <option value="direct">direct (Q = D)</option>
+          </select></label
+        >
+        <label class="check"
+          ><input type="checkbox" id="alias" checked /> identity gates as
+          wires</label
+        >
       </div>
       <div class="bar"><div id="os-bar"></div></div>
       <div class="prog" id="os-prog"></div>
-      <div class="help">Reads the circuit off the canvas, makes one reaction per control, the variables, the lamps and the editor frame with the machine below it. Clicks longer than the budget are split over mouse down / up / click of the same click. Run the platform tests first to learn your viewer's real limit.</div>
+      <div class="help">
+        Reads the circuit off the canvas, makes one reaction per control, the
+        variables and the lamps, and three frames: the editor (▶ Present opens
+        it), the machine (every gate as a lamp) and the circuit (the drawing,
+        with a button per module). The viewer runs a reaction's actions
+        recursively; on a cold page 1,200 run in one event overflowed its stack.
+        At the default budget of 700 every control is one event; with a smaller
+        one, a longer reaction runs as a few events: its first part, then the
+        next parts from invisible timed overlays. Takes ~5 minutes.
+      </div>
     </div>
 
     <div class="card">
       <div class="title"><span>3</span>Self-test</div>
       <div class="row">
         <button id="selftest">Self-test</button>
-        <label class="check">actions <input type="number" id="events" value="300" min="10" step="50" /></label>
-        <label class="check">seed <input type="number" id="seed" value="1" /></label>
+        <label class="check"
+          >actions
+          <input type="number" id="events" value="300" min="10" step="50"
+        /></label>
+        <label class="check"
+          >seed <input type="number" id="seed" value="1"
+        /></label>
       </div>
       <div class="verdict" id="verdict"></div>
-      <div class="help">Replays a random user session through the reactions stored in the file and checks registers, screen lines and the editor layers against the editor spec. No Present mode needed.</div>
+      <div class="help">
+        Replays a random user session through the reactions stored in the file
+        and checks registers, screen lines and the editor layers against the
+        editor spec. No Present mode needed.
+      </div>
     </div>
 
     <div class="card">
       <div class="title"><span>?</span>Platform tests</div>
-      <div class="row"><button id="platform">Build platform tests</button><button id="clean">Clean</button></div>
+      <div class="row">
+        <button id="platform">Build platform tests</button
+        ><button id="clean">Clean</button>
+      </div>
       <div id="tests"></div>
-      <div class="help">Small prototypes that check what your Figma viewer does (action limit, nesting, bubbling, spacers, keys). ▶ Present and pick a flow "NATHAN test …".</div>
+      <div class="help">
+        Small prototypes that check what your Figma viewer does (action limit,
+        nesting, bubbling, spacers, keys). ▶ Present and pick a flow "NATHAN
+        test …".
+      </div>
     </div>
 
     <div class="card">
@@ -120,7 +298,7 @@
   };
   var busyButtons = ["hardware", "os", "selftest", "platform", "clean"];
   $("hardware").onclick = () => post({ type: "hardware", gateLabels: checked("labels"), redraw: checked("redraw") });
-  $("os").onclick = () => post({ type: "os", budget: num("budget", 450), latch: $("latch").value, alias: checked("alias"), longKeys: checked("longkeys") });
+  $("os").onclick = () => post({ type: "os", budget: num("budget", 700), latch: $("latch").value, alias: checked("alias") });
   $("selftest").onclick = () => post({ type: "selftest", events: num("events", 300), seed: num("seed", 1) });
   $("platform").onclick = () => post({ type: "platform" });
   $("clean").onclick = () => post({ type: "clean" });

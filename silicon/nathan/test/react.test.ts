@@ -10,7 +10,7 @@ import { nathanNetlist, nathanPowerOn } from "../src/hw";
 import { applyRef, compare, engineInputs, prng } from "../src/model/oracle";
 import * as R from "../src/model/reference";
 import { compareScreen } from "../src/model/screen";
-import { buildCatalog, reactionSpecs } from "../src/react/catalog";
+import { buildCatalog, givenHolds, reactionSpecs } from "../src/react/catalog";
 import { depth, staticSize } from "../src/react/synth";
 import { INPUTS } from "./driver";
 import { mapProbe, observedNets, snapshots } from "./sample";
@@ -22,7 +22,7 @@ const port = (n: string) => net.ports.find((p) => p.name === n)!.nets;
 
 const pool = snapshots(net, 21, 40, 90, 2);
 
-describe.each([["gates"], ["compact"], ["auto"]] as const)("synthesised reactions, latches: %s", (latch) => {
+describe.each([["gates"], ["compact"], ["direct"], ["auto"]] as const)("synthesised reactions, latches: %s", (latch) => {
   const catalog = buildCatalog(net, reactionSpecs(), { latch });
 
   it("has a reaction for every control, each at most one conditional deep", () => {
@@ -36,7 +36,7 @@ describe.each([["gates"], ["compact"], ["auto"]] as const)("synthesised reaction
     const rows: string[] = [];
     let worst = 0;
     for (const [name, { spec, reaction }] of catalog) {
-      const cases = pool.filter((p) => spec.valid(p.spec)).slice(0, 140);
+      const cases = pool.filter((p) => spec.valid(p.spec) && givenHolds(net, spec, p.v)).slice(0, 140);
       expect(cases.length, `no sampled state offers ${name}`).toBeGreaterThan(5);
       const executed: number[] = [];
       for (const snap of cases) {

@@ -14,9 +14,8 @@ import {
   type FigmaValue,
   runFigmaActions,
 } from "../../../src/prototype/emulate";
-import { flatten } from "../../../src/netlist/flatten";
 import type { FlatNetlist } from "../../../src/netlist/types";
-import { extract } from "../../../src/figma";
+import { nathanNetlist } from "../../src/hw";
 import { LAYERS } from "../../src/hw/layout";
 import {
   type Ev,
@@ -27,20 +26,20 @@ import {
 } from "../../src/model/oracle";
 import * as R from "../../src/model/reference";
 import {
-  BOX_CELLS,
   compareScreen,
   expectedScreen,
   type Screen,
   type ScreenLayer,
 } from "../../src/model/screen";
 import { HOTSPOT_REACTIONS } from "../../src/react/catalog";
-import { KEYS } from "../../src/ui/spec";
-import { COLLECTION, PRESENT, TOP } from "./names";
+import { KEYS, KIND_NAMES } from "../../src/ui/spec";
+import { COLLECTION, PRESENT } from "./names";
 import { findPage } from "./where";
 import type { SelfTestResult } from "./messages";
 
 /** The slice of a layer the self-test needs (a SceneNode satisfies it). */
 interface UiNode {
+  id: string;
   name: string;
   visible: boolean;
   children?: readonly UiNode[];
@@ -49,7 +48,9 @@ interface UiNode {
 }
 
 const TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse"];
+const TOOL_CODES = [86, 70, 82, 79];
 const ARROW_CODES = [37, 39, 38, 40];
+const ARROW_BUTTONS = ["left", "right", "up", "down"];
 const CORNER = ["se", "sw", "ne", "nw"]; // by code: bit0 = west, bit1 = north
 
 export async function selfTest(
@@ -69,8 +70,9 @@ export async function selfTest(
     UiNode | undefined;
   if (!editor) throw new Error("the editor frame is missing");
 
-  // the circuit as drawn, and the variables as stored
-  const net: FlatNetlist = flatten(await extract([page]), TOP);
+  // the circuit (the netlist Build the OS read off the canvas: same gates, same net names; not read
+  // again here, the drawing is large), and the variables as stored
+  const net: FlatNetlist = nathanNetlist();
   const colls = (await api.variables.getLocalVariableCollectionsAsync()).filter(
     (c) => c.name === COLLECTION || c.name.startsWith(`${COLLECTION} · `),
   );
@@ -118,8 +120,19 @@ export async function selfTest(
     const id = n.boundVariables?.visible?.id;
     return id !== undefined ? values.get(id) === true : n.visible;
   };
+  // a layer's stored reactions, read once: every read of `reactions` is a fresh deep copy, and the
+  // long ones (a thousand actions or more) would fill the plugin's memory over a session
+  const stored = new Map<string, ReadonlyArray<Reaction>>();
+  const reactionsOf = (n: UiNode): ReadonlyArray<Reaction> => {
+    let r = stored.get(n.id);
+    if (!r) {
+      r = n.reactions ?? [];
+      stored.set(n.id, r);
+    }
+    return r;
+  };
   const fire = (n: UiNode, type: string, key?: number): number => {
-    const r = n.reactions?.find(
+    const r = reactionsOf(n).find(
       (x) =>
         x.trigger?.type === type &&
         (key === undefined ||
@@ -129,74 +142,114 @@ export async function selfTest(
       throw new Error(
         `${n.name} has no ${type} reaction${key !== undefined ? ` for key ${key}` : ""}`,
       );
-    return runFigmaActions(r.actions, values);
+    return runChain(r.actions);
   };
-  // a click is three events in Figma: mouse down, mouse up, click (a long reaction is split across them)
+  /** Runs an action list as the viewer does: when it ends by opening (or swapping in) a timed
+   * overlay, that overlay's timer runs the next part on a fresh stack, until one closes. Returns the
+   * most actions any one of those events ran. */
+  const runChain = (first: readonly Action[]): number => {
+    let acts = first;
+    let worst = 0;
+    for (let hop = 0; hop < 64; hop++) {
+      const last = acts[acts.length - 1];
+      const control =
+        last?.type === "NODE" || last?.type === "CLOSE" ? last : undefined;
+      const body = control ? acts.slice(0, -1) : acts;
+      worst = Math.max(worst, runFigmaActions(body, values) + (control ? 1 : 0));
+      // a trigger may open the first overlay; an overlay's timer must swap in the next or close
+      if (hop > 0 && !control)
+        throw new Error("an overlay's timer neither swaps in the next overlay nor closes");
+      if (!control || control.type !== "NODE") return worst;
+      const nav = String(control.navigation);
+      if (nav !== (hop === 0 ? "OVERLAY" : "SWAP"))
+        throw new Error(`a reaction ${hop === 0 ? "opens" : "continues with"} ${nav}`);
+      const overlay = page.children.find(
+        (n) => n.id === control.destinationId,
+      ) as UiNode | undefined;
+      const timed = overlay
+        ? reactionsOf(overlay).find((x) => x.trigger?.type === "AFTER_TIMEOUT")
+        : undefined;
+      if (!timed?.actions)
+        throw new Error(
+          `a reaction continues to ${overlay?.name ?? control.destinationId}, which has no timer`,
+        );
+      acts = timed.actions;
+    }
+    throw new Error("a reaction's chain of overlays never closes");
+  };
+  // a click: its click reaction, or mouse down then mouse up when a long one was split across them
   const press = (n: UiNode): number => {
     const stages = ["MOUSE_DOWN", "MOUSE_UP", "ON_CLICK"].filter((type) =>
-      n.reactions?.some((x) => x.trigger?.type === type),
+      reactionsOf(n).some((x) => x.trigger?.type === type),
     );
     if (!stages.length) throw new Error(`${n.name} has no click reaction`);
     return Math.max(...stages.map((type) => fire(n, type)));
   };
 
+  /** The value a row of binary-weighted spacer frames adds up to (frame `<prefix>i` counts 2^i). */
+  const spacers = (n: UiNode, prefix: string): number =>
+    (n.children ?? []).reduce(
+      (v, c) =>
+        c.name.startsWith(prefix) && shown(c)
+          ? v + (1 << Number(c.name.slice(prefix.length)))
+          : v,
+      0,
+    );
+  /** The leaf a pick tree shows (null when a level shows both children or none). */
+  const pickedLeaf = (root: UiNode): UiNode | null => {
+    let n = root;
+    do {
+      const on = (n.children ?? []).filter(shown);
+      if (on.length !== 1) return null;
+      n = on[0];
+    } while (n.name.startsWith("pick/"));
+    return n;
+  };
+  const leafIndex = (leaf: UiNode | null) =>
+    leaf ? Number(leaf.name.split("/")[1]) : -1;
+
   const readUi = (): Screen => {
-    const sum = (box: UiNode, prefix: string) =>
-      [0, 1, 2, 3].reduce(
-        (s, i) =>
-          s +
-          (shown(find(box, prefix + i) ?? find(box, "row", prefix + i)!)
-            ? 1 << i
-            : 0),
-        0,
-      );
+    const selection = find(canvas, "selection")!;
+    const outlined = shown(selection) ? pickedLeaf(selection) : null;
+    const highlight = find(editor, "layers", "highlight")!;
+    const lit = shown(highlight)
+      ? LAYERS - 1 - spacers(highlight, "nsel/")
+      : -1;
     const layers: ScreenLayer[] = [];
     for (let k = 0; k < LAYERS; k++) {
       const box = find(canvas, `layer/${k}`)!;
-      const row = find(box, "row")!;
-      const body = find(row, "body")!;
-      const swatches = body
-        .children!.filter((c) => shown(c))
-        .map((c) => Number(c.name.split("/")[1]));
-      const x = sum(row, "left");
-      const y = sum(box, "top");
-      const panelRow = find(present, "editor", "layers", `row/${k}`)!;
-      const kinds = ["Frame", "Rectangle", "Ellipse"].filter((nm) =>
-        shown(find(panelRow, `name/${nm}`)!),
+      const col = find(box, "col")!;
+      const row = find(col, "xbox", "row")!;
+      const x0 = spacers(row, "x0/");
+      const y0 = spacers(col, "y0/");
+      const panelRow = find(editor, "layers", `row/${k}`)!;
+      const name = pickedLeaf(find(panelRow, "name")!);
+      const swatch = pickedLeaf(find(row, "body")!);
+      const [square, round] = ["rect", "ellipse"].map((s) =>
+        swatch ? shown(find(swatch, s)!) : false,
       );
+      const kind = name
+        ? KIND_NAMES.indexOf(name.name.slice("name/".length))
+        : -1;
       layers.push({
         slot: k,
-        shown: shown(box),
-        x,
-        y,
-        w: BOX_CELLS - x - sum(row, "right"),
-        h: BOX_CELLS - y - sum(box, "bottom"),
-        color: swatches.length === 1 ? swatches[0] : -1,
-        kind:
-          kinds.length === 1
-            ? (
-                {
-                  Frame: "frame",
-                  Rectangle: "rect",
-                  Ellipse: "ellipse",
-                } as const
-              )[kinds[0] as "Frame"]
-            : null,
-        selected: shown(find(canvas, `overlay/${k}`)!),
+        shown: shown(box) && shown(col),
+        x: x0,
+        y: y0,
+        w: spacers(find(col, "xbox", "x1")!, "x1/") - x0,
+        h: spacers(find(box, "y1")!, "y1/") - y0,
+        color: leafIndex(swatch),
+        kind: kind > 0 ? R.KINDS[kind - 1] : null,
+        shape: square === round ? null : round ? "ellipse" : "rect",
+        selected: outlined?.name === `overlay/${k}` && lit === k,
         row: shown(panelRow),
       });
     }
-    const tools = TOOL_NAMES.map((n) =>
-      shown(find(present, "editor", "toolbar", `tool/${n}`, "active")!),
-    );
-    const cur = Array.from({ length: 16 }, (_, c) =>
-      shown(find(present, "editor", "design", "current", `current/${c}`)!),
-    );
     const sets = canvas.children!.filter((c) => c.name.startsWith("hot/"));
     return {
       layers,
-      tool: tools.filter(Boolean).length === 1 ? tools.indexOf(true) : -1,
-      color: cur.filter(Boolean).length === 1 ? cur.indexOf(true) : -1,
+      tool: spacers(find(editor, "toolbar", "highlight")!, "t/"),
+      color: leafIndex(pickedLeaf(find(editor, "design", "current")!)),
       hot:
         sets.filter((s) => shown(s)).length === 1
           ? sets.findIndex((s) => shown(s))
@@ -204,13 +257,44 @@ export async function selfTest(
     };
   };
 
-  // the user: every action goes through a layer's stored reaction
-  const act = (ev: Ev, spec: R.State): number => {
-    const key = (code: number) => fire(present, "ON_KEY_DOWN", code);
+  // the user: every action goes through a layer's stored reaction, by its shortcut or its button.
+  // A shortcut is on the frame, or on the one showing layer of the stack of key layers that the
+  // selection picks (Figma gives a key to a layer that shows, never to a hidden one).
+  const keyed = (n: UiNode, code: number) =>
+    reactionsOf(n).some(
+      (x) =>
+        x.trigger?.type === "ON_KEY_DOWN" && x.trigger.keyCodes.includes(code),
+    );
+  const shortcuts = find(editor, "shortcuts");
+  const holderOf = (code: number): UiNode | null => {
+    if (keyed(present, code)) return present;
+    const leaf = shortcuts ? pickedLeaf(shortcuts) : null;
+    return leaf && keyed(leaf, code) ? leaf : null;
+  };
+  let viaKeys = 0;
+  const act = (ev: Ev, spec: R.State, preferKey: boolean): number => {
+    const keyOr = (code: number, button: () => number) => {
+      if (!preferKey) return button();
+      const holder = holderOf(code);
+      if (!holder) throw new Error(`no layer that shows takes key ${code}`);
+      viaKeys++;
+      return fire(holder, "ON_KEY_DOWN", code);
+    };
+    // a per-slot button is a pick tree of them: the one showing
+    const button = (name: string) => () => {
+      const b = find(present, "editor", "design", `button/${name}`)!;
+      const leaf = b.children?.some((c) => c.name.startsWith("pick/"))
+        ? pickedLeaf(b)
+        : b;
+      if (!leaf) throw new Error(`button/${name}: no single slot button shows`);
+      return press(leaf);
+    };
     switch (ev.k) {
       case "tool":
-        return press(
-          find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)!,
+        return keyOr(TOOL_CODES[ev.t], () =>
+          press(
+            find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)!,
+          ),
         );
       case "fill":
         return press(find(present, "editor", "design", `color/${ev.c}`)!);
@@ -240,14 +324,18 @@ export async function selfTest(
           throw new Error(
             `the visible click layer is ${sets[0].name}, expected ${name}`,
           );
-        const cell = find(sets[0], `cell/${ev.x},${ev.y}`)!;
-        return Math.max(fire(cell, "MOUSE_ENTER"), press(sets[0]));
+        const row = find(sets[0], `row/${ev.y}`)!;
+        const cell = find(row, `cell/${ev.x}`)!;
+        return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
       }
       case "handle": {
         const k = spec.layers.findIndex((l) => l.id === spec.selected);
-        const overlay = find(canvas, `overlay/${k}`)!;
-        if (!shown(overlay))
-          throw new Error(`the selection overlay of slot ${k} is not visible`);
+        const selection = find(canvas, "selection")!;
+        const overlay = shown(selection) ? pickedLeaf(selection) : null;
+        if (overlay?.name !== `overlay/${k}`)
+          throw new Error(
+            `the visible selection outline is ${overlay?.name ?? "none"}, expected overlay/${k}`,
+          );
         const walk = (n: UiNode): UiNode | null =>
           n.name === `handle/${CORNER[ev.corner]}`
             ? n
@@ -255,17 +343,18 @@ export async function selfTest(
         return press(walk(overlay)!);
       }
       case "delete":
-        return key(46);
+        return keyOr(46, button("delete"));
       case "dup":
-        return key(68);
+        return keyOr(68, button("duplicate"));
       case "fwd":
-        return key(221);
+        return keyOr(221, button("forward"));
       case "back":
-        return key(219);
+        return keyOr(219, button("backward"));
       case "nudge":
-        return key(ARROW_CODES[ev.dir]);
+        return keyOr(ARROW_CODES[ev.dir], button(ARROW_BUTTONS[ev.dir]));
       case "esc":
-        return key(27);
+        viaKeys++;
+        return fire(present, "ON_KEY_DOWN", 27);
       default:
         throw new Error(`the editor has no control for ${ev.k}`);
     }
@@ -279,7 +368,7 @@ export async function selfTest(
     const ev = uiEvent(rnd, spec);
     const next = applyRef(spec, ev);
     try {
-      worst = Math.max(worst, act(ev, spec));
+      worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
     } catch (e) {
       return {
         ok: false,
@@ -303,7 +392,7 @@ export async function selfTest(
   return {
     ok: true,
     events: o.events,
-    text: `✓ ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")})`,
+    text: `✓ ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`,
   };
 }
 
@@ -324,6 +413,8 @@ function uiDiff(spec: R.State, ui: Screen): string | null {
       return `UI: layer ${k} selected=${g.selected}, spec ${w.selected}`;
     if (g.kind !== w.kind)
       return `UI: layer ${k} name ${g.kind}, spec ${w.kind}`;
+    if (g.shape !== w.shape)
+      return `UI: layer ${k} drawn ${g.shape}, spec ${w.shape}`;
     if (g.color !== w.color)
       return `UI: layer ${k} colour ${g.color}, spec ${w.color}`;
     if (g.x !== w.x || g.y !== w.y || g.w !== w.w || g.h !== w.h)

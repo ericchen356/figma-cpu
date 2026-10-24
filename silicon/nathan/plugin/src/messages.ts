@@ -7,10 +7,9 @@ export type ToMain =
   | { type: "hardware"; gateLabels: boolean; redraw: boolean }
   | {
       type: "os";
-      latch: "auto" | "gates" | "compact";
+      latch: "auto" | "gates" | "compact" | "direct";
       budget: number;
       alias: boolean;
-      longKeys?: boolean;
     }
   | { type: "selftest"; events: number; seed: number }
   | { type: "platform" }
