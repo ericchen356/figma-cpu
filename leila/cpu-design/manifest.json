@@ -1,0 +1,9 @@
+{
+  "name": "FigmaCPU — draw Leila page",
+  "id": "figmacpu-draw-leila-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}
