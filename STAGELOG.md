@@ -39,7 +39,7 @@ An 8-bit CPU built inside Figma, one reproducible stage at a time.
 
 ---
 
-## Stage 1 — One spec to rule them all   (tag: `stage-1`)
+## Stage 1 — One spec to rule them all (tag: `stage-1`)
 
 **Goal:** a single machine-readable definition of the ISA, palette and memory map. The canvas drawing, the assembler and the tests are all generated from or checked against it.
 
@@ -47,30 +47,32 @@ An 8-bit CPU built inside Figma, one reproducible stage at a time.
 
 **Figma work:** none. This stage feeds Stage 2.
 
-**Prompts used:** *"start drawing the entire cpu out try to one shot the PRD. CREATE A PLAN TO ONESHOT THE PRD CPU SPECS"* → the approved plan locked the open questions:
+**Prompts used:** _"start drawing the entire cpu out try to one shot the PRD. CREATE A PLAN TO ONESHOT THE PRD CPU SPECS"_ → the approved plan locked the open questions:
+
 - palette = PICO-8;
 - v2 goes on a new page;
 - registers are encoded as `rd<<4 | rs`;
 - a fixed micro-op vocabulary.
 
 **Code:**
+
 - [`spec/opcodes.json`](spec/opcodes.json): 29 opcodes, each with `op | mnem | fmt | micro`.
 - [`spec/palette.json`](spec/palette.json)
 - [`spec/memory-map.json`](spec/memory-map.json)
 
 **Micro-op vocabulary** (the only behavior written in code; everything else is data on the canvas):
 
-| micro-op | meaning |
-|---|---|
-| `REG` | read the register byte: `rd = b>>4`, `rs = b&15` |
-| `IMM8` / `IMM16` | read an immediate into `T` / `W` (little-endian) |
-| `SET r T` · `COPY r r` | register writes |
-| `LOAD r HL\|W` · `STORE r HL\|W` | memory access |
-| `SETHL W` · `INCHL` | the H:L pointer |
-| `ALU op r [r]` | ADD SUB AND OR XOR CMP INC DEC SHL SHR |
-| `JUMP W [Z\|NZ\|C\|NC\|N\|NN]` | control flow |
-| `PUSH r` · `POP r` · `PUSHPC` · `POPPC` | stack |
-| `HALT` | stop |
+| micro-op                                | meaning                                          |
+| --------------------------------------- | ------------------------------------------------ |
+| `REG`                                   | read the register byte: `rd = b>>4`, `rs = b&15` |
+| `IMM8` / `IMM16`                        | read an immediate into `T` / `W` (little-endian) |
+| `SET r T` · `COPY r r`                  | register writes                                  |
+| `LOAD r HL\|W` · `STORE r HL\|W`        | memory access                                    |
+| `SETHL W` · `INCHL`                     | the H:L pointer                                  |
+| `ALU op r [r]`                          | ADD SUB AND OR XOR CMP INC DEC SHL SHR           |
+| `JUMP W [Z\|NZ\|C\|NC\|N\|NN]`          | control flow                                     |
+| `PUSH r` · `POP r` · `PUSHPC` · `POPPC` | stack                                            |
+| `HALT`                                  | stop                                             |
 
 FETCH (`IR ← mem[PC]; PC++`) runs before every instruction.
 
@@ -79,3 +81,62 @@ FETCH (`IR ← mem[PC]; PC++`) runs before every instruction.
 **Verify:** `node -e "console.log(require('./spec/opcodes.json').opcodes.length)"` prints `29`.
 
 **Gotchas:** register operands are packed into one byte, so every register instruction has a fixed size. That keeps the two-pass assembler trivial.
+
+---
+
+## Stage 2 — Draw the whole machine with the Figma MCP (tag: `stage-2`)
+
+**Goal:** the complete v2 machine on its own Figma page. Every node the plugin needs carries the contract name from PRD §4.2.
+
+**Inputs:** `spec/*.json` (Stage 1) and a Figma MCP server connected to Claude Code.
+
+**Figma work:** `[MCP]` `[Design]` A new page **Machine v2**. It has components (`Lamp`, and a `Register` set with idle/active variants) and these blocks:
+
+- CONTROL: PC, SP, IR + mnemonic, FETCH/DECODE/EXEC lamps, clock
+- REGISTERS: A–L as `Register` instances
+- ALU: op, IN1, IN2, OUT, Z/C/N flags
+- address and data buses with taps
+- **DECODER / OPCODE TABLE**: 29 rows of `op | mnem | fmt | micro`, generated from the spec
+- RAM: a 256-byte window that follows PC, plus a 64-byte pinned window
+- SCREEN: a 128×96 image-fill target and the PICO-8 palette
+- memory-mapped IO
+- a dashed Phase 2 slot
+
+The draw added 404 contract-named nodes.
+
+**Prompts used:**
+
+- One-time setup:
+
+  ```bash
+  claude mcp add --transport http figma https://mcp.figma.com/mcp
+  claude mcp login figma        # needs an interactive terminal
+  ```
+
+- The relay prompt is in [`tools/run-in-figma.sh`](tools/run-in-figma.sh). It tells a headless Claude to call `use_figma` with the script file's contents unchanged.
+
+**Code:**
+
+- [`tools/draw-machine/draw.js`](tools/draw-machine/draw.js): the drawing logic.
+- [`build.mjs`](tools/draw-machine/build.mjs): injects the spec and emits `code.js` (dev plugin) and `use-figma.js` (MCP body).
+- [`tools/run-in-figma.sh`](tools/run-in-figma.sh)
+
+**Reproduce:**
+
+```bash
+git checkout stage-2
+node tools/draw-machine/build.mjs
+tools/run-in-figma.sh tools/draw-machine/use-figma.js "Draw FigmaCPU v2 machine"
+```
+
+To replace an existing Machine v2, build with the redraw flag (`build.mjs --force`). Without MCP: Figma desktop → Plugins → Development → Import plugin from manifest → `tools/draw-machine/manifest.json` → run it.
+
+**Verify:** the command prints `RESULT: Drew Machine v2 (…) with 404 contract-named nodes`.
+![machine](docs/stages/stage-2-machine.png)
+
+**Gotchas:**
+
+- MCP tools only load when a Claude Code session starts. Adding the server mid-session meant relaying through `claude -p`.
+- `use_figma` caps code at 50,000 chars (ours is about 17k).
+- Inside `use_figma`, `setPluginData` and `createImageAsync` are forbidden, and pages must be switched with `await figma.setCurrentPageAsync()` + `page.loadAsync()`. The draw script avoids all of these.
+- The script is idempotent: it won't redraw over an existing `Machine v2` unless built with the redraw flag.
