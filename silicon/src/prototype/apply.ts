@@ -8,6 +8,9 @@
 // chunk through the dispatcher described at `Chunking` (types.ts): Step = one chunk, and
 // optionally "Step ×3" (MOUSE_DOWN + MOUSE_UP + ON_CLICK on one button) and ON_KEY_DOWN keys
 // on the frames. A tick completes when the phase wraps to 0.
+// Reset is chunked the same way: a Reset that restores every variable is one event of ~2,300 actions
+// for the whole CPU, past the 2001 at which the viewer died, so a big reset runs as a hop chain
+// through two extra frames (Reset A ⇄ Reset B, one dispatched chunk per hop) and returns to Control.
 // Plugin code only builds this; at run time Figma's prototype engine does all the work.
 import {
   COLORS,
@@ -93,7 +96,9 @@ export interface ApplyResult {
   running: Variable;
   /** Chunked only: the phase (next chunk, FLOAT 0…chunks−1) and its text. */
   phase?: Variable;
-  frames: { control: FrameNode; runA: FrameNode; runB: FrameNode };
+  /** Chunked Reset only: its phase (next reset chunk, FLOAT 0…resetChunks−1). */
+  resetPhase?: Variable;
+  frames: { control: FrameNode; runA: FrameNode; runB: FrameNode; resetA?: FrameNode; resetB?: FrameNode };
   buttons: { step: FrameNode; run: FrameNode; reset: FrameNode; stopA: FrameNode; stopB: FrameNode; stepMulti?: FrameNode };
   /** Lit nodes bound to variables, and those skipped because their net has no variable. */
   bound: number;
@@ -103,6 +108,9 @@ export interface ApplyResult {
   /** Events per tick (1 unchunked) and the chunking used, if any. */
   chunks: number;
   chunking?: Chunking;
+  /** Events per Reset (1: one click, no extra frames). */
+  resetChunks: number;
+  resetChunking?: Chunking;
 }
 
 const DIGITS = 4;
@@ -111,7 +119,7 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const log = opts.log ?? (() => {});
   const page = opts.page ?? api.currentPage;
   const name = plan.name;
-  const frameNames = [`${name} · Control`, `${name} · Run A`, `${name} · Run B`];
+  const frameNames = [`${name} · Control`, `${name} · Run A`, `${name} · Run B`, `${name} · Reset A`, `${name} · Reset B`];
   const display = opts.tickDisplay ?? "concat";
   const tickExtra = display === "digits" ? worstCase(digitsIncrement(range(DIGITS, "d"), range(DIGITS, "s"))) + 1 : display === "concat" ? 2 : 1;
   const cap = opts.maxActionsPerEvent ?? plan.maxActionsPerEvent ?? DEFAULT_MAX_ACTIONS_PER_EVENT;
@@ -119,6 +127,13 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
     ? plan.chunking && plan.chunking.maxActionsPerEvent === cap && plan.chunking.tickExtra >= tickExtra
       ? plan.chunking
       : chunkTick(plan.tick, { maxActionsPerEvent: cap, tickExtra })
+    : undefined;
+
+  // Reset restores every variable (plan.reset) plus the control variables (the "tail"). Too big for one
+  // event under the cap → run it as chunks over a hop chain, like the Run loop.
+  const resetTailMax = 2 + (display === "concat" ? 1 : 0) + (display === "digits" ? 2 * DIGITS : 0) + (chunking ? 3 : 0) + 1; // + the reset dispatcher's own scratch variable
+  const resetChunking: Chunking | undefined = needsChunks(worstActions(plan.reset), cap, resetTailMax)
+    ? chunkTick(plan.reset, { maxActionsPerEvent: cap, tickExtra: resetTailMax })
     : undefined;
 
   if (opts.replace !== false) {
@@ -138,6 +153,12 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
           { name: `ctl/digitText/${i}`, type: "STRING", init: "0" },
         ]).flat()
       : []),
+    ...(resetChunking
+      ? [
+          { name: "ctl/resetPhase", type: "FLOAT" as const, init: 0 },
+          { name: "ctl/resetNow", type: "FLOAT" as const, init: 0 },
+        ]
+      : []),
     ...(chunking
       ? [
           { name: "ctl/phase", type: "FLOAT" as const, init: 0 },
@@ -155,6 +176,7 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const running = ctl.get("ctl/running")!;
   const tickText = ctl.get("ctl/tickText");
   const phase = ctl.get("ctl/phase");
+  const resetPhase = ctl.get("ctl/resetPhase");
   const variables = new Map<number, Variable>();
   const varIds = new Map<number, string>();
   netVars.forEach((v, i) => {
@@ -206,13 +228,33 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
       ),
     ];
   } else event = [...figmaActions(plan.tick, varIds, opts.actions), ...tickDone];
-  const resetActs: Action[] = [
-    ...figmaActions(plan.reset, varIds, opts.actions),
+  // What Reset does besides restoring the circuit: counters, phase and the running flag back to 0.
+  const resetTail: Action[] = [
     setVariable(ticks.id, floatData(0)),
     setVariable(running.id, boolData(false)),
     ...(tickText ? [setVariable(tickText.id, strData("0"))] : []),
     ...[...ctl.entries()].filter(([n]) => n.startsWith("ctl/digit") || n.startsWith("ctl/phase")).map(([n, v]) => setVariable(v.id, n.includes("Text") ? strData("0") : floatData(0))),
   ];
+  if (resetTail.length > resetTailMax) throw new Error(`reset tail is ${resetTail.length} actions, more than the ${resetTailMax} budgeted`);
+  // Unchunked: the whole reset in one click. Chunked: the click only starts the hop chain; each hop (an
+  // AFTER_TIMEOUT on Reset A / B) runs one chunk, the last one the tail, then returns to Control.
+  const resetActs: Action[] = resetChunking ? [] : [...figmaActions(plan.reset, varIds, opts.actions), ...resetTail];
+  const resetEvent: Action[] = (() => {
+    if (!resetChunking) return [];
+    const rp = resetPhase!.id;
+    const now = ctl.get("ctl/resetNow")!.id;
+    const K = resetChunking.chunks.length;
+    return [
+      setVariable(now, exprData("ADDITION", [aliasData(rp, "FLOAT"), floatData(0)], "FLOAT")),
+      ...resetChunking.chunks.map((c, k) =>
+        conditional(compareData("EQUALS", now, k), [
+          ...figmaActions(c, varIds, opts.actions),
+          setVariable(rp, floatData((k + 1) % K)),
+          ...(k === K - 1 ? [...resetTail, setVariable(now, floatData(0))] : []),
+        ]),
+      ),
+    ];
+  })();
   const isRunning = exprData("EQUALS", [aliasData(running.id), boolData(true)]);
   // Stop on HALTED only at a tick boundary: a chunked tick must finish all its chunks,
   // otherwise the machine is left half-way through a clock cycle.
@@ -273,6 +315,8 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const run = put(controlFrame, button(api, "Run", COLORS.run), 172, 84);
   const reset = put(controlFrame, button(api, "Reset", COLORS.reset), 320, 84);
   const stepMulti = chunking && opts.multiTrigger ? put(controlFrame, button(api, "Step ×3", COLORS.step), 468, 84) : undefined;
+  const resetA = resetChunking ? frame(`${name} · resetting (A)`, 3) : undefined;
+  const resetB = resetChunking ? frame(`${name} · resetting (B)`, 4) : undefined;
   const stopA = put(runA, button(api, "Stop", COLORS.stop), 24, 84);
   const stopB = put(runB, button(api, "Stop", COLORS.stop), 24, 84);
 
@@ -283,7 +327,7 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
     { trigger: afterTimeout(delay), actions: [conditional(keepGoing, [...event, navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)])] },
     ...keys,
   ];
-  log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""})…`);
+  log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""}${resetChunking ? `, ${resetChunking.chunks.length} events per reset` : ""})…`);
   await step.setReactionsAsync([{ trigger: onClick(), actions: event }]);
   if (stepMulti)
     await stepMulti.setReactionsAsync([
@@ -291,7 +335,21 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
       { trigger: mouseUp(), actions: event },
       { trigger: onClick(), actions: event },
     ]);
-  await reset.setReactionsAsync([{ trigger: onClick(), actions: resetActs }]);
+  if (resetChunking) {
+    const hop = (self: FrameNode, other: FrameNode) =>
+      self.setReactionsAsync([
+        {
+          trigger: afterTimeout(delay),
+          // phase wrapped to 0 = the last chunk ran: back to Control; else hop to the other frame
+          actions: [...resetEvent, conditional(compareData("EQUALS", resetPhase!.id, 0), [navigate(controlFrame.id)], [navigate(other.id)])],
+        },
+      ]);
+    await reset.setReactionsAsync([
+      { trigger: onClick(), actions: [setVariable(running.id, boolData(false)), setVariable(resetPhase!.id, floatData(0)), navigate(resetA!.id)] },
+    ]);
+    await hop(resetA!, resetB!);
+    await hop(resetB!, resetA!);
+  } else await reset.setReactionsAsync([{ trigger: onClick(), actions: resetActs }]);
   await run.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(true)), navigate(runA.id)] }]);
   for (const stop of [stopA, stopB]) await stop.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(false))] }]);
   if (keys.length) await controlFrame.setReactionsAsync(keys);
@@ -313,13 +371,16 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
     ...(tickText ? { tickText } : {}),
     running,
     ...(phase ? { phase } : {}),
-    frames: { control: controlFrame, runA, runB },
+    ...(resetPhase ? { resetPhase } : {}),
+    frames: { control: controlFrame, runA, runB, ...(resetA ? { resetA, resetB } : {}) },
     buttons: { step, run, reset, stopA, stopB, ...(stepMulti ? { stepMulti } : {}) },
     bound,
     unbound,
     actionsPerStep: perEvent,
     chunks: chunking?.chunks.length ?? 1,
     ...(chunking ? { chunking } : {}),
+    resetChunks: resetChunking?.chunks.length ?? 1,
+    ...(resetChunking ? { resetChunking } : {}),
   };
 }
 

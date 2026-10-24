@@ -42,7 +42,7 @@ import {
   type Where,
 } from "./where";
 
-/** Plan name: variable collection "CPU" (+ "CPU · 2" …), frames "CPU · Control", "CPU · Run A/B". */
+/** Plan name: variable collection "CPU" (+ "CPU · 2" …), frames "CPU · Control", "CPU · Run A/B" (+ "CPU · Reset A/B" when the reset is chunked). */
 export const NAME = "CPU";
 const CPU_MODULE = "CPU";
 const DOC_PROGRAM = "silicon.program";
@@ -558,7 +558,7 @@ export class SiliconApp {
       for (const c of n.children) walk(c, true);
     };
     for (const c of page.children) {
-      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`].includes(c.name)) walk(c, true);
+      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, `${NAME} · Reset A`, `${NAME} · Reset B`].includes(c.name)) walk(c, true); // Reset A/B: the chunked reset's hops carry the power-on literals
       if (c.name === STEP_FRAME) {
         walk(c, false);
         const h = child(c as FrameNode, "header");

@@ -506,7 +506,7 @@ describe("programs", () => {
   }
 
   it("all assemble cleanly into 16 bytes", () => {
-    expect(Object.keys(PROGRAMS).sort()).toEqual(["count", "fib", "logic", "mem", "mul", "sub"]);
+    expect(Object.keys(PROGRAMS).sort()).toEqual(["blink", "count", "fib", "lfsr", "logic", "mem", "mod", "mul", "pow2", "sub", "triangle"]);
     for (const name of Object.keys(PROGRAMS)) load(name);
   });
 

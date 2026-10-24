@@ -17,6 +17,7 @@ import { dispatchOverhead, gateExpr, plan, splitActions, varName, worstActions }
 import { powerOnState, simpleSchedule } from "../src/prototype/schedule";
 import type { Expr, PlanAction, PrototypePlan } from "../src/prototype/types";
 import { RefSim } from "../src/sim/reference";
+import { powerOnWith } from "../plugin/src/program";
 
 // ---------- lane A (src/compile) ----------
 
@@ -884,9 +885,11 @@ describe("apply() with chunked ticks", () => {
     // keys on the Control and Run frames
     for (const fr of [res.frames.control, res.frames.runA, res.frames.runB])
       expect((fr as unknown as FNode).reactions.find((r) => r.trigger?.type === "ON_KEY_DOWN")?.trigger).toEqual({ type: "ON_KEY_DOWN", device: "KEYBOARD", keyCodes: [32, 75] });
-    // a half-done tick, then Reset: everything back to power-on, phase 0
+    // a half-done tick, then Reset: everything back to power-on, phase 0. At this tiny cap the reset is itself
+    // chunked, so it is a hop chain (Reset A ⇄ B) that returns to Control, every event within the cap.
     runFigmaActions(step, vals);
-    runFigmaActions(onClick(res.buttons.reset as unknown as FNode), vals);
+    expect(res.resetChunks).toBeGreaterThan(1);
+    for (const e of clickReset(f, res, vals)) expect(e).toBeLessThanOrEqual(60);
     expect([...vals]).toEqual([...f.values()]);
     // the tick text is a STRING bound to the frame's text; flows: one, no duplicate
     const t = (res.frames.control as unknown as FNode).findAll((n) => n.name === "ticks" && !!n.boundVariables.characters)[0];
@@ -1044,5 +1047,106 @@ describe("spike v2 (fake Figma API)", () => {
     expect(vals.get(f.varNamed(CHUNKED.name, "ctl/tickText").id)).toBe("5");
     const q = counterNetlist().ports.find((x) => x.name === "Q")!.nets;
     expect(q.reduce((acc, n, i) => acc | ((vals.get(f.varNamed(CHUNKED.name, p.variables.find((v) => v.net === n)!.name).id) ? 1 : 0) << i), 0)).toBe(5);
+  });
+});
+
+// ---------- chunked Reset (our fix) ----------
+// A Reset that restores every variable of the whole CPU is ~2,300 actions in one click, past the 2001 at which
+// Figma's viewer died in the team's own spike. apply() now runs a big reset as a hop chain (Reset A ⇄ Reset B,
+// one dispatched chunk per hop) and returns to Control.
+
+/** Clicks Reset and follows the hop chain until Control is shown again. Returns the executed actions of every event. */
+function clickReset(f: FakeFigma, res: Awaited<ReturnType<typeof apply>>, vals: Map<string, any>, maxHops = 200): number[] {
+  let at = res.frames.control.id;
+  const hooks = { navigate: (d: string | null) => void (at = d!) };
+  const events = [runFigmaActions(onClick(res.buttons.reset as unknown as FNode), vals, hooks)];
+  for (let hops = 0; at !== res.frames.control.id; hops++) {
+    if (hops > maxHops) throw new Error("reset chain does not return to Control");
+    events.push(runFigmaActions(afterTimeout(f.nodes.get(at)!).actions!, vals, hooks));
+  }
+  return events;
+}
+
+describe("chunked Reset", () => {
+  it("counter, small cap: reset becomes a hop chain, every event within the cap, state back to power-on", async () => {
+    const net = counterNetlist();
+    const sched = compile(net);
+    const cap = 40;
+    const p = plan(net, sched, { initial: powerOn(net), maxActionsPerEvent: cap });
+    expect(worstActions(p.reset) + 6 + 2).toBeGreaterThan(cap); // it would not fit in one event
+    const f = new FakeFigma();
+    const res = await apply(asApi(f), p, {});
+    expect(res.resetChunks).toBeGreaterThan(1);
+    expect(res.frames.resetA && res.frames.resetB).toBeTruthy();
+    const vals = f.values();
+    const step = onClick(res.buttons.step as unknown as FNode);
+    for (let i = 0; i < 7 * res.chunks + 1; i++) runFigmaActions(step, vals); // mid-tick, counters nonzero
+    expect(vals.get(res.ticks.id)).toBeGreaterThan(0);
+    const events = clickReset(f, res, vals);
+    expect(events.length).toBe(1 + res.resetChunks); // the click, then one hop per chunk
+    for (const e of events) expect(e).toBeLessThanOrEqual(cap);
+    expect([...vals]).toEqual([...f.values()]); // every variable back to its initial value
+  });
+
+  it("a Run in progress is stopped by Reset", async () => {
+    const net = counterNetlist();
+    const p = plan(net, compile(net), { initial: powerOn(net), maxActionsPerEvent: 40 });
+    const f = new FakeFigma();
+    const res = await apply(asApi(f), p, {});
+    const vals = f.values();
+    vals.set(res.running.id, true);
+    clickReset(f, res, vals);
+    expect(vals.get(res.running.id)).toBe(false);
+    expect(vals.get(res.ticks.id)).toBe(0);
+  });
+
+  it("fits in one event: no extra frames, and the plan's reset is the click itself", async () => {
+    const net = counterNetlist();
+    const p = plan(net, compile(net), { initial: powerOn(net) });
+    const f = new FakeFigma();
+    const res = await apply(asApi(f), p, { maxActionsPerEvent: Infinity });
+    expect(res.resetChunks).toBe(1);
+    expect(res.frames.resetA).toBeUndefined();
+    const vals = f.values();
+    runFigmaActions(onClick(res.buttons.step as unknown as FNode), vals);
+    const events = clickReset(f, res, vals);
+    expect(events.length).toBe(1);
+    expect([...vals]).toEqual([...f.values()]);
+  });
+
+  it("re-applying replaces the reset frames (no duplicates)", async () => {
+    const net = counterNetlist();
+    const p = plan(net, compile(net), { initial: powerOn(net), maxActionsPerEvent: 40 });
+    const f = new FakeFigma();
+    await apply(asApi(f), p, {});
+    await apply(asApi(f), p, {});
+    const names = f.currentPage.children.map((n: any) => n.name);
+    expect(names.filter((n: string) => n.endsWith("Reset A")).length).toBe(1);
+    expect(names.filter((n: string) => n.endsWith("Reset B")).length).toBe(1);
+  });
+});
+
+describe("the real CPU (default cap)", () => {
+  it("Step, Run hop and Reset all stay within the cap; Reset returns every one of the ~2,300 variables to power-on", async () => {
+    const net = cpuNetlist();
+    const sched = compile(net, { inputs: [] });
+    const bytes = assemble(PROGRAMS.mul).bytes;
+    const init = powerOnWith(net, bytes);
+    const p = plan(net, sched, { initial: init, name: "CPU", halt: PROBES.HALTED.name } as any);
+    const f = new FakeFigma();
+    const res = await apply(asApi(f), p, { maxActionsPerEvent: 400 });
+    expect(res.actionsPerStep + 2).toBeLessThanOrEqual(400);
+    expect(res.chunks).toBeGreaterThan(1);
+    expect(res.resetChunks).toBeGreaterThan(1);
+    for (const e of res.resetChunking!.perEvent) expect(e).toBeLessThanOrEqual(400);
+    const vals = f.values();
+    const step = onClick(res.buttons.step as unknown as FNode);
+    for (let i = 0; i < 30 * res.chunks; i++) expect(runFigmaActions(step, vals)).toBeLessThanOrEqual(400);
+    expect(vals.get(res.ticks.id)).toBe(30);
+    const events = clickReset(f, res, vals);
+    for (const e of events) expect(e).toBeLessThanOrEqual(400);
+    expect(events.length).toBe(1 + res.resetChunks);
+    expect([...vals]).toEqual([...f.values()]);
+    console.log(`[reset] CPU: ${res.chunks} events per tick (≤ ${Math.max(...res.chunking!.perEvent)} actions), ${res.resetChunks} events per reset (≤ ${Math.max(...res.resetChunking!.perEvent)} actions)`);
   });
 });

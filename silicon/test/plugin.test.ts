@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NAME, SiliconApp } from "../plugin/src/app";
 import { redirect, STEP_FRAME } from "../plugin/src/canvas";
 import type { ToUi } from "../plugin/src/messages";
-import { PANEL_NAME, panelLits } from "../plugin/src/panel";
+import { MEM_LAMPS, PANEL_NAME, panelLits } from "../plugin/src/panel";
 import { verifyAgainstModel } from "../plugin/src/program";
 import { locate, SINGLE_PAGE } from "../plugin/src/where";
 import { compile } from "../src/compile";
@@ -163,9 +163,9 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const lits = panelLits(comp as unknown as ComponentNode, net);
     const lampBits = ["OUT", "BUS", "IR", "PC", "T", "R0", "R1", "R2", "R3", "Z", "C", "N", "HALTED"].reduce((n, k) => n + PROBES[k].width, 0);
     expect(lits.missing).toEqual([]);
-    expect(lits.lamps).toBe(lampBits + 14); // + 2 digits × 7 segments
-    for (const k of ["SEG_LO[0]", "SEG_HI[6]", "pc[3]", "flag_z", "halted", "OUT[7]", "bus[0]", "t[2]"]) expect(lits.wireLit.has(net.aliases.get(k)!), k).toBe(true);
-    expect(comp.findAll().length).toBeLessThan(400); // small: it is instanced into every frame
+    expect(lits.lamps).toBe(lampBits + 14 + MEM_LAMPS); // + 2 digits × 7 segments + the 16 × 8 MEM screen
+    for (const k of ["SEG_LO[0]", "SEG_HI[6]", "pc[3]", "flag_z", "halted", "OUT[7]", "bus[0]", "t[2]", "ram/row0/b7/Q", "ram/row15/b0/Q"]) expect(lits.wireLit.has(net.aliases.get(k)!), k).toBe(true);
+    expect(comp.findAll().length).toBeLessThan(700); // small next to the CPU (~37k layers), but it is instanced into every frame; the MEM screen adds ~290
     const cpu = kid(page, "cell/CPU")!;
     expect(comp.x + comp.width).toBeLessThan(cpu.x - 48);
     expect(fk(await app.frontPanel())).toBe(comp);
@@ -228,7 +228,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
 
   it("Load program (mul) → the compiled Step reaction, emulated, reaches OUT = 42 and HALTED at tick 162", async () => {
     const res = await app.loadProgram(PROGRAMS.mul);
-    expect(res).toMatchObject({ name: "mul", resets: 2 }); // the Reset buttons of Control and Step
+    expect(res).toMatchObject({ name: "mul", resets: 2 }); // the Reset A / Reset B hop frames (the chunked reset carries the power-on literals)
     expect(res.writes).toBeGreaterThan(0);
     expect(res.literals).toBeGreaterThan(0);
     const vals = fig.variableValues();
@@ -254,8 +254,18 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     expect(ticksIn(fig, vals)).toBe(162);
     console.log(`[plugin] emulated Step: ${step.length} actions per event, ${events / 162} event(s) per tick, ${perTick.toFixed(1)} ms per tick in the emulator`);
 
-    // Reset (rewritten for mul) restores the power-on state exactly.
-    runFigmaActions(onClick(kid(header, "button/Reset")), vals);
+    // Reset (rewritten for mul) restores the power-on state exactly. It is chunked: the click hops through the
+    // Reset A / Reset B frames, each hop within the budget, and ends back on Control.
+    const control = kid(page, `${NAME} · Control`)!;
+    let at = "";
+    const hooks = { navigate: (d: string | null) => void (at = d!) };
+    const resetEvents = [runFigmaActions(onClick(kid(header, "button/Reset")), vals, hooks)];
+    for (let hops = 0; at !== control.id; hops++) {
+      expect(hops).toBeLessThan(50);
+      resetEvents.push(runFigmaActions(fig.nodeById(at)!.reactions.find((x) => x.trigger?.type === "AFTER_TIMEOUT")!.actions!, vals, hooks));
+    }
+    expect(resetEvents.length).toBeGreaterThan(2);
+    for (const e of resetEvents) expect(e).toBeLessThanOrEqual(400);
     expect([...vals]).toEqual([...fig.variableValues()]);
   });
 
