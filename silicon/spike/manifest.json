@@ -1,0 +1,16 @@
+{
+  "name": "Silicon Spike",
+  "id": "silicon-spike-dev",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] },
+  "menu": [
+    { "name": "Build all (counter, self-test, stress 500/2000/5000)", "command": "all" },
+    { "name": "Counter + self-test only", "command": "basic" },
+    { "name": "Stress 500 / 2000 / 5000 only", "command": "stress" },
+    { "separator": true },
+    { "name": "Heavy stress 10k + 20k (slow to build)", "command": "heavy" }
+  ]
+}

@@ -2,3 +2,5 @@ node_modules/
 plugin/dist/
 .DS_Store
 .env
+silicon/dist/
+silicon/spike/dist/
