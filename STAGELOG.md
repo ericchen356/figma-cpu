@@ -140,3 +140,71 @@ To replace an existing Machine v2, build with the redraw flag (`build.mjs --forc
 - `use_figma` caps code at 50,000 chars (ours is about 17k).
 - Inside `use_figma`, `setPluginData` and `createImageAsync` are forbidden, and pages must be switched with `await figma.setCurrentPageAsync()` + `page.loadAsync()`. The draw script avoids all of these.
 - The script is idempotent: it won't redraw over an existing `Machine v2` unless built with the redraw flag.
+
+---
+
+## Stage 2b — Datapath internals, drawn on the Eric page (tag: `stage-2b`)
+
+**Goal:** add the register-transfer layer from the architecture handoff (PRD v2.1 §6.3–6.4) to the canvas, and draw the full machine on its own page.
+
+**Inputs:** Stage 2 draw script, `spec/*.json`.
+
+**Figma work:** `[MCP]` One `use_figma` call drew **Machine v2** on page **Eric** with 463 contract-named nodes. New in this stage is a **DATAPATH** block between the CPU blocks and the buses:
+
+- MAR, MDR, OPR, T and W latches;
+- an 18-step T-state counter;
+- 34 control-signal lamps, with bus drivers shown in orange.
+
+The ALU inputs are relabelled as the A latch and Y latch, and everything below the block moved down 360 px. Verification used the REST API (personal token), not MCP reads: all 412 nodes the plugin binds to are present, and the 29 table rows read back correctly.
+
+**Prompts used:** _"merge the PRD with the architecture handoff — best of both worlds"_ → _"one shot the full cpu … under my page"_.
+
+**Code:** [`spec/signals.json`](spec/signals.json), [`tools/draw-machine/draw.js`](tools/draw-machine/draw.js) (`drawInternals`, `SHIFT`, `--page`).
+
+**Reproduce:** `node tools/draw-machine/build.mjs --page Eric`, then run `tools/draw-machine/manifest.json` as a dev plugin (or pass `use-figma.js` to `use_figma`).
+
+**Verify:** ![eric](docs/stages/stage-2b-eric-machine.png)
+
+**Gotchas:**
+
+- MCP read tools are capped at about 20 calls a month on View seats. All checks go through `GET /v1/files/:key/nodes` and `GET /v1/images` with a token from `.env`.
+- The 48k-char draw-plus-smoke body was too risky to paste into one call, so only the minified draw script (~11k chars) went through MCP.
+
+---
+
+## Stages 3–6 — The CPU runs: core, assembler, T-state engine, plugin (tag: `stage-6`)
+
+**Goal:** a working CPU. The canvas opcode table drives a micro-op interpreter (Turbo) and a T-state engine (Watch), and the plugin renders every part.
+
+**Inputs:** Stage 2b canvas, PRD §4–§10.
+
+**Figma work:** none new. The plugin reads and writes the Stage 2b nodes.
+
+**Code:**
+
+- `plugin/src/core/`, pure TypeScript:
+  - `micro.ts`: parses table rows. It checks that the micro-ops read as many operand bytes as the format encodes, and reports bad rows without stopping.
+  - `cpu.ts`: state, ALU and flag rules, the instruction interpreter.
+  - `rtl.ts`: micro-op → T-state expansion. Buses are sampled before latches load, and two drivers on one bus is a fault.
+  - `asm.ts`: two-pass assembler. Mnemonics and formats come from the table, with `.org .equ .db .dw .ds` and expressions.
+  - `png.ts`: PNG encoder.
+- `plugin/src/figma/bind.ts`, `render.ts`: binds contract names to nodes once, then renders by diff, writing only what changed. In Watch mode it also colors the active micro-op inside the table row.
+- `plugin/src/main.ts`, `plugin/ui/`: Watch/Turbo/Step controls, TICK at 30 Hz, VRAM → 6× PNG via `canvas.toBlob` → image fill, mouse and keys → IO, and state saved in `pluginData`.
+- `plugin/programs/`: `count`, `fib`, `rect`, `bounce`, `paint`.
+
+**Reproduce:** `cd plugin && npm install && npm test && npm run build`, then import `plugin/manifest.json` in Figma desktop and run **FigmaCPU** on the Eric page (see README).
+
+**Verify:** `npm test` passes all 40 tests, including:
+
+- every program produces the right result;
+- `bounce` moves 1 px per frame and bounces at x = 120 and y = 88;
+- the interpreter and the T-state engine agree field by field at every instruction of every program;
+- no bus ever has two drivers;
+- rewiring `ADD` to `ALU SUB` changes the result;
+- the draw script, binder and renderer pass against a fake Figma API that throws on unloaded fonts.
+
+**Gotchas:**
+
+- TypeScript 7 no longer includes `@types/*` automatically, so `tsconfig` lists `@figma/plugin-typings` and `node` explicitly.
+- `.asm` files load as text: esbuild uses `loader: { ".asm": "text" }`, and vitest needs a small transform plugin.
+- Turbo speed (PRD target: 50k instructions per second) is not yet measured inside Figma desktop.
