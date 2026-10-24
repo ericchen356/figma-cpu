@@ -12,9 +12,10 @@ import {
   PALETTE_SIZE,
   SCREEN_NETS,
   STATE_NETS,
+  TOOL_BITS,
 } from "../hw/layout";
 import { GRID_H, GRID_W } from "../model/reference";
-import { clickRun, HOTSPOT_GRAIN } from "../react/catalog";
+import { clickRun, HOTSPOT_GRAIN, hoverRun } from "../react/catalog";
 
 /** PICO-8, same as spec/palette.json and os-ui. */
 export const PALETTE_HEX = [
@@ -49,6 +50,8 @@ export const COLOR = {
   line: "#444444",
   grid: "#262626",
   frame: "#141414",
+  /** The pen's ink. */
+  ink: "#F5F5F5",
 };
 
 export const CELL = 48;
@@ -78,8 +81,11 @@ export type Trigger =
   { on: "click" } | { on: "enter" } | { on: "key"; codes: number[] };
 export interface ReactionRef {
   trigger: Trigger;
-  /** A catalogue reaction ("tool/2"), or a pointer-column setter ("pointer/3"). */
+  /** A catalogue reaction ("tool/2", "paint/3/5" on hover), or a pointer-column setter ("pointer/3"). */
   run: string;
+  /** A hover that stores the pointer's column (this one) before its run: "paint/…" on the pen-down
+   * cells, so a click that follows without the pointer moving finds the column like after any hover. */
+  pointer?: number;
 }
 
 export interface NodeSpec {
@@ -376,13 +382,22 @@ function selection(): NodeSpec {
 
 // ---------- the canvas: grid, layers, click layers, overlays ----------
 
-/** One set of click layers: a row of cells per canvas row. In a per-row set, hovering a cell stores
- * its column and the row takes the click (a click on a cell goes to its row, the cell having no
- * click of its own), running the reaction made for that row. In a per-cell set each cell takes its
- * own click, with its column built in, so it needs no hover. A per-slot set is 8 stacked copies
- * picked by the selection register's bits, like the per-slot buttons. */
+/** One set of click layers: a row of cells per canvas row. Hovering a cell, in any set, stores its
+ * column: the set showing changes under a pointer that stays put (a pick-up shows the drop's set),
+ * and the next click must still find it. In a per-row set the row takes the click (a click on a
+ * cell goes to its row, the cell having no click of its own), running the reaction made for that
+ * row with the stored column. In a per-cell set each cell takes its own click, with its column
+ * built in; on the pen-down set, entering a cell also paints it (the pen's stroke). A per-slot set
+ * is 8 stacked copies picked by the selection register's bits, like the per-slot buttons. */
 function hotspotSet(i: number): NodeSpec {
   const grain = HOTSPOT_GRAIN[i];
+  const cellReactions = (r: number, c: number): ReactionRef[] => {
+    const hover = hoverRun(i, r, c);
+    return [
+      ...(grain === "cell" ? [{ trigger: { on: "click" as const }, run: clickRun(i, r, c) }] : []),
+      { trigger: { on: "enter" }, run: hover, ...(hover.startsWith("pointer/") ? {} : { pointer: c }) },
+    ];
+  };
   const rows = (sel: number): NodeSpec[] =>
     Array.from({ length: GRID_H }, (_, r) =>
       frame(`row/${r}`, {
@@ -397,10 +412,7 @@ function hotspotSet(i: number): NodeSpec {
             y: 0,
             w: CELL,
             h: CELL,
-            reactions:
-              grain === "cell"
-                ? [{ trigger: { on: "click" }, run: clickRun(i, r, c) }]
-                : [{ trigger: { on: "enter" }, run: `pointer/${c}` }],
+            reactions: cellReactions(r, c),
           }),
         ),
       }),
@@ -417,6 +429,27 @@ function hotspotSet(i: number): NodeSpec {
       grain === "row@sel"
         ? [{ ...pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => level(`sel/${k}`, rows(k))), name: "slots" }]
         : rows(0),
+  });
+}
+
+/** The paint plane: one cell-sized rectangle of ink per pixel, visible on its RAM bit. Above the
+ * layers, below the click layers and the selection outline. */
+function inkLayer(): NodeSpec {
+  return frame("ink", {
+    x: 0,
+    y: 0,
+    w: CANVAS_W,
+    h: CANVAS_H,
+    children: Array.from({ length: GRID_W * GRID_H }, (_, i) =>
+      rect(`ink/${i}`, {
+        x: (i % GRID_W) * CELL,
+        y: Math.floor(i / GRID_W) * CELL,
+        w: CELL,
+        h: CELL,
+        fill: COLOR.ink,
+        visibleNet: bit(STATE_NETS.pix, i),
+      }),
+    ),
   });
 }
 
@@ -454,6 +487,7 @@ function canvas(): NodeSpec {
     children: [
       ...grid,
       ...Array.from({ length: LAYERS }, (_, k) => layerBox(k)),
+      inkLayer(),
       ...HOT.map((_, i) => hotspotSet(i)),
       selection(),
     ],
@@ -658,7 +692,7 @@ function rightPanel(): NodeSpec {
       ...arrangeButtons(),
       label(
         "keys",
-        "Shortcuts\nV F R O  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge",
+        "Shortcuts\nV F R O P  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge\nE  erase     C  clear the ink",
         { x: 16, y: 520, size: 11, color: COLOR.faint },
       ),
     ],
@@ -755,19 +789,25 @@ function arrangeButtons(): NodeSpec[] {
   return out;
 }
 
+const TOOL_W = 100;
+const TOOLS_W = 5 * TOOL_W + 4 * 8;
+const OPTION_W = 72;
+const OPTIONS_W = 2 * OPTION_W + 8;
+const BAR_X = LEFT_W + (MID_W - (TOOLS_W + 12 + OPTIONS_W)) / 2;
+
 function toolbar(): NodeSpec {
   const tools = [
     { name: "Move", key: "V" },
     { name: "Frame", key: "F" },
     { name: "Rectangle", key: "R" },
     { name: "Ellipse", key: "O" },
+    { name: "Pen", key: "P" },
   ];
-  const w = 104;
-  const total = tools.length * w + (tools.length - 1) * 8;
+  const w = TOOL_W;
   return frame("toolbar", {
-    x: LEFT_W + (MID_W - total) / 2,
+    x: BAR_X,
     y: CANVAS_Y + CANVAS_H + 24,
-    w: total,
+    w: TOOLS_W,
     h: 44,
     radius: 8,
     fill: COLOR.panel,
@@ -781,7 +821,7 @@ function toolbar(): NodeSpec {
         sizeH: "HUG",
         sizeV: "HUG",
         children: [
-          ...spacer("t/", "H", w + 8, 2, bits(STATE_NETS.tool)),
+          ...spacer("t/", "H", w + 8, TOOL_BITS, bits(STATE_NETS.tool)),
           rect("active", { w, h: 44, radius: 8, fill: COLOR.accent }),
         ],
       }),
@@ -795,16 +835,80 @@ function toolbar(): NodeSpec {
         reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
         children: [
           label("label", t.name, {
-            x: 12,
+            x: 10,
             y: 15,
             size: 12,
             bold: true,
             color: COLOR.text,
           }),
-          label("key", t.key, { x: w - 22, y: 15, size: 11, color: COLOR.dim }),
+          label("key", t.key, { x: w - 18, y: 15, size: 11, color: COLOR.dim }),
         ],
       }),
       ),
+    ],
+  });
+}
+
+/** The pen's options, beside the tools: the Erase toggle (its "on" layer is bound to the erase bit)
+ * and Clear. They work with any tool. */
+function penOptions(): NodeSpec {
+  const option = (
+    name: string,
+    text: string,
+    key: string,
+    x: number,
+    on?: NodeSpec,
+  ): NodeSpec =>
+    frame(`button/${name}`, {
+      x,
+      y: 0,
+      w: OPTION_W,
+      h: 44,
+      radius: 8,
+      reactions: [{ trigger: { on: "click" }, run: name }],
+      children: [
+        ...(on ? [on] : []),
+        label("label", text, {
+          x: 10,
+          y: 15,
+          size: 12,
+          bold: true,
+          color: COLOR.text,
+        }),
+        label("key", key, {
+          x: OPTION_W - 18,
+          y: 15,
+          size: 11,
+          color: COLOR.dim,
+        }),
+      ],
+    });
+  return frame("pen", {
+    x: BAR_X + TOOLS_W + 12,
+    y: CANVAS_Y + CANVAS_H + 24,
+    w: OPTIONS_W,
+    h: 44,
+    radius: 8,
+    fill: COLOR.panel,
+    stroke: COLOR.line,
+    strokeWeight: 1,
+    children: [
+      option(
+        "erase",
+        "Erase",
+        "E",
+        0,
+        rect("on", {
+          x: 0,
+          y: 0,
+          w: OPTION_W,
+          h: 44,
+          radius: 8,
+          fill: COLOR.accent,
+          visibleNet: STATE_NETS.erase,
+        }),
+      ),
+      option("clear", "Clear", "C", OPTION_W + 8),
     ],
   });
 }
@@ -815,6 +919,8 @@ function status(): NodeSpec {
     "Click a cell to start the shape",
     "Click the cell to drop it on (Esc cancels)",
     "Click the opposite corner (Esc cancels)",
+    "Pen: click a cell to put the pen down (E erases, C clears)",
+    "Drawing: move over cells to ink them, click to lift the pen",
   ];
   return frame("status", {
     x: LEFT_W,
@@ -865,6 +971,9 @@ export const KEYS: Array<{ codes: number[]; run: string }> = [
   { codes: [70], run: "tool/1" },
   { codes: [82], run: "tool/2" },
   { codes: [79], run: "tool/3" },
+  { codes: [80], run: "tool/4" },
+  { codes: [69], run: "erase" },
+  { codes: [67], run: "clear" },
   // one key per reaction: Figma reads a keyCodes list as a chord (all held at once)
   { codes: [46], run: "delete" },
   { codes: [8], run: "delete" },
@@ -925,6 +1034,7 @@ export function uiSpec(
       leftPanel(),
       canvas(),
       toolbar(),
+      penOptions(),
       status(),
       rightPanel(),
       slotKeys(COLOR.panel),

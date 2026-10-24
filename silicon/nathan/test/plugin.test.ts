@@ -24,6 +24,7 @@ import {
   UI_COLLECTION,
 } from "../plugin/src/names";
 import { TEST_COLLECTION, TEST_PREFIX } from "../src/platform/tests";
+import { UI_H } from "../src/ui/spec";
 import { varName } from "../../src/prototype";
 import { nathanNetlist } from "../src/hw";
 import { classify } from "../src/react/synth";
@@ -260,9 +261,13 @@ describe("CPU NATHAN plugin, end to end", () => {
     const stats = os!.type === "os" ? os!.stats : null!;
     expect(stats.missing).toBe(0);
     // canvas clicks: pick-up per cell (14 × 10), draw per row (10), drop per row and slot (10 × 8),
-    // drag-span per row (10); then 22 controls (tools, layer rows, eyes, Delete, Esc), and for each
-    // of the 8 slots: 16 swatches, 4 handles, 4 nudges, Duplicate / Bring forward / Send backward
-    expect(stats.reactions).toBe(14 * 10 + 10 + 10 * 8 + 10 + 22 + (16 + 4 + 4 + 3) * 8);
+    // drag-span per row (10), the pen's click per cell (14 × 10, shared by the pen-up and pen-down
+    // sets) and its stroke per cell (14 × 10, on hover); then 25 controls (5 tools, layer rows,
+    // eyes, Delete, Esc, Erase, Clear), and for each of the 8 slots: 16 swatches, 4 handles, 4
+    // nudges, Duplicate / Bring forward / Send backward
+    expect(stats.reactions).toBe(
+      14 * 10 + 10 + 10 * 8 + 10 + 2 * 14 * 10 + 25 + (16 + 4 + 4 + 3) * 8,
+    );
     const p = page(fig)!;
     const present = kid(p, PRESENT)!;
     expect(present).not.toBeNull();
@@ -279,6 +284,8 @@ describe("CPU NATHAN plugin, end to end", () => {
     );
     expect(lamps).toHaveLength(stats.gates);
     expect(lamps.every((l) => l.boundVariables.visible)).toBe(true);
+    // all of them on one screen: the map fits the frame's window (which clips)
+    expect(kid(machine, "gate map")!.height).toBeLessThanOrEqual(UI_H);
     const circuit = kid(p, CIRCUIT)!;
     const view = kid(circuit, "view")!;
     expect(view.overflowDirection).toBe("BOTH");
@@ -324,9 +331,17 @@ describe("CPU NATHAN plugin, end to end", () => {
     });
     expect(mixed.map((n) => n.name)).toEqual([]);
     const hover = all.filter(({ r }) => r.trigger?.type === "MOUSE_ENTER");
-    // every cell of the per-row click sets (draw, drag-span) and of the 8 slot copies of the drop
-    // set; the per-cell pick-up set needs no hover (each cell has its column built in)
-    expect(hover).toHaveLength((1 + 8 + 1) * 14 * 10);
+    // every cell stores the pointer's column on hover: the pick-up, draw, drag-span, pen-up and
+    // pen-down sets (the stroke too) and the 8 slot copies of the drop set
+    expect(hover).toHaveLength((5 + 8) * 14 * 10);
+    // a stroke cell: its hover paints it, its click lifts the pen, and both are a few actions
+    const penDown = kid(kid(kid(present, "editor"), "canvas"), "hot/pen-down")!;
+    const cell = kid(kid(penDown, "row/3"), "cell/5")!;
+    expect(cell.reactions.map((r) => r.trigger?.type).sort()).toEqual([
+      "MOUSE_ENTER",
+      "ON_CLICK",
+    ]);
+    for (const r of cell.reactions) expect(size(r.actions ?? [])).toBeLessThan(40);
     expect(all.filter(({ r }) => r.trigger?.type === "MOUSE_DOWN")).toEqual([]);
     // every control is one event of at most 700 actions: no reaction needs the overlays
     const c = events(fig, 700);
@@ -347,7 +362,7 @@ describe("CPU NATHAN plugin, end to end", () => {
     for (const name of [PRESENT, MACHINE, CIRCUIT]) {
       const f = kid(page(fig)!, name)!;
       expect(codes(f.reactions), name).toEqual([
-        8, 27, 46, 70, 79, 82, 86,
+        8, 27, 46, 67, 69, 70, 79, 80, 82, 86,
       ]);
       const leaves = reactionsUnder(f)
         .filter(({ node }) => /^keys\/\d$/.test(node.name))
@@ -368,6 +383,9 @@ describe("CPU NATHAN plugin, end to end", () => {
     const r = s.posted.find((m) => m.type === "selftest");
     expect(r?.type === "selftest" && r.result.text).toMatch(/^✓/);
     expect(r?.type === "selftest" && r.result.ok).toBe(true);
+    // the session drew with the pen: strokes, Erase and Clear, through their stored reactions
+    const used = r?.type === "selftest" ? /used: ([^;]*);/.exec(r.result.text)![1].split(", ") : [];
+    expect(used).toEqual(expect.arrayContaining(["paint", "erase", "clear", "click", "tool"]));
     expect(s.errors()).toEqual([]);
   }, 600_000);
 
@@ -419,7 +437,7 @@ describe("CPU NATHAN plugin, end to end", () => {
     ).toEqual([]);
     expect(
       present.reactions.filter((r) => r.trigger?.type === "ON_KEY_DOWN"),
-    ).toHaveLength(7);
+    ).toHaveLength(10);
     const r = await s.app.selftest(200, 7);
     expect(r.text).toMatch(/^✓/);
     expect(s.errors()).toEqual([]);

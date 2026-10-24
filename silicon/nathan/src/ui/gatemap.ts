@@ -29,6 +29,8 @@ const ORDER = [
   "geom",
   "layerctl",
   "newrec",
+  "pen",
+  "paint",
   "l0",
   "l1",
   "l2",

@@ -3,7 +3,7 @@
 // registers with the spec's state, and a random event generator. Used by the hardware tests, the
 // reaction tests, the plugin's "Self-test" and the fuzz CLI. The machine is reached through a
 // Probe, so the same code compares a simulator, or variables read out of a Figma file.
-import { EV, LAYERS, PALETTE_SIZE, STATE_NETS } from "../hw/layout";
+import { EV, LAYERS, PALETTE_SIZE, STATE_NETS, TOOL_BITS } from "../hw/layout";
 import * as R from "./reference";
 
 /** Anything that can read a net (or a bus, LSB first) of the machine. */
@@ -12,7 +12,7 @@ export interface Probe {
 }
 
 export type Ev =
-  | { k: "tool"; t: number }
+  | { k: "tool"; t: number } // 0 move, 1 frame, 2 rectangle, 3 ellipse, 4 pen
   | { k: "fill"; c: number }
   | { k: "down"; x: number; y: number }
   | { k: "move"; x: number; y: number }
@@ -26,7 +26,10 @@ export type Ev =
   | { k: "back" }
   | { k: "nudge"; dir: number } // 0 left, 1 right, 2 up, 3 down
   | { k: "esc" }
-  | { k: "click"; x: number; y: number };
+  | { k: "click"; x: number; y: number }
+  | { k: "paint"; x: number; y: number } // the pointer entered a cell (inks it while the pen is down)
+  | { k: "erase" }
+  | { k: "clear" };
 
 /** The event as the machine's inputs. */
 export interface Inputs {
@@ -74,6 +77,12 @@ export function engineInputs(ev: Ev): Inputs {
       return at(EV.ESC);
     case "click":
       return at(EV.CLICK, 0, ev.x, ev.y);
+    case "paint":
+      return at(EV.PAINT, 0, ev.x, ev.y);
+    case "erase":
+      return at(EV.ERASE);
+    case "clear":
+      return at(EV.CLEAR);
   }
 }
 
@@ -119,13 +128,20 @@ export function applyRef(s: R.State, ev: Ev): R.State {
       return R.reduce(s, { t: "key", key: "Escape" });
     case "click":
       return R.click(s, ev.x, ev.y);
+    case "paint":
+      return R.reduce(s, { t: "paint", x: ev.x, y: ev.y });
+    case "erase":
+      return R.reduce(s, { t: "erase" });
+    case "clear":
+      return R.reduce(s, { t: "clear" });
   }
 }
 
 const DRAGS = [null, "move", "create", "resize"] as const;
 
 /** Why the machine's registers differ from the spec's state, or null if they agree. Only the
- * architectural state is compared (layer stack, selection, tool, colour, pending drag). */
+ * architectural state is compared (layer stack, selection, tool, colour, pending drag, the pen and
+ * the paint plane). */
 export function compare(ref: R.State, p: Probe): string | null {
   const n = ref.layers.length;
   for (let k = 0; k < LAYERS; k++) {
@@ -163,13 +179,22 @@ export function compare(ref: R.State, p: Probe): string | null {
   const selGot = p.peek(STATE_NETS.hassel) ? p.peek(STATE_NETS.sel, 3) : -1;
   if (selGot !== selWant)
     return `selection: machine ${selGot}, spec ${selWant}`;
-  if (p.peek(STATE_NETS.tool, 2) !== R.TOOLS.indexOf(ref.tool))
-    return `tool: machine ${p.peek(STATE_NETS.tool, 2)}, spec ${ref.tool}`;
+  if (p.peek(STATE_NETS.tool, TOOL_BITS) !== R.TOOLS.indexOf(ref.tool))
+    return `tool: machine ${p.peek(STATE_NETS.tool, TOOL_BITS)}, spec ${ref.tool}`;
   if (p.peek(STATE_NETS.cur, 4) !== ref.fill)
     return `current colour: machine ${p.peek(STATE_NETS.cur, 4)}, spec ${ref.fill}`;
   const dm = ref.drag?.mode ?? null;
   const dg = DRAGS[p.peek(STATE_NETS.drag, 2)];
   if (dg !== dm) return `pending drag: machine ${dg}, spec ${dm}`;
+  if (p.peek(STATE_NETS.pendown) !== +ref.penDown)
+    return `pen down: machine ${p.peek(STATE_NETS.pendown)}, spec ${ref.penDown}`;
+  if (p.peek(STATE_NETS.erase) !== +ref.erase)
+    return `erase: machine ${p.peek(STATE_NETS.erase)}, spec ${ref.erase}`;
+  for (let i = 0; i < ref.ink.length; i++) {
+    const got = p.peek(`${STATE_NETS.pix}[${i}]`);
+    if (got !== ref.ink[i])
+      return `pixel (${i % R.GRID_W}, ${Math.floor(i / R.GRID_W)}): machine ${got}, spec ${ref.ink[i]}`;
+  }
   return null;
 }
 
@@ -188,6 +213,34 @@ export function prng(seed: number): (n: number) => number {
 export interface Mix {
   /** Weights of the event families; the rest are the plain DOWN / MOVE / UP events. */
   click: number;
+  /** With the pen and nothing pending: the share (%) of pen events (strokes, pen clicks, erase,
+   * clear). Default 70. */
+  pen?: number;
+}
+
+/** A cell for the pen: half the time next to a cell already inked, so strokes grow as lines. */
+export function strokeCell(
+  rnd: (n: number) => number,
+  s: R.State,
+): { x: number; y: number } {
+  const inked = s.ink.flatMap((v, i) => (v ? [i] : []));
+  if (!inked.length || rnd(2)) return { x: rnd(R.GRID_W), y: rnd(R.GRID_H) };
+  const i = inked[rnd(inked.length)];
+  const near = (v: number, d: number, n: number) => Math.max(0, Math.min(n - 1, v + d - 1));
+  return {
+    x: near(i % R.GRID_W, rnd(3), R.GRID_W),
+    y: near(Math.floor(i / R.GRID_W), rnd(3), R.GRID_H),
+  };
+}
+
+/** One step of a pen session (the pen is the tool and nothing is pending): mostly strokes while
+ * the pen is down, clicks that put it down or lift it, now and then Erase or Clear. */
+export function penEvent(rnd: (n: number) => number, s: R.State): Ev {
+  const r = rnd(100);
+  if (s.penDown && r < 75) return { k: "paint", ...strokeCell(rnd, s) };
+  if (r < 90) return { k: "click", ...strokeCell(rnd, s) };
+  if (r < 97) return { k: "erase" };
+  return { k: "clear" };
 }
 
 /** A random event that is legal in state `s` (no SELECT of an empty slot, no HANDLE without a selection). */
@@ -197,13 +250,15 @@ export function randomEvent(
   mix: Mix = { click: 40 },
 ): Ev {
   const n = s.layers.length;
+  if (s.tool === "pen" && !s.drag && rnd(100) < (mix.pen ?? 70))
+    return penEvent(rnd, s);
   const x = rnd(R.GRID_W);
   const y = rnd(R.GRID_H);
   for (;;) {
     const r = rnd(100);
     if (r < mix.click) return { k: "click", x, y };
     const q = rnd(100);
-    if (q < 7) return { k: "tool", t: rnd(4) };
+    if (q < 7) return { k: "tool", t: rnd(R.TOOLS.length) };
     if (q < 12) return { k: "fill", c: rnd(PALETTE_SIZE) };
     if (q < 28) return { k: "down", x, y };
     if (q < 44) return { k: "move", x, y };
@@ -216,7 +271,14 @@ export function randomEvent(
     if (q < 81) return { k: "back" };
     if (q < 87) return { k: "nudge", dir: rnd(4) };
     if (q < 89) return { k: "esc" };
-    if (s.selected !== null && q < 96) return { k: "handle", corner: rnd(4) };
+    if (q < 96) {
+      if (s.selected !== null) return { k: "handle", corner: rnd(4) };
+      continue;
+    }
+    // the pen's events outside a pen session: a hover inks nothing, Erase and Clear still work
+    if (q < 97) return { k: "paint", x, y };
+    if (q < 98) return { k: "erase" };
+    if (q < 99) return { k: "clear" };
   }
 }
 

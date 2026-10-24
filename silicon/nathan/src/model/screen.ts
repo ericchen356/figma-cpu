@@ -12,11 +12,13 @@
 //                         inverted bit, child 1 on the bit, so exactly one leaf shows (the
 //                         inverters are the screen's only gates, besides the hot lines)
 //   row highlight, tool   one layer each, placed by spacers on ¬sel and on the tool bits
-//   click layers          four hotspot sets; only the set whose `hot` line is 1 receives clicks
+//   ink                   one cell-sized rectangle per pixel of the paint plane, visible on its
+//                         bit, above the layers; the Erase button's "on" layer on the erase bit
+//   click layers          six hotspot sets; only the set whose `hot` line is 1 receives clicks
 //
 // This file reads that wiring from a Probe and from the spec, so tests (and the plugin's
 // self-test, which reads Figma variables) can compare what is drawn with what the editor holds.
-import { LAYERS, SCREEN_NETS, STATE_NETS } from "../hw/layout";
+import { HOT, LAYERS, SCREEN_NETS, STATE_NETS, TOOL_BITS } from "../hw/layout";
 import type { Probe } from "./oracle";
 import * as R from "./reference";
 
@@ -43,6 +45,10 @@ export interface Screen {
   tool: number;
   color: number;
   hot: number;
+  /** The ink rectangles shown, one per pixel (0 / 1). */
+  ink: number[];
+  /** The Erase button shows "on". */
+  erase: boolean;
 }
 
 const bit = (p: Probe, bus: string, i: number) => p.peek(`${bus}[${i}]`);
@@ -93,10 +99,20 @@ export function readScreen(p: Probe): Screen {
   }
   return {
     layers,
-    tool: p.peek(STATE_NETS.tool, 2),
+    tool: p.peek(STATE_NETS.tool, TOOL_BITS),
     color: picked(p, STATE_NETS.cur, SCREEN_NETS.ncur, 0, 4),
-    hot: onehot(p, SCREEN_NETS.hot, 0, 4),
+    hot: onehot(p, SCREEN_NETS.hot, 0, HOT.length),
+    ink: Array.from({ length: R.GRID_W * R.GRID_H }, (_, i) => bit(p, STATE_NETS.pix, i)),
+    erase: p.peek(STATE_NETS.erase) === 1,
   };
+}
+
+/** The hotspot set (`hot` bit) that takes canvas clicks in editor state `s`. */
+export function hotOf(s: R.State): number {
+  if (s.drag) return s.drag.mode === "move" ? 2 : 3;
+  if (s.tool === "move") return 0;
+  if (s.tool === "pen") return s.penDown ? 5 : 4;
+  return 1;
 }
 
 /** What the screen must show for editor state `s`. */
@@ -119,14 +135,14 @@ export function expectedScreen(s: R.State): Screen {
       row: !!l,
     });
   }
-  const hot = s.drag
-    ? s.drag.mode === "move"
-      ? 2
-      : 3
-    : s.tool === "move"
-      ? 0
-      : 1;
-  return { layers, tool: R.TOOLS.indexOf(s.tool), color: s.fill, hot };
+  return {
+    layers,
+    tool: R.TOOLS.indexOf(s.tool),
+    color: s.fill,
+    hot: hotOf(s),
+    ink: s.ink,
+    erase: s.erase,
+  };
 }
 
 /** Why the screen differs from the spec's picture, or null. Empty slots are checked only for
@@ -158,10 +174,20 @@ export function compareScreen(s: R.State, p: Probe): string | null {
   if (got.color !== want.color)
     return `current colour lamp ${got.color}, spec ${want.color}`;
   if (got.hot !== want.hot) return `hotspot set ${got.hot}, spec ${want.hot}`;
+  return compareInk(got, want);
+}
+
+/** Why the ink shown (and the Erase button) differ from the spec's, or null. */
+export function compareInk(got: Screen, want: Screen): string | null {
+  const i = want.ink.findIndex((v, k) => got.ink[k] !== v);
+  if (i >= 0)
+    return `ink at (${i % R.GRID_W}, ${Math.floor(i / R.GRID_W)}): shown ${got.ink[i]}, spec ${want.ink[i]}`;
+  if (got.erase !== want.erase) return `Erase shows ${got.erase}, spec ${want.erase}`;
   return null;
 }
 
-/** The picture the shown layers make (topmost wins), from the screen wiring: for comparing with R.raster. */
+/** The picture the shown layers make (topmost wins, the ink above them), from the screen wiring:
+ * for comparing with R.raster. */
 export function rasterOf(sc: Screen): number[] {
   const out = new Array<number>(R.GRID_W * R.GRID_H).fill(-1);
   for (const l of sc.layers) {
@@ -170,5 +196,6 @@ export function rasterOf(sc: Screen): number[] {
       for (let x = l.x; x < l.x + l.w; x++)
         if (x < R.GRID_W && y < R.GRID_H) out[y * R.GRID_W + x] = l.color;
   }
+  sc.ink.forEach((v, i) => v && (out[i] = R.INK));
   return out;
 }

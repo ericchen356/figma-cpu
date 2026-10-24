@@ -3,7 +3,7 @@
 // tool / drag mode that makes the clicked layer the right one) and in which editor state the UI
 // offers it. The UI builder asks for a reaction by name and attaches it to a layer; the tests run
 // the same specs against sampled states, so the dispatch rules are checked, not assumed.
-import { EV, LAYERS, PALETTE_SIZE } from "../hw/layout";
+import { EV, HOT, LAYERS, PALETTE_SIZE } from "../hw/layout";
 import type { Ev } from "../model/oracle";
 import * as R from "../model/reference";
 import {
@@ -33,9 +33,19 @@ const dg = (v0: number, v1: number, v2?: number, v3?: number): Tie => ({
   ...(v2 === undefined ? {} : { "dg[2]": v2 }),
   ...(v3 === undefined ? {} : { "dg[3]": v3 }),
 });
-/** The four hotspot sets: which clicks they take, and the line (`hot` bit) that shows them. A set
+/** With the pen and nothing pending: the lines that make a canvas event the pen's. */
+const PEN_TIES: Tie = {
+  ...dg(1, 0, 0, 0),
+  dragging: 0,
+  is_move_tool: 0,
+  creating: 0,
+  is_pen: 1,
+};
+
+/** The six hotspot sets: which clicks they take, and the line (`hot` bit) that shows them. A set
  * is one click layer per canvas row, each with its own reaction: PY is that row, a constant, which
- * folds half the hit test away (the pointer's column comes from the hover). */
+ * folds half the hit test away (the pointer's column comes from the hover). The pen's two sets
+ * (pen up, pen down) run the same clicks: a pen click inks the cell and flips the pen. */
 const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
   {
     name: "click/idle-move",
@@ -45,6 +55,7 @@ const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
       dragging: 0,
       is_move_tool: 1,
       creating: 0,
+      is_pen: 0,
     },
     valid: (s) => !s.drag && s.tool === "move",
   },
@@ -56,8 +67,9 @@ const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
       dragging: 0,
       is_move_tool: 0,
       creating: 1,
+      is_pen: 0,
     },
-    valid: (s) => !s.drag && s.tool !== "move",
+    valid: (s) => !s.drag && s.tool !== "move" && s.tool !== "pen",
   },
   {
     name: "click/drag-move",
@@ -69,10 +81,17 @@ const HOTSPOT_SETS: Array<Omit<ReactionSpec, "event">> = [
     ties: { EVT: EV.CLICK, ...dg(0, 0), dragging: 1 },
     valid: (s) => s.drag?.mode === "create" || s.drag?.mode === "resize",
   },
+  ...[0, 1].map(() => ({
+    name: "click/pen",
+    ties: { EVT: EV.CLICK, ...PEN_TIES },
+    valid: (s: R.State) => !s.drag && s.tool === "pen",
+  })),
 ];
 
 /** Hotspot set names in `hot` bit order. */
 export const HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
+/** The hotspot set on which hovering a cell paints it (`hot` bit). */
+export const PAINT_SET = HOT.indexOf("pen-down");
 
 /** How finely each hotspot set's reactions are made, in `hot` bit order:
  * - "row": one reaction per canvas row (PY folded; the column comes from the hover);
@@ -80,8 +99,9 @@ export const HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
  *   constants): worst 754 → 588 actions, mean 579 → 420;
  * - "row@sel": one per row and value of the selection register (the drop's move unit writes only
  *   the selected record): 518 → 333.
- * Drawing clicks (idle-create, drag-span) stay per row: finer grains don't pay off there. */
-export const HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row"] as const;
+ * Drawing clicks (idle-create, drag-span) stay per row: finer grains don't pay off there. The pen
+ * is per cell: with PX and PY built in, every pixel but one folds away. */
+export const HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row", "cell", "cell"] as const;
 
 /** The reaction a click on canvas row `row` (column `col` for a per-cell set, selected slot `sel`
  * for a per-slot one) of hotspot set `set` runs. */
@@ -89,6 +109,12 @@ export const clickRun = (set: number, row: number, col = 0, sel = 0) =>
   `${HOTSPOT_REACTIONS[set]}/${row}` +
   (HOTSPOT_GRAIN[set] === "cell" ? `/${col}` : "") +
   (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
+
+/** What hovering cell (`col`, `row`) of hotspot set `set` runs besides storing the pointer's
+ * column (every cell does that): on the pen-down set it paints the cell, else nothing more
+ * ("pointer/<col>", the store alone). */
+export const hoverRun = (set: number, row: number, col: number): string =>
+  set === PAINT_SET ? `paint/${row}/${col}` : `pointer/${col}`;
 
 export const CLICK_SPECS: ReactionSpec[] = HOTSPOT_SETS.flatMap((h, set) =>
   Array.from({ length: R.GRID_H }, (_, y): ReactionSpec[] => {
@@ -117,11 +143,24 @@ export const CLICK_SPECS: ReactionSpec[] = HOTSPOT_SETS.flatMap((h, set) =>
       },
     ];
   }).flat(),
-);
+  // two sets that run the same reactions (the pen's) make them once
+).filter((spec, i, all) => all.findIndex((o) => o.name === spec.name) === i);
+
+/** The pen's strokes: entering cell (x, y) of the pen-down set inks it. PX, PY and the pen's
+ * state are known, so the reaction is that one pixel's write. */
+export const PAINT_SPECS: ReactionSpec[] = Array.from({ length: R.GRID_H }, (_, y) =>
+  Array.from({ length: R.GRID_W }, (_, x): ReactionSpec => ({
+    name: `paint/${y}/${x}`,
+    ties: { EVT: EV.PAINT, PX: x, PY: y, ...PEN_TIES },
+    given: { pendown: 1 },
+    valid: (s) => !s.drag && s.tool === "pen" && s.penDown,
+    event: () => ({ k: "paint", x, y }),
+  })),
+).flat();
 
 export function reactionSpecs(): ReactionSpec[] {
-  const out: ReactionSpec[] = [...CLICK_SPECS];
-  for (let t = 0; t < 4; t++)
+  const out: ReactionSpec[] = [...CLICK_SPECS, ...PAINT_SPECS];
+  for (let t = 0; t < R.TOOLS.length; t++)
     out.push({
       name: `tool/${t}`,
       ties: { EVT: EV.TOOL, ARG: t },
@@ -201,6 +240,19 @@ export function reactionSpecs(): ReactionSpec[] {
     ties: { EVT: EV.ESC },
     valid: always,
     event: () => ({ k: "esc" }),
+  });
+  // the pen's options: the Erase toggle, and Clear (every pixel's word written 0, in one event)
+  out.push({
+    name: "erase",
+    ties: { EVT: EV.ERASE },
+    valid: always,
+    event: () => ({ k: "erase" }),
+  });
+  out.push({
+    name: "clear",
+    ties: { EVT: EV.CLEAR },
+    valid: always,
+    event: () => ({ k: "clear" }),
   });
   return out;
 }
