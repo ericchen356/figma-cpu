@@ -26,11 +26,11 @@ const SAMPLES: Record<string, [string, number[]]> = {
   AND: ["AND R1, R3", [0x77]],
   OR: ["OR R2, R0", [0x88]],
   XOR: ["XOR R3, R3", [0x9f]],
-  NOT: ["NOT R3", [0xac]],
+  LDR: ["LDR R3, [R1]", [0xad]],
   JMP: ["JMP 9", [0xb0, 0x09]],
   JZ: ["JZ 1", [0xc0, 0x01]],
   JC: ["JC 14", [0xd0, 0x0e]],
-  JN: ["JN 0", [0xe0, 0x00]],
+  STR: ["STR R2, [R1]", [0xe6]],
   HLT: ["HLT", [0xf0]],
 };
 
@@ -48,10 +48,12 @@ describe("assembler: encoding", () => {
     for (const op of OPCODES)
       for (let d = 0; d < 4; d++)
         for (let s = 0; s < 4; s++) {
-          const args = op.operands.map((k) => ({ Rd: REGISTERS[d], Rs: REGISTERS[s], imm: "200", addr: "[6]" })[k]);
+          const args = op.operands.map(
+            (k) => ({ Rd: REGISTERS[d], Rs: REGISTERS[s], "[Rd]": `[${REGISTERS[d]}]`, "[Rs]": `[${REGISTERS[s]}]`, imm: "200", addr: "[6]" })[k],
+          );
           const text = `${op.mnem} ${args.join(", ")}`.trim();
-          const hasRd = op.operands.includes("Rd");
-          const hasRs = op.operands.includes("Rs");
+          const hasRd = op.operands.includes("Rd") || op.operands.includes("[Rd]");
+          const hasRs = op.operands.includes("Rs") || op.operands.includes("[Rs]");
           const first = (op.code << 4) | (hasRd ? d << 2 : 0) | (hasRs ? s : 0);
           const second = op.operands.includes("imm") ? [200] : op.operands.includes("addr") ? [6] : [];
           const bytes = asm(text);
@@ -67,7 +69,17 @@ describe("assembler: encoding", () => {
     expect(disassemble([0x2c, 7]).text).toBe("LD R3, [7]");
     expect(disassemble([0x32, 15]).text).toBe("ST R2, [OUT]");
     expect(disassemble([0x18, 0x5a]).text).toBe("LDI R2, 90");
-    expect(disassemble([0xff, 0, 0, 0xac], 3)).toEqual({ text: "NOT R3", size: 1 });
+    expect(disassemble([0xff, 0, 0, 0xad], 3)).toEqual({ text: "LDR R3, [R1]", size: 1 });
+    expect(disassemble([0xe6]).text).toBe("STR R2, [R1]");
+  });
+
+  it("pointer operands need brackets around a register", () => {
+    for (const bad of ["LDR R0, R1", "LDR R0, [5]", "STR R0, [x]", "STR [R1], R0"]) {
+      const r = assemble(bad);
+      expect(r.errors.length, bad).toBe(1);
+      expect(r.errors[0].msg, bad).toMatch(/register/);
+    }
+    expect(asm("ldr r0, [ r2 ]").slice(0, 1)).toEqual([0xa2]);
   });
 
   it("zero-fills the 16-byte image", () => {
@@ -227,11 +239,12 @@ describe("model: T-state behaviour", () => {
     });
 
   it("every probe key reads", () => {
-    const m = boot("LDI R3, 0x81\nNOT R3");
+    const m = boot("LDI R3, 0x81\nLDI R2, 0xFF\nXOR R3, R2");
+    m.step();
     m.step();
     m.step();
     expect(Object.keys(m.probes())).toEqual([...PROBE_KEYS]);
-    expect(m.probes()).toMatchObject({ R3: 0x7e, A: 0x81, Y: 0x7e, Z: 0, C: 0, N: 0, PC: 3, T: 0, IR: 0xac });
+    expect(m.probes()).toMatchObject({ R3: 0x7e, A: 0x81, Y: 0x7e, Z: 0, C: 0, N: 0, PC: 5, T: 0, IR: 0x9e });
   });
 });
 
@@ -264,15 +277,20 @@ describe("model: instructions", () => {
       expect(pick(m, ["R0", "R1", "Z", "C", "N"] as const)).toEqual({ R0: y, R1: b, Z, C, N });
     });
 
-  it("NOT Rd (C = 0)", () => {
-    const m = boot("LDI R2, 0x0F\nNOT R2\nLDI R1, 0xFF\nNOT R1");
-    m.step();
-    m.state.C = 1;
-    m.step();
-    expect(pick(m, ["R2", "Z", "C", "N"] as const)).toEqual({ R2: 0xf0, Z: 0, C: 0, N: 1 });
-    m.step();
-    m.step();
-    expect(pick(m, ["R1", "Z", "C", "N"] as const)).toEqual({ R1: 0, Z: 1, C: 0, N: 0 });
+  it("LDR and STR go through a pointer register and leave the flags alone", () => {
+    const m = boot(["LDI R1, data", "LDI R2, 0x5A", "STR R2, [R1]", "LDR R3, [R1]", "LDI R0, OUT", "STR R3, [R0]", "HLT", "data: .db 0"].join("\n"));
+    Object.assign(m.state, { Z: 1, C: 0, N: 1 });
+    m.runUntilHalt();
+    expect(m.state.RAM[10]).toBe(0x5a); // data: the byte after HLT
+    expect(pick(m, ["R3", "OUT", "Z", "C", "N"] as const)).toEqual({ R3: 0x5a, OUT: 0x5a, Z: 1, C: 0, N: 1 });
+    expect(m.outputs).toEqual([0x5a]); // STR to 15 latches OUT like ST
+  });
+
+  it("LDR and STR use the low 4 bits of the pointer as the address", () => {
+    const m = boot(["LDI R1, 0x1D", "LDR R0, [R1]", "LDI R2, 0x77", "LDI R1, 0xFE", "STR R2, [R1]", "HLT", ".org 13", ".db 0x42"].join("\n"));
+    m.runUntilHalt();
+    expect(m.state.R[0]).toBe(0x42); // 0x1D → address 13
+    expect(m.state.RAM[14]).toBe(0x77); // 0xFE → address 14
   });
 
   it("ADD/SUB/... with Rd = Rs", () => {
@@ -329,7 +347,7 @@ describe("model: instructions", () => {
     }
   });
 
-  for (const [mnem, flag] of [["JZ", "Z"], ["JC", "C"], ["JN", "N"]] as const)
+  for (const [mnem, flag] of [["JZ", "Z"], ["JC", "C"]] as const)
     it(`${mnem} jumps iff ${flag} = 1 (other flags ignored)`, () => {
       for (const v of [0, 1]) {
         const m = boot(`NOP\n${mnem} 9`);
@@ -452,9 +470,15 @@ describe("model: microcode implements the ISA", () => {
       case "XOR":
         logic(s.r[rd] ^ s.r[rs]);
         break;
-      case "NOT":
-        logic(~s.r[rd]);
+      case "LDR":
+        s.r[rd] = s.ram[s.r[rs] & 15];
         break;
+      case "STR": {
+        const a = s.r[rd] & 15;
+        s.ram[a] = s.r[rs];
+        if (a === 15) s.out = s.r[rs];
+        break;
+      }
       case "JMP":
         jump(true);
         break;
@@ -463,9 +487,6 @@ describe("model: microcode implements the ISA", () => {
         break;
       case "JC":
         jump(s.c === 1);
-        break;
-      case "JN":
-        jump(s.n === 1);
         break;
       case "HLT":
         s.halted = 1;
@@ -506,7 +527,7 @@ describe("programs", () => {
   }
 
   it("all assemble cleanly into 16 bytes", () => {
-    expect(Object.keys(PROGRAMS).sort()).toEqual(["blink", "count", "echo", "fib", "keypad", "lfsr", "logic", "mem", "mod", "mul", "pow2", "sub", "triangle"]);
+    expect(Object.keys(PROGRAMS).sort()).toEqual(["blink", "copy", "count", "dump", "echo", "fib", "keypad", "lfsr", "logic", "mem", "mod", "mul", "pow2", "ptrout", "sub", "triangle"]);
     for (const name of Object.keys(PROGRAMS)) load(name);
   });
 
@@ -543,11 +564,33 @@ describe("programs", () => {
     expect(pick(m, ["R0", "Z", "C", "N", "HALTED"] as const)).toEqual({ R0: 0xff, Z: 0, C: 0, N: 1, HALTED: 1 });
   });
 
-  it("logic: XOR, AND, OR + NOT", () => {
+  it("logic: XOR, AND, OR", () => {
     const { m } = load("logic");
     m.runUntilHalt();
-    expect(m.outputs).toEqual([0x33, 0x30, 0xc3]);
-    expect(pick(m, ["Z", "C", "N", "HALTED"] as const)).toEqual({ Z: 0, C: 0, N: 1, HALTED: 1 });
+    expect(m.outputs).toEqual([0x33, 0x30, 0x3c]);
+    expect(pick(m, ["Z", "C", "N", "HALTED"] as const)).toEqual({ Z: 0, C: 0, N: 0, HALTED: 1 });
+  });
+
+  it("ptrout: STR through a pointer to OUT shows 7 … 0", () => {
+    const { m } = load("ptrout");
+    m.runUntilHalt();
+    expect(m.outputs).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    expect(m.state.HALTED).toBe(1);
+  });
+
+  it("copy: LDR / STR copy a byte between two pointers", () => {
+    const { m, symbols } = load("copy");
+    m.runUntilHalt();
+    expect(m.outputs).toEqual([0x5a]);
+    expect(m.state.RAM[symbols.dst]).toBe(0x5a);
+  });
+
+  it("dump: LDR walks memory and shows the program's own bytes", () => {
+    const r = assemble(PROGRAMS.dump);
+    const m = new IsaModel(r.bytes);
+    while (m.outputs.length < 15 && m.ticks < 10_000) m.tick();
+    expect(m.outputs).toEqual(r.bytes.slice(0, 15));
+    expect(m.state.HALTED).toBe(0);
   });
 
   it("mem: z = x + y through LD / ST", () => {
