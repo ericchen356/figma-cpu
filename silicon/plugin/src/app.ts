@@ -440,7 +440,12 @@ export class SiliconApp {
     this.progress("compile", 5, steps, "CPU · Step frame");
     await this.breathe();
     const sf = await this.phase("Step frame", () =>
-      buildStepFrame(this.api, page, cpu, res.frames.control, { title: TITLE, subtitle: subtitle(p, source), log: (m) => this.log("info", m) }),
+      buildStepFrame(this.api, page, cpu, res.frames.control, {
+        title: TITLE,
+        subtitle: subtitle(p, source),
+        ...(res.frames.resetA && res.frames.resetB ? { resetFrames: { a: res.frames.resetA, b: res.frames.resetB } } : {}),
+        log: (m) => this.log("info", m),
+      }),
     );
     try {
       setFlow(page, STEP_FRAME, sf.frame);
@@ -558,7 +563,7 @@ export class SiliconApp {
       for (const c of n.children) walk(c, true);
     };
     for (const c of page.children) {
-      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, `${NAME} · Reset A`, `${NAME} · Reset B`].includes(c.name)) walk(c, true); // Reset A/B: the chunked reset's hops carry the power-on literals
+      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, `${NAME} · Reset A`, `${NAME} · Reset B`, `${NAME} · Reset A (Step)`, `${NAME} · Reset B (Step)`].includes(c.name)) walk(c, true); // Reset A/B: the chunked reset's hops carry the power-on literals
       if (c.name === STEP_FRAME) {
         walk(c, false);
         const h = child(c as FrameNode, "header");

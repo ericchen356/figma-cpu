@@ -93,6 +93,9 @@ function isInside(node: BaseNode, ancestor: BaseNode): boolean {
 export interface StepFrameOptions {
   title: string;
   subtitle: string;
+  /** The chunked Reset's hop frames (Reset A ⇄ B). They return to Control, so the Step flow gets its own pair that
+   * returns to the Step frame, and the Step header's Reset button starts that one. */
+  resetFrames?: { a: FrameNode; b: FrameNode };
   log?: (msg: string) => void;
 }
 
@@ -101,6 +104,8 @@ export interface StepFrame {
   header: FrameNode;
   /** Layers whose reactions were copied from the Control frame (incl. the frame itself). */
   reactionsCopied: number;
+  /** The Step flow's own Reset hop frames, when the reset is chunked. */
+  resetFrames?: { a: FrameNode; b: FrameNode };
 }
 
 /** Height of the title band above the copied controls. */
@@ -147,10 +152,41 @@ export async function buildStepFrame(api: PluginAPI, page: PageNode, cpu: Compon
     pairUp(c, k, pairs);
   }
   let reactionsCopied = 0;
+
+  // The Step flow's own Reset hop frames: copies of Reset A / B whose exit (and hop to the other frame) stay in the Step flow.
+  const rf = o.resetFrames;
+  let stepReset: { a: FrameNode; b: FrameNode } | undefined;
+  if (rf) {
+    for (const n of [...page.children]) if (n.name === stepResetName(rf.a) || n.name === stepResetName(rf.b)) n.remove();
+    const mk = (src: FrameNode) => {
+      const k = src.clone();
+      k.name = stepResetName(src);
+      page.appendChild(k);
+      k.x = src.x;
+      k.y = src.y + src.height + 80;
+      return k;
+    };
+    const a2 = mk(rf.a);
+    const b2 = mk(rf.b);
+    stepReset = { a: a2, b: b2 };
+    const to = (src: FrameNode, self: FrameNode, otherSrc: FrameNode, other: FrameNode) =>
+      redirect(redirect(redirect(src.reactions, control.id, frame.id), otherSrc.id, other.id), src.id, self.id);
+    await a2.setReactionsAsync(to(rf.a, a2, rf.b, b2));
+    await b2.setReactionsAsync(to(rf.b, b2, rf.a, a2));
+    const reset2 = (src: FrameNode, k: FrameNode) => {
+      const ps: Array<[SceneNode, SceneNode]> = [];
+      pairUp(src, k, ps);
+      return ps;
+    };
+    for (const [orig, copy] of [...reset2(rf.a, a2), ...reset2(rf.b, b2)]) await copyBindings(api, orig, copy, log);
+    reactionsCopied += 2;
+  }
   for (const [orig, copy] of pairs) {
     const rs = (orig as Partial<ReactionMixin>).reactions;
     if (rs && rs.length) {
-      await (copy as SceneNode & ReactionMixin).setReactionsAsync(redirect(rs, control.id, frame.id));
+      let r = redirect(rs, control.id, frame.id);
+      if (rf && stepReset) r = redirect(r, rf.a.id, stepReset.a.id); // the Reset button starts the Step flow's own chain
+      await (copy as SceneNode & ReactionMixin).setReactionsAsync(r);
       reactionsCopied++;
     }
     await copyBindings(api, orig, copy, log);
@@ -163,8 +199,11 @@ export async function buildStepFrame(api: PluginAPI, page: PageNode, cpu: Compon
       log(`could not copy the Control frame's own triggers to the Step frame: ${e}`);
     }
   }
-  return { frame, header, reactionsCopied };
+  return { frame, header, reactionsCopied, ...(stepReset ? { resetFrames: stepReset } : {}) };
 }
+
+/** Name of the Step flow's copy of a Reset hop frame. */
+export const stepResetName = (f: FrameNode) => `${f.name} (Step)`;
 
 /** Pairs each layer with its clone (same tree shape), not descending into instances. */
 function pairUp(a: SceneNode, b: SceneNode, out: Array<[SceneNode, SceneNode]>): void {

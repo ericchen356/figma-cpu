@@ -203,7 +203,14 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const control = kid(page, `${NAME} · Control`)!;
     const buttons = control.children.filter((n) => n.name.startsWith("button/"));
     expect(buttons.map((b) => b.name)).toEqual(expect.arrayContaining(["button/Step", "button/Run", "button/Reset"]));
-    for (const b of buttons) expect(kid(header, b.name)!.reactions, b.name).toEqual(redirect(b.reactions, control.id, frame.id));
+    // Reset is the one difference: the Step flow's Reset button starts the Step flow's own hop pair (it ends on the Step frame).
+    const resetA = kid(page, `${NAME} · Reset A`)!;
+    const resetA2 = kid(page, `${NAME} · Reset A (Step)`)!;
+    expect(resetA && resetA2).toBeTruthy();
+    for (const b of buttons) {
+      const want = redirect(b.reactions, control.id, frame.id);
+      expect(kid(header, b.name)!.reactions, b.name).toEqual(b.name === "button/Reset" ? redirect(want, resetA.id, resetA2.id) : want);
+    }
     expect(frame.reactions).toEqual(redirect(control.reactions, control.id, frame.id));
     // A Step event (one chunk of the tick when chunked) never executes more than the cap.
     const probe = fig.variableValues();
@@ -228,7 +235,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
 
   it("Load program (mul) → the compiled Step reaction, emulated, reaches OUT = 42 and HALTED at tick 162", async () => {
     const res = await app.loadProgram(PROGRAMS.mul);
-    expect(res).toMatchObject({ name: "mul", resets: 2 }); // the Reset A / Reset B hop frames (the chunked reset carries the power-on literals)
+    expect(res).toMatchObject({ name: "mul", resets: 4 }); // Reset A / B and the Step flow's copies: the chunked reset carries the power-on literals
     expect(res.writes).toBeGreaterThan(0);
     expect(res.literals).toBeGreaterThan(0);
     const vals = fig.variableValues();
@@ -255,17 +262,30 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     console.log(`[plugin] emulated Step: ${step.length} actions per event, ${events / 162} event(s) per tick, ${perTick.toFixed(1)} ms per tick in the emulator`);
 
     // Reset (rewritten for mul) restores the power-on state exactly. It is chunked: the click hops through the
-    // Reset A / Reset B frames, each hop within the budget, and ends back on Control.
-    const control = kid(page, `${NAME} · Control`)!;
-    let at = "";
-    const hooks = { navigate: (d: string | null) => void (at = d!) };
-    const resetEvents = [runFigmaActions(onClick(kid(header, "button/Reset")), vals, hooks)];
-    for (let hops = 0; at !== control.id; hops++) {
-      expect(hops).toBeLessThan(50);
-      resetEvents.push(runFigmaActions(fig.nodeById(at)!.reactions.find((x) => x.trigger?.type === "AFTER_TIMEOUT")!.actions!, vals, hooks));
-    }
-    expect(resetEvents.length).toBeGreaterThan(2);
-    for (const e of resetEvents) expect(e).toBeLessThanOrEqual(400);
+    // Reset A / Reset B frames, each hop within the budget. From the Step frame it must END ON THE STEP FRAME (its own
+    // hop pair); from Control it ends on Control.
+    const followReset = (button: any, home: string) => {
+      let at = "";
+      const hooks = { navigate: (d: string | null) => void (at = d!) };
+      const events = [runFigmaActions(onClick(button), vals, hooks)];
+      const visited = new Set<string>();
+      for (let hops = 0; at !== home; hops++) {
+        expect(hops).toBeLessThan(50);
+        visited.add(fig.nodeById(at)!.name);
+        events.push(runFigmaActions(fig.nodeById(at)!.reactions.find((x) => x.trigger?.type === "AFTER_TIMEOUT")!.actions!, vals, hooks));
+      }
+      return { events, visited };
+    };
+    const fromStep = followReset(kid(header, "button/Reset")!, kid(page, STEP_FRAME)!.id);
+    expect([...fromStep.visited].every((n) => n.endsWith("(Step)"))).toBe(true); // it never left the Step flow
+    expect(fromStep.events.length).toBeGreaterThan(2);
+    for (const e of fromStep.events) expect(e).toBeLessThanOrEqual(400);
+    expect([...vals]).toEqual([...fig.variableValues()]);
+    // …and the Control frame's own Reset button still ends on Control, through the original (non-Step) pair.
+    const controlFrame = kid(page, `${NAME} · Control`)!;
+    for (let i = 0; i < 20; i++) tickOnce(fig, step, vals);
+    const fromControl = followReset(kid(controlFrame, "button/Reset")!, controlFrame.id);
+    expect([...fromControl.visited].some((n) => n.endsWith("(Step)"))).toBe(false);
     expect([...vals]).toEqual([...fig.variableValues()]);
   });
 
@@ -387,8 +407,8 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const app2 = new SiliconApp(asApi(fig), (m) => msgs2.push(m), { yield: async () => {}, clockFrameMs: 0 });
     expect(await app2.status()).toMatchObject({ hardware: true, panel: true, compiled: true, program: "mul", page: "Page 1" });
     expect((await app2.loadProgram(PROGRAMS.mul)).literals).toBe(0); // already loaded: nothing to patch
-    expect(await app2.loadProgram(PROGRAMS.count)).toMatchObject({ name: "count", resets: 2 });
-    expect(await app2.loadProgram(PROGRAMS.mul)).toMatchObject({ name: "mul", resets: 2 });
+    expect(await app2.loadProgram(PROGRAMS.count)).toMatchObject({ name: "count", resets: 4 });
+    expect(await app2.loadProgram(PROGRAMS.mul)).toMatchObject({ name: "mul", resets: 4 });
     await app2.clock.run(0);
     expect(app2.clock.status().probes).toMatchObject({ OUT: 42, HALTED: 1 });
   });
