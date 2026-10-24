@@ -20,13 +20,14 @@ import { CELL_PREFIX } from "../../src/figma/names";
 import { PROGRAMS } from "../../src/isa";
 import { flatten } from "../../src/netlist/flatten";
 import { type FlatNetlist, GATE_PREFIX, NET1 } from "../../src/netlist/types";
-import { apply, type ApplyOptions, bindVisible, plan, type PlanOptions, type PrototypePlan } from "../../src/prototype";
+import { apply, type ApplyOptions, type ApplyResult, bindVisible, plan, type PlanOptions, type PrototypePlan } from "../../src/prototype";
 import { loadFonts } from "../../src/prototype/draw";
 import { buildStepFrame, child, dismantleStepFrame, findCell, liftCells, restore, setFlow, STEP_FRAME } from "./canvas";
 import { type ClockSession, PluginClock, type VarRef } from "./clock";
 import { DeviceBus, IN_ADDR } from "./devices";
 import type { BuildStats, CompileStats, DocStatus, LogLevel, ToMain, ToUi } from "./messages";
 import { buildOsDemo, figmaLayerPort, type LayerPort, OsHost, selectedNames } from "./os-host";
+import { buildLiveView, type LiveCardResult } from "./live-card";
 import { ensureFrontPanel, findFrontPanel, panelLits } from "./panel";
 import { AsmFailed, assembleOrThrow, powerOnWith, programName, verifyAgainstModel, type VerifyResult } from "./program";
 import {
@@ -69,6 +70,8 @@ interface Session {
   source: string;
   /** The plan options of the compile (Load program re-plans with them). */
   planOpts: Partial<PlanOptions>;
+  /** apply()'s result, when this session compiled (the Live view's controls reuse its runtime). */
+  applied?: ApplyResult;
 }
 
 export interface AppOptions {
@@ -196,6 +199,9 @@ export class SiliconApp {
           return;
         case "os-demo":
           await this.task("Build OS demo", () => this.osDemo());
+          return;
+        case "live":
+          await this.task("Build Live view", () => this.liveView());
           return;
         case "clock":
           if (msg.action === "pause") {
@@ -501,6 +507,7 @@ export class SiliconApp {
     if (where.single) await this.phase("labels", () => labelRegions(this.api, page, STEP_FRAME));
 
     this.session = await this.phase("variables", () => this.bindSession(net, schedule, p, source, planOpts));
+    this.session.applied = res;
     this.api.root.setPluginData(DOC_PROGRAM, source);
     remember(this.api, where);
 
@@ -644,6 +651,32 @@ export class SiliconApp {
     this.os.frame();
     await this.os.flush();
     this.log("ok", `OS demo: ${r.created.length ? `created ${r.created.join(", ")}` : "nothing to create"}${r.skipped.length ? `; already there: ${r.skipped.join(", ")}` : ""}`);
+    return r;
+  }
+
+  // ---------- Live view card (logic in live-card.ts) ----------
+
+  /** Build Live view: the Live dashboard on the CPU's page, bound to the compiled variables and
+   * wired for Present mode (needs a Compile; the controls need one in this session). */
+  async liveView(): Promise<LiveCardResult> {
+    const s = await this.ensureSession();
+    const where = await locate(this.api);
+    if (!where) throw new Error("no hardware found (no cell/CPU): Build hardware first");
+    const r = await buildLiveView({
+      api: this.api,
+      where,
+      net: s.net,
+      plan: s.plan,
+      vars: s.vars,
+      source: s.source,
+      ...(s.applied ? { applied: s.applied } : {}),
+      isOurCollection,
+      log: (level, text) => this.log(level, text),
+      progress: (done, total, label) => this.progress("live", done, total, label),
+      breathe: this.breathe,
+      now: this.now,
+    });
+    this.post({ type: "live", stats: r.stats });
     return r;
   }
 

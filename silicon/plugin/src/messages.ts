@@ -19,7 +19,9 @@ export type ToMain =
   /** A keymap event: a click on a named layer or a key (KeyboardEvent.key). */
   | { type: "os-event"; event: { type: "click"; node: string } | { type: "key"; key: string } }
   /** Creates the layers the loaded OS's bindings name, in a frame "OS demo" beside the CPU. */
-  | { type: "os-demo" };
+  | { type: "os-demo" }
+  /** Live view card (live-card.ts): the Live dashboard + its Present-mode frames, after Compile. */
+  | { type: "live" };
 
 export type LogLevel = "info" | "ok" | "error";
 
@@ -91,7 +93,33 @@ export type ToUi =
   | { type: "asm"; errors: Array<{ line: number; msg: string }> }
   | { type: "clock"; status: ClockStatus }
   | { type: "verify"; ok: boolean; text: string }
-  | { type: "os"; report: OsReport };
+  | { type: "os"; report: OsReport }
+  | { type: "live"; stats: LiveStats };
+
+/** Result of Build Live view. */
+export interface LiveStats {
+  /** Layers in the Live · Dashboard component. */
+  layers: number;
+  /** Lit layers bound to CPU / control variables, and nets the dashboard names that have no variable. */
+  bound: number;
+  unbound: number;
+  /** Layer names whose net is not in the circuit. */
+  unknown: number;
+  /** Text layers bound to STRING variables (tick, phase, program, listing). */
+  texts: number;
+  /** Magnifier instances, and the gates they light. */
+  magnifiers: number;
+  magnifierGates: number;
+  /** The controls were wired (lane L2's wireLive); otherwise `note` says why not. */
+  wired: boolean;
+  note?: string;
+  /** The Live frames (Present mode: flow "FigmaCPU Live"). */
+  frames: string[];
+  disks: number;
+  padCells: number;
+  eventsPerTick?: number;
+  ms: number;
+}
 
 /** One binding, as the OS card lists it. */
 export interface OsBindingRow {

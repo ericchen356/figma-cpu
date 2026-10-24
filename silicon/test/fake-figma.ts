@@ -96,8 +96,18 @@ export class FakeNode {
   // ---- prototype (lane G): variable bindings, reactions, flows, scrolling
   /** Bound variables by field ("visible", "characters"), like Figma's `boundVariables`. */
   boundVariables: Record<string, { type: "VARIABLE_ALIAS"; id: string }> = {};
-  /** Reactions as stored by setReactionsAsync (a JSON copy, like Figma's). */
-  reactions: Reaction[] = [];
+  /** Reactions as stored by setReactionsAsync (a JSON copy, like Figma's). Layers inside an
+   * instance inherit the reactions of the main component's layer they came from, live (like
+   * Figma: interactions set on a main component work in every instance, also ones made before). */
+  private _reactions: Reaction[] = [];
+  /** Layers inside an instance: the main component's layer this one was cloned from. */
+  _source: FakeNode | null = null;
+  get reactions(): Reaction[] {
+    return this._source && !this._reactions.length ? this._source.reactions : this._reactions;
+  }
+  set reactions(r: Reaction[]) {
+    this._reactions = r;
+  }
   /** PAGE: prototype flows. */
   flowStartingPoints: Array<{ nodeId: string; name: string }> = [];
   numberOfFixedChildren = 0;
@@ -248,6 +258,7 @@ export class FakeNode {
     inst.copyLook(this);
     inst.name = this.name;
     inst._main = this;
+    inst._source = this; // the instance itself inherits the main component's reactions too
     for (const c of this._children) inst.adopt(c.cloneSublayer(inst.id));
     this.api.currentPage.appendChild(inst);
     return inst;
@@ -280,6 +291,7 @@ export class FakeNode {
     n.overrides = new Map(this.overrides);
     n.boundVariables = { ...this.boundVariables }; // instances inherit the main's bindings
     n.inInstance = true;
+    n._source = this;
     for (const c of this._children) n.adopt(c.cloneSublayer(rootId));
     return n;
   }

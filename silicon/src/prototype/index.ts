@@ -52,7 +52,19 @@ export {
   worstCase,
 } from "./figma-actions";
 export { evalVariableData, type FigmaValue, runFigmaActions } from "./emulate";
-export { apply, type ApplyOptions, type ApplyResult } from "./apply";
+export { apply, type ApplyOptions, type ApplyResult, type ApplyRuntime } from "./apply";
+export {
+  asmListing,
+  cpuPrograms,
+  LIVE_LOCK,
+  type LiveFrames,
+  liveFrameNames,
+  type LiveOptions,
+  type LiveProgram,
+  type LiveResult,
+  type LiveTrigger,
+  wireLive,
+} from "./live";
 export { bindVisible, createVariables, removeCollections, setFlows } from "./draw";
 export { type Gating, gateSchedule } from "./gating";
 export { powerOnState, simpleSchedule } from "./schedule";

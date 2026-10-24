@@ -50,9 +50,10 @@ checkAsm();
 
 // ---------- buttons ----------
 
-const busyButtons = ["build", "panel", "compile", "load", "verify", "c-step", "c-run", "c-reset", "os-load", "os-run", "os-demo"];
+const busyButtons = ["build", "panel", "compile", "load", "verify", "c-step", "c-run", "c-reset", "os-load", "os-run", "os-demo", "live"];
 $("build").onclick = () => post({ type: "build", gateLabels: checked("labels"), redraw: checked("redraw"), separatePages: checked("separate") });
 $("panel").onclick = () => post({ type: "panel" });
+$("live").onclick = () => post({ type: "live" });
 $("compile").onclick = () => {
   const chunk = Number($<HTMLInputElement>("chunk").value);
   if (checkAsm())
@@ -308,6 +309,13 @@ window.onmessage = (e: MessageEvent) => {
     case "os":
       showOs(m.report);
       return;
+    case "live": {
+      const st = m.stats;
+      $("live-prog").textContent =
+        `${st.layers} layers · ${st.bound} lit layers bound (${st.magnifierGates} gates in ${st.magnifiers} magnifiers) · ${st.texts} texts` +
+        (st.wired ? ` · ${st.frames.length} frames, ${st.eventsPerTick} events/tick · ${(st.ms / 1000).toFixed(1)} s` : ` · not wired: ${st.note ?? "?"}`);
+      return;
+    }
     case "verify": {
       const v = $("verdict");
       v.textContent = m.text;

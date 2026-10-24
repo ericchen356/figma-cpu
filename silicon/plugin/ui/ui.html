@@ -387,6 +387,16 @@
     </div>
 
     <div class="card">
+      <div class="row between">
+        <div class="title" style="margin: 0"><span>L</span>Live view <span style="font-weight: 400">· the whole machine in Present mode</span></div>
+        <button id="live" class="blue">Build Live view</button>
+      </div>
+      <div class="bar"><div id="live-bar"></div></div>
+      <div id="live-prog" class="prog"></div>
+      <div class="hint">After Compile: draws the "Live · Dashboard" (program disks, microcode grid, datapath with lit transfer arrows, RAM, 7-segment, and magnifiers of real cells bound to the CPU's own gates) right of everything on the CPU's page, then the Live · Main / Run / Load frames with Step, Run, Stop, Reset, a clock pad (sweep the mouse) and disks. ▶ Present the flow "FigmaCPU Live". Rebuild after Compile or Load program; only the Live · * layers are replaced.</div>
+    </div>
+
+    <div class="card">
       <div class="title"><span>5</span>Run · plugin clock <span style="font-weight: 400">· the full CPU at speed, lighting the canvas live</span></div>
       <div class="controls">
         <button id="c-step">Step</button>

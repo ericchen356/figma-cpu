@@ -113,6 +113,24 @@ export interface ApplyResult {
   /** Events per Reset (1: one click, no extra frames). */
   resetChunks: number;
   resetChunking?: Chunking;
+  /** The event logic wired above, for runtimes that put the same machine behind more controls
+   * (src/prototype/live.ts). The exact action objects apply used; not stored in the file. */
+  runtime: ApplyRuntime;
+}
+
+export interface ApplyRuntime {
+  /** One Step: `ctl/phaseNow = phase`, then the dispatch blocks (chunked), or the whole tick. */
+  step: Action[];
+  /** Chunked only: the dispatch blocks, one top-level CONDITIONAL per chunk on `ctl/phaseNow`
+   * (AND-ed with `gate` if given). The event must set `ctl/phaseNow` first, as `step[0]` does. */
+  dispatch?: (gate?: VariableData) => Action[];
+  /** One Run-loop hop: one chunk (or tick) if running ∧ (¬halt ∨ mid-tick), then NAVIGATE to
+   * `next`; otherwise running = false and NAVIGATE to `home`. Flat (no nested conditional). */
+  hop: (next: string, home: string) => Action[];
+  /** What Reset does besides the nets: ticks, tick text, phase, running back to power-on. */
+  resetTail: Action[];
+  /** Every `ctl/*` variable apply created, by name. */
+  controls: Map<string, Variable>;
 }
 
 const DIGITS = 4;
@@ -337,20 +355,16 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   // gated by it, then a final conditional on the snapshot navigates on (or stops and returns to Control).
   const goVar = ctl.get("ctl/go");
   const goNow = goVar ? exprData("EQUALS", [aliasData(goVar.id), boolData(true)]) : undefined;
-  const loop = (to: FrameNode): Reaction[] => [
-    {
-      trigger: afterTimeout(delay),
-      actions: chunking
-        ? [
-            event[0],
-            setVariable(goVar!.id, keepGoing),
-            ...dispatch(goNow),
-            conditional(goNow!, [navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)]),
-          ]
-        : [conditional(keepGoing, [...event, navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)])],
-    },
-    ...keys,
-  ];
+  const hop = (next: string, home: string): Action[] =>
+    chunking
+      ? [
+          event[0],
+          setVariable(goVar!.id, keepGoing),
+          ...dispatch(goNow),
+          conditional(goNow!, [navigate(next)], [setVariable(running.id, boolData(false)), navigate(home)]),
+        ]
+      : [conditional(keepGoing, [...event, navigate(next)], [setVariable(running.id, boolData(false)), navigate(home)])];
+  const loop = (to: FrameNode): Reaction[] => [{ trigger: afterTimeout(delay), actions: hop(to.id, controlFrame.id) }, ...keys];
   log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""}${resetChunking ? `, ${resetChunking.chunks.length} events per reset` : ""})…`);
   const setR = async (n: { setReactionsAsync(r: Reaction[]): Promise<void> }, label: string, r: Reaction[]) => {
     for (const reaction of r) {
@@ -418,6 +432,13 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
     ...(chunking ? { chunking } : {}),
     resetChunks: resetChunking?.chunks.length ?? 1,
     ...(resetChunking ? { resetChunking } : {}),
+    runtime: {
+      step: event,
+      ...(chunking ? { dispatch } : {}),
+      hop,
+      resetTail,
+      controls: ctl,
+    },
   };
 }
 
