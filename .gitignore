@@ -4,3 +4,4 @@ plugin/dist/
 .env
 silicon/dist/
 silicon/spike/dist/
+silicon/plugin/dist/

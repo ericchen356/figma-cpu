@@ -6,6 +6,9 @@
 // unloaded font, colors outside 0–1, non-finite coordinates, moving layers into or out of
 // instances, unknown/unsuffixed property names in setProperties, sync `mainComponent`
 // access, reading the children of a page that was not loaded, and figma.notify.
+// Lane G added variables (collections, modes, setValueForMode), setBoundVariable,
+// setReactionsAsync (validated like Figma), page flowStartingPoints and id lookups, so the
+// plugin can be run end to end and its reactions replayed with src/prototype/emulate.
 
 type Pred = (n: FakeNode) => boolean;
 
@@ -90,6 +93,16 @@ export class FakeNode {
   inInstance = false;
   /** PAGE: loaded (dynamic-page access). */
   loaded = false;
+  // ---- prototype (lane G): variable bindings, reactions, flows, scrolling
+  /** Bound variables by field ("visible", "characters"), like Figma's `boundVariables`. */
+  boundVariables: Record<string, { type: "VARIABLE_ALIAS"; id: string }> = {};
+  /** Reactions as stored by setReactionsAsync (a JSON copy, like Figma's). */
+  reactions: Reaction[] = [];
+  /** PAGE: prototype flows. */
+  flowStartingPoints: Array<{ nodeId: string; name: string }> = [];
+  numberOfFixedChildren = 0;
+  overflowDirection = "NONE";
+  textAlignVertical = "TOP";
 
   constructor(
     public type: string,
@@ -265,6 +278,7 @@ export class FakeNode {
     n._refs = this._refs;
     n._main = this._main;
     n.overrides = new Map(this.overrides);
+    n.boundVariables = { ...this.boundVariables }; // instances inherit the main's bindings
     n.inInstance = true;
     for (const c of this._children) n.adopt(c.cloneSublayer(rootId));
     return n;
@@ -330,6 +344,146 @@ export class FakeNode {
     const out: string[] = [];
     for (let n: FakeNode | null = this; n && n.type !== "PAGE"; n = n.parent) out.unshift(n.name);
     return out;
+  }
+
+  // ---- prototype (lane G)
+
+  /** Like Figma: binds a field to a live variable (also on layers inside instances, where it
+   * is an override). `visible` needs a BOOLEAN, `characters` a text node and FLOAT/STRING. */
+  setBoundVariable(field: string, v: FakeVariable | null) {
+    if (v === null) {
+      delete this.boundVariables[field];
+      return;
+    }
+    if (!(v instanceof FakeVariable) || v.removed || !this.api.variableById.has(v.id)) throw new Error(`setBoundVariable(${field}): not a live variable`);
+    if (field === "visible" && v.resolvedType !== "BOOLEAN") throw new Error("visible needs a BOOLEAN variable");
+    // Like real Figma (spike result): text characters only bind to STRING variables.
+    if (field === "characters" && (this.type !== "TEXT" || v.resolvedType !== "STRING")) throw new Error("characters needs a text node and a STRING variable");
+    this.boundVariables[field] = { type: "VARIABLE_ALIAS", id: v.id };
+  }
+
+  /** Like Figma's clone(): a deep copy (look, text, bindings, reactions, instance links)
+   * inserted right after the original in the same parent. */
+  clone(): FakeNode {
+    if (this.inInstance) throw new Error("clone of a layer inside an instance is not supported by the fake");
+    const copy = (src: FakeNode, inInstance: boolean): FakeNode => {
+      const n = new FakeNode(src.type, this.api);
+      n.copyLook(src);
+      n.name = src.name;
+      n._x = src._x;
+      n._y = src._y;
+      n.fontSize = src.fontSize;
+      n.textAutoResize = src.textAutoResize;
+      n.textAlignHorizontal = src.textAlignHorizontal;
+      n.textAlignVertical = src.textAlignVertical;
+      n._font = src._font;
+      n._chars = src._chars;
+      n._vectorPaths = src._vectorPaths;
+      n.svgPath = src.svgPath;
+      n._refs = src._refs;
+      n._main = src._main;
+      n.overrides = new Map(src.overrides);
+      n.boundVariables = JSON.parse(JSON.stringify(src.boundVariables));
+      n.reactions = JSON.parse(JSON.stringify(src.reactions));
+      n.description = src.description;
+      n.inInstance = inInstance;
+      for (const c of src._children) n.adopt(copy(c, inInstance || src.type === "INSTANCE"));
+      return n;
+    };
+    const n = copy(this, false);
+    if (this.parent) {
+      const sibs = this.parent._children;
+      n.parent = this.parent;
+      sibs.splice(sibs.indexOf(this) + 1, 0, n);
+    }
+    return n;
+  }
+
+  /** Like Figma: validates the actions' variables and destinations, then stores a copy. */
+  async setReactionsAsync(reactions: Reaction[]) {
+    if (this.inInstance) throw new Error("setReactionsAsync on a layer inside an instance is not supported by the fake");
+    for (const r of reactions) {
+      if (r.trigger?.type === "AFTER_TIMEOUT" && this.parent?.type !== "PAGE") throw new Error("AFTER_TIMEOUT only works on top-level frames");
+      const check = (acts: readonly Action[]) => {
+        for (const a of acts) {
+          if (a.type === "SET_VARIABLE" && !this.api.variableById.has(a.variableId!)) throw new Error(`SET_VARIABLE on unknown variable ${a.variableId}`);
+          if (a.type === "NODE") {
+            const dest = this.api.nodeById(a.destinationId!);
+            if (!dest) throw new Error(`navigate to unknown node ${a.destinationId}`);
+            if (dest.parent?.type !== "PAGE") throw new Error(`navigate to ${dest.name}, which is not a top-level frame`);
+          }
+          if (a.type === "CONDITIONAL") for (const b of a.conditionalBlocks) check(b.actions);
+        }
+      };
+      check(r.actions ?? []);
+    }
+    this.reactions = JSON.parse(JSON.stringify(reactions));
+    this.api.reactionWrites++;
+  }
+
+  /** Depth-first walk that ignores page loading (test helper for id lookups). */
+  walkRaw(fn: (n: FakeNode) => void) {
+    for (const c of this._children) {
+      fn(c);
+      c.walkRaw(fn);
+    }
+  }
+}
+
+// ---------- variables (lane G) ----------
+
+export class FakeVariable {
+  readonly id: string;
+  removed = false;
+  description = "";
+  valuesByMode: Record<string, unknown> = {};
+  constructor(
+    public name: string,
+    readonly collection: FakeVariableCollection,
+    readonly resolvedType: string,
+    private api: FakeFigma,
+  ) {
+    this.id = `VariableID:${++ids}:0`;
+  }
+  get variableCollectionId() {
+    return this.collection.id;
+  }
+  setValueForMode(modeId: string, value: unknown) {
+    if (this.removed) throw new Error(`${this.name}: variable was removed`);
+    if (!this.collection.modes.some((m) => m.modeId === modeId)) throw new Error(`${this.name}: unknown mode ${modeId}`);
+    const want = this.resolvedType === "BOOLEAN" ? "boolean" : this.resolvedType === "FLOAT" ? "number" : "string";
+    if (typeof value !== want) throw new Error(`${this.name}: ${this.resolvedType} variable cannot hold ${JSON.stringify(value)}`);
+    this.valuesByMode[modeId] = value;
+    this.api.variableWrites++;
+  }
+  remove() {
+    this.removed = true;
+    this.api.variableById.delete(this.id);
+    this.collection.vars = this.collection.vars.filter((v) => v !== this);
+  }
+}
+
+export class FakeVariableCollection {
+  readonly id: string;
+  readonly defaultModeId: string;
+  readonly modes: Array<{ modeId: string; name: string }>;
+  vars: FakeVariable[] = [];
+  removed = false;
+  constructor(
+    public name: string,
+    private api: FakeFigma,
+  ) {
+    this.id = `VariableCollectionId:${++ids}:0`;
+    this.defaultModeId = `${++ids}:0`;
+    this.modes = [{ modeId: this.defaultModeId, name: "Mode 1" }];
+  }
+  get variableIds() {
+    return this.vars.map((v) => v.id);
+  }
+  remove() {
+    for (const v of [...this.vars]) v.remove();
+    this.removed = true;
+    this.api.collections = this.api.collections.filter((c) => c !== this);
   }
 }
 
@@ -414,5 +568,60 @@ export class FakeFigma {
   /** Every node on every page (test helper). */
   allNodes(): FakeNode[] {
     return this.root.children.flatMap((p) => [p, ...p.findAll()]);
+  }
+
+  // ---- variables and prototype (lane G)
+
+  collections: FakeVariableCollection[] = [];
+  variableById = new Map<string, FakeVariable>();
+  /** setValueForMode calls (lane G measures how much the plugin clock writes). */
+  variableWrites = 0;
+  /** setReactionsAsync calls. */
+  reactionWrites = 0;
+
+  /** A node anywhere in the document by id (null if missing or removed). */
+  nodeById(id: string): FakeNode | null {
+    let found: FakeNode | null = null;
+    this.root.walkRaw((n) => {
+      if (!found && n.id === id) found = n;
+    });
+    return found;
+  }
+  async getNodeByIdAsync(id: string) {
+    return this.nodeById(id);
+  }
+
+  variables = {
+    createVariableCollection: (name: string) => {
+      const c = new FakeVariableCollection(name, this);
+      this.collections.push(c);
+      return c;
+    },
+    createVariable: (name: string, c: FakeVariableCollection, type: string) => {
+      if (!(c instanceof FakeVariableCollection) || c.removed) throw new Error("createVariable: pass a live collection object");
+      if (!["BOOLEAN", "FLOAT", "STRING", "COLOR"].includes(type)) throw new Error(`createVariable: bad type ${type}`);
+      if (!name || /[.{}]/.test(name)) throw new Error(`createVariable: invalid variable name "${name}"`);
+      if (c.vars.length >= 5000) throw new Error("createVariable: collection is full (5000 variables)");
+      if (c.vars.some((v) => v.name === name)) throw new Error(`createVariable: duplicate variable name ${name}`);
+      const v = new FakeVariable(name, c, type, this);
+      c.vars.push(v);
+      this.variableById.set(v.id, v);
+      return v;
+    },
+    getLocalVariableCollectionsAsync: async () => [...this.collections],
+    getLocalVariablesAsync: async (type?: string) => [...this.variableById.values()].filter((v) => !type || v.resolvedType === type),
+    getVariableByIdAsync: async (id: string) => this.variableById.get(id) ?? null,
+    getVariableCollectionByIdAsync: async (id: string) => this.collections.find((c) => c.id === id) ?? null,
+  };
+
+  /** Variable id → default-mode value: what the prototype starts from (for runFigmaActions). */
+  variableValues(): Map<string, boolean | number | string> {
+    return new Map([...this.variableById.values()].map((v) => [v.id, v.valuesByMode[v.collection.defaultModeId] as boolean | number | string]));
+  }
+  /** A variable by collection and name (test helper). */
+  variableNamed(collection: string, name: string): FakeVariable {
+    const v = [...this.variableById.values()].find((x) => x.collection.name === collection && x.name === name);
+    if (!v) throw new Error(`no variable ${collection}/${name}`);
+    return v;
   }
 }

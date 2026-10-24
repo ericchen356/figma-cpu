@@ -1,0 +1,374 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg: #141414;
+        --card: #1e1e1e;
+        --cell: #262626;
+        --stroke: #2e2e2e;
+        --text: #e8e8e8;
+        --dim: #8c8c8c;
+        --on: #f5c542;
+        --active: #2bd67b;
+        --blue: #2f6fed;
+        --bus: #f59e0b;
+        --err: #ff5a5f;
+        --mono: "Roboto Mono", ui-monospace, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--text);
+        font: 12px/1.4 Inter, system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 10px;
+        padding: 10px;
+        margin-top: 10px;
+      }
+      .label {
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .title {
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .title span {
+        color: var(--dim);
+        font-weight: 600;
+        margin-right: 4px;
+      }
+      .pill {
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: var(--cell);
+        color: var(--dim);
+      }
+      .pill.ok {
+        color: var(--active);
+      }
+      .pill.bad {
+        color: var(--err);
+      }
+      .pill.busy {
+        color: var(--on);
+      }
+      select,
+      input,
+      textarea,
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--cell);
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+      }
+      select,
+      input[type="number"] {
+        padding: 4px 6px;
+      }
+      input[type="number"] {
+        width: 60px;
+      }
+      label.check {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+        color: var(--dim);
+        cursor: pointer;
+      }
+      textarea {
+        width: 100%;
+        height: 170px;
+        margin-top: 8px;
+        padding: 8px;
+        font: 12px/1.45 var(--mono);
+        resize: vertical;
+        tab-size: 8;
+        white-space: pre;
+      }
+      button {
+        padding: 6px 10px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--dim);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.primary {
+        background: var(--active);
+        color: #0b1a12;
+        border-color: var(--active);
+      }
+      button.blue {
+        background: var(--blue);
+        border-color: var(--blue);
+        color: #fff;
+      }
+      button.run {
+        border-color: var(--active);
+        color: var(--active);
+      }
+      .grow {
+        flex: 1;
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      .hint {
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 6px;
+      }
+      .bar {
+        height: 4px;
+        background: var(--cell);
+        border-radius: 2px;
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      .bar > div {
+        height: 100%;
+        width: 0;
+        background: var(--active);
+        transition: width 0.15s;
+      }
+      .prog {
+        font: 11px var(--mono);
+        color: var(--dim);
+        margin-top: 4px;
+        min-height: 15px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .stat {
+        background: var(--cell);
+        border-radius: 6px;
+        padding: 4px 6px;
+      }
+      .stat b {
+        display: block;
+        font: 600 14px var(--mono);
+      }
+      .stat i {
+        font-style: normal;
+        color: var(--dim);
+        font-size: 10px;
+      }
+      .msgs {
+        margin-top: 6px;
+        font: 11px/1.4 var(--mono);
+        color: var(--dim);
+        max-height: 72px;
+        overflow: auto;
+      }
+      .msgs .err {
+        color: var(--err);
+      }
+      .msgs .ok {
+        color: var(--active);
+      }
+      #log {
+        max-height: 140px;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+      .out {
+        font: 700 34px/1 var(--mono);
+        color: var(--on);
+      }
+      .regs {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .reg {
+        background: var(--cell);
+        border-radius: 6px;
+        padding: 3px 6px;
+        font: 11px var(--mono);
+        color: var(--dim);
+      }
+      .reg b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .flags span {
+        margin-right: 6px;
+        color: var(--dim);
+        font: 11px var(--mono);
+      }
+      .flags span.on {
+        color: var(--on);
+      }
+      .verdict {
+        margin-top: 8px;
+        font: 12px/1.4 var(--mono);
+        color: var(--dim);
+      }
+      .verdict.ok {
+        color: var(--active);
+      }
+      .verdict.bad {
+        color: var(--err);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row between">
+      <h1>FigmaCPU Silicon</h1>
+      <span id="busy" class="pill">idle</span>
+    </div>
+    <div class="row" style="margin-top: 6px">
+      <span id="s-hw" class="pill">hardware</span>
+      <span id="s-panel" class="pill">front panel</span>
+      <span id="s-comp" class="pill">prototype</span>
+      <span id="s-prog" class="pill">program —</span>
+    </div>
+    <div id="s-page" class="hint"></div>
+
+    <div class="card">
+      <div class="title"><span>1</span>Build hardware</div>
+      <div class="row">
+        <label class="check"><input id="labels" type="checkbox" checked /> gate labels</label>
+        <label class="check"><input id="redraw" type="checkbox" /> redraw</label>
+        <label class="check" title="Needs a plan with more than 3 pages per file"><input id="separate" type="checkbox" /> separate pages</label>
+        <span class="grow"></span>
+        <button id="build" class="primary">Build hardware</button>
+      </div>
+      <div class="bar"><div id="build-bar"></div></div>
+      <div id="build-prog" class="prog"></div>
+      <div class="hint">Draws the 8 gates, every cell and cell/CPU as components, on one page ("Silicon" if it exists, else this page). Existing cells are reused unless "redraw".</div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <div class="title" style="margin: 0"><span>2</span>Front panel</div>
+        <button id="panel">Create front panel</button>
+      </div>
+      <div class="hint">Two 7-segment digits (SEG_HI/SEG_LO) and a lamp per bit of PC, IR, T, R0–R3, Z C N, HALTED, OUT, bus. Lamps named <span class="mono">lamp/&lt;net&gt;</span> are bound to that net.</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span>3</span>Compile to prototype</div>
+      <div class="row">
+        <label class="check" title="NAND/NOR as two flat actions (only if Figma rejects nested expressions)"><input id="flat" type="checkbox" /> flat expressions</label>
+        <span class="label" style="margin-left: 6px">Run delay</span>
+        <input id="delay" type="number" min="1" value="1" />
+        <span class="hint" style="margin: 0">ms</span>
+      </div>
+      <div class="row" style="margin-top: 6px">
+        <span class="label" title="Figma's viewer crashes on very large reactions (spike: above ~500–2000 actions per event); ticks are split into chunks of at most this many actions">Max actions / event</span>
+        <input id="chunk" type="number" min="50" step="50" placeholder="default" />
+        <span class="grow"></span>
+        <button id="compile" class="blue">Compile</button>
+      </div>
+      <div class="bar"><div id="compile-bar"></div></div>
+      <div id="compile-prog" class="prog"></div>
+      <div class="stats">
+        <div class="stat"><i>gates</i><b id="st-gates">—</b></div>
+        <div class="stat"><i>variables</i><b id="st-vars">—</b></div>
+        <div class="stat"><i>actions / tick</i><b id="st-apt">—</b></div>
+        <div class="stat"><i>lit layers</i><b id="st-bound">—</b></div>
+      </div>
+      <div class="hint">Reads the circuit off the canvas, compiles it and writes variables + Step / Run / Reset reactions. Starts with the program below in RAM. Then ▶ Present the "CPU · Step" flow. Figma's viewer is slow on a CPU-sized tick: to run the full CPU at speed, use the plugin clock (5).</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="title" style="margin: 0"><span>4</span>Program</div>
+        <select id="program" class="grow"></select>
+        <button id="load">Load program</button>
+      </div>
+      <textarea id="src" spellcheck="false"></textarea>
+      <div id="asm" class="msgs"></div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span>5</span>Run · plugin clock <span style="font-weight: 400">· the full CPU at speed, lighting the canvas live</span></div>
+      <div class="controls">
+        <button id="c-step">Step</button>
+        <button id="c-run" class="run">▶ Run</button>
+        <button id="c-pause">⏸ Pause</button>
+        <button id="c-reset">⟲ Reset</button>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <span class="label">Speed</span>
+        <select id="tps">
+          <option value="1">1 tick/s</option>
+          <option value="2">2 ticks/s</option>
+          <option value="5">5 ticks/s</option>
+          <option value="10" selected>10 ticks/s</option>
+          <option value="30">30 ticks/s</option>
+          <option value="100">100 ticks/s</option>
+          <option value="1000">1000 ticks/s</option>
+          <option value="0">max</option>
+        </select>
+        <span class="grow"></span>
+        <span id="c-state" class="pill">stopped</span>
+      </div>
+      <div class="row between" style="margin-top: 8px; align-items: flex-end">
+        <div>
+          <div class="label">OUT</div>
+          <div class="out" id="c-out">--</div>
+        </div>
+        <div class="mono" id="c-counts" style="text-align: right; color: var(--dim)"></div>
+      </div>
+      <div class="regs" id="regs"></div>
+      <div class="flags" id="flags" style="margin-top: 6px"></div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <div class="title" style="margin: 0"><span>6</span>Verify</div>
+        <button id="verify">Verify against ISA model</button>
+      </div>
+      <div id="verdict" class="verdict">Runs the CPU on the canvas next to the T-state ISA model, comparing every probe and RAM byte after every tick.</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Log</div>
+      <div id="log" class="msgs"></div>
+    </div>
+    <!-- SCRIPT -->
+  </body>
+</html>
