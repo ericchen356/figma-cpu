@@ -153,12 +153,13 @@ screen:
   it inks the cell and flips the pen (the hardware's DOWN then finds nothing to do).
 - **Strokes are hovers.** The pen-up and pen-down click layers (`hot` lines 4 and 5, picked by
   the `pendown` bit) have a reaction per cell, PX and PY built in. On the pen-down layer, entering
-  a cell (MOUSE_ENTER, which also has its ON_CLICK) runs `paint/<row>/<col>`, made with the pen
-  known to be down: every pixel but that one folds away, and what is left is that word's latch.
+  a cell (MOUSE_ENTER, which also has its ON_CLICK) stores the pointer's column, then runs
+  `paint/<row>/<col>`, made with the pen known to be down: every pixel but that one folds away,
+  and what is left is that word's latch.
 
 | control                       | reactions | actions (one event)                                  |
 | ----------------------------- | --------- | ---------------------------------------------------- |
-| a stroke cell (hover)         | 140       | 11, every one                                        |
+| a stroke cell (hover)         | 140       | 15, every one (4 store the pointer's column)         |
 | a pen click (down or up)      | 140       | 26, every one (shared by the pen-up and pen-down layers) |
 | Pen tool (P)                  | 1         | 44 (the other tools 44–45: they now also lift the pen) |
 | Erase (E)                     | 1         | 15                                                   |
