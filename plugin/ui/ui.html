@@ -1,11 +1,45 @@
 <!doctype html>
 <meta charset="utf-8" />
 <style>
-  body { font: 12px Inter, system-ui, sans-serif; margin: 12px; background: #1e1e1e; color: #e8e8e8; }
-  button { margin-right: 4px; }
-  pre { background: #141414; padding: 8px; border-radius: 6px; max-height: 220px; overflow: auto; }
+  * { box-sizing: border-box; }
+  body { font: 12px Inter, system-ui, sans-serif; margin: 0; padding: 12px; background: #1e1e1e; color: #e8e8e8; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+  button, select, input { background: #2d2d2d; color: #e8e8e8; border: 1px solid #444; border-radius: 6px; padding: 5px 9px; font: inherit; }
+  button { cursor: pointer; } button:hover { background: #383838; }
+  button.primary { background: #2bd67b; color: #0b2a1a; border-color: #2bd67b; font-weight: 600; }
+  textarea { width: 100%; height: 190px; background: #141414; color: #e8e8e8; border: 1px solid #333; border-radius: 6px;
+    font: 12px "Roboto Mono", ui-monospace, monospace; padding: 8px; resize: vertical; tab-size: 4; }
+  .mono { font-family: "Roboto Mono", ui-monospace, monospace; }
+  #regs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .reg { background: #262626; border-radius: 6px; padding: 4px 6px; text-align: center; }
+  .reg b { color: #8c8c8c; display: block; font-size: 10px; }
+  .flag { padding: 2px 8px; border-radius: 10px; background: #333; } .flag.on { background: #f5c542; color: #222; }
+  #errors { color: #ff7b72; white-space: pre-wrap; } #ok { color: #2bd67b; }
+  pre { background: #141414; padding: 8px; border-radius: 6px; max-height: 130px; overflow: auto; margin: 6px 0; }
+  canvas#screen { display: none; /* screen lane: draw VRAM here, toBlob('image/png'), post {type:'screen-png'} */ }
+  .dim { color: #8c8c8c; }
 </style>
 <h3>FigmaCPU</h3>
-<div id="status">starting…</div>
+<div class="row">
+  <select id="prog"></select>
+  <button id="assemble">Assemble</button>
+  <button id="load" class="primary" disabled>Load into RAM</button>
+</div>
+<textarea id="src" spellcheck="false"></textarea>
+<div id="asmout"><span id="ok"></span><span id="errors"></span></div>
+<div class="row">
+  <button id="step">Step</button>
+  <button id="run">Run</button>
+  <button id="pause">Pause</button>
+  <button id="reset">Reset</button>
+  <select id="mode"><option value="watch">Watch</option><option value="turbo">Turbo</option></select>
+  <label class="dim" id="hzwrap">Hz <input id="hz" type="number" min="1" max="5" value="3" style="width:46px" /></label>
+</div>
+<div id="regs"></div>
+<div class="row mono" id="cpu"></div>
+<div class="row"><span class="flag" id="fZ">Z</span><span class="flag" id="fC">C</span><span class="flag" id="fN">N</span><span class="dim" id="cyc"></span></div>
+<canvas id="screen" width="128" height="96"></canvas>
+<div class="dim" id="status">starting…</div>
 <pre id="log"></pre>
 <!-- SCRIPT -->
