@@ -170,7 +170,8 @@ export const keyDown = (keyCodes: number[]): Trigger => ({
   device: "KEYBOARD",
   keyCodes,
 });
-/** `timeout` in milliseconds (developers.figma.com: "stored in milliseconds"). */
+/** `timeout` in SECONDS. developers.figma.com says milliseconds, but the viewer waits `timeout`
+ * seconds (1 = one second, measured in Present 2026-10-24); 0.001 hops as soon as it can. */
 export const afterTimeout = (timeout: number): Trigger => ({
   type: "AFTER_TIMEOUT",
   timeout,
@@ -265,4 +266,39 @@ export function toFigmaActions(
   opts: FigmaActionOptions = {},
 ): Action[] {
   return figmaActions(plan.tick, varIds, opts);
+}
+
+/** Debug aid: make `node.setReactionsAsync` log which node, trigger and first action Figma rejected. Never throws. */
+export function guardReactions(node: unknown, label: string, log: (msg: string) => void): void {
+  const n = node as { setReactionsAsync?: (r: Reaction[]) => Promise<void> } | undefined;
+  if (!n || typeof n.setReactionsAsync !== "function") return;
+  const orig = n.setReactionsAsync.bind(n);
+  try {
+    n.setReactionsAsync = async (r: Reaction[]) => {
+      try {
+        await orig(r);
+      } catch (e) {
+        const first = r[0]?.actions?.[0] as unknown as Record<string, unknown> | undefined;
+        log(`FAILED setReactions on "${label}": ${String((e as Error)?.message ?? e).slice(0, 300)} | ${r.length} reaction(s), trigger=${JSON.stringify(r[0]?.trigger)}, actions[0] type=${String(first?.type)} keys=${first ? Object.keys(first).join(",") : "none"}`);
+        throw e;
+      }
+    };
+  } catch {
+    /* node object does not allow overriding; skip */
+  }
+}
+
+/** Figma's setReactionsAsync rejects a CONDITIONAL inside another conditional's block (real Figma, 2026-10-24:
+ * `Unrecognized key: "conditionalBlocks" at [0].actions[0].conditionalBlocks[0].actions[1]`). Returns where, or null if flat. */
+export function nestedConditional(actions: readonly Action[], path = "actions"): string | null {
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i];
+    if (a.type !== "CONDITIONAL") continue;
+    for (let b = 0; b < a.conditionalBlocks.length; b++) {
+      const inner = a.conditionalBlocks[b].actions as Action[];
+      const at = inner.findIndex((x) => x.type === "CONDITIONAL");
+      if (at >= 0) return `${path}[${i}].conditionalBlocks[${b}].actions[${at}]`;
+    }
+  }
+  return null;
 }

@@ -10,7 +10,19 @@ import {
   setVariable,
   strData,
 } from "../../silicon/src/prototype/figma-actions";
-import { inline, type Expr, type Fn, type Program, type Step, type Ty, type Val, type VarDecl } from "./ir";
+import {
+  and,
+  inline,
+  not,
+  ref,
+  type Expr,
+  type Fn,
+  type Program,
+  type Step,
+  type Ty,
+  type Val,
+  type VarDecl,
+} from "./ir";
 
 /** Figma variable id per variable name. */
 export type VarIds = Map<string, string>;
@@ -20,6 +32,10 @@ export interface CompileOptions {
    * reads b's current value (silicon's spike could not rule out that a bare alias links the two
    * variables instead of copying). "alias" writes the bare alias. Colors can only be copied by alias. */
   copy?: "expr" | "alias";
+  /** "nested" (default) keeps the flow's `if` inside `if`, so the executed actions count exactly
+   * as the interpreter counts them. "flat" moves every inner `if` to the top level (flatIfs):
+   * Figma's setReactionsAsync rejects a CONDITIONAL inside another conditional's block. */
+  ifs?: "nested" | "flat";
 }
 
 const RESOLVED: Record<Ty, VariableResolvedDataType> = {
@@ -159,6 +175,101 @@ function setValue(
   return exprToData(to, ids, types);
 }
 
+/** The variables an expression reads. */
+function readsOf(e: Expr, into = new Set<string>()): Set<string> {
+  if (e.k === "var") into.add(e.name);
+  else if (e.k === "op") {
+    readsOf(e.a, into);
+    if (e.b) readsOf(e.b, into);
+  }
+  return into;
+}
+
+/** Every variable the steps write, in any branch. */
+function writesOf(
+  steps: readonly Step[],
+  into = new Set<string>(),
+): Set<string> {
+  for (const s of inline(steps)) {
+    if (s.k === "set") into.add(s.name);
+    else if (s.k === "half") into.add(s.dst);
+    else if (s.k === "if") {
+      writesOf(s.then, into);
+      if (s.else) writesOf(s.else, into);
+    }
+  }
+  return into;
+}
+
+/** The boolean flatIfs keeps a condition in, for an `if` `depth` levels deep. */
+export const flatTemp = (depth: number) => `flat/${depth}`;
+
+/** The steps with no `if` inside an `if`. An inner `if` becomes top-level ifs on the conditions
+ * around it ANDed together (an else branch takes the negation), and the sets between inner ifs
+ * become top-level ifs on the outer condition. Each piece evaluates its condition again where it
+ * lands, which is the same program while no piece writes what the condition reads; when one
+ * can, the condition is first stored in a boolean (flatTemp) and the pieces read that. */
+export function flatIfs(steps: readonly Step[]): Step[] {
+  const out: Step[] = [];
+  const emit = (list: readonly Step[], guard: Expr | null, depth: number) => {
+    let run: Step[] = [];
+    const flush = () => {
+      if (run.length)
+        out.push(
+          ...(guard ? [{ k: "if", cond: guard, then: run } as Step] : run),
+        );
+      run = [];
+    };
+    for (const s of inline(list)) {
+      if (s.k !== "if") {
+        run.push(s);
+        continue;
+      }
+      const nested = [...s.then, ...(s.else ?? [])].some((x) => x.k === "if");
+      if (!guard && !nested) {
+        flush();
+        out.push(s); // one CONDITIONAL with an else, at the top: Figma judges it once
+        continue;
+      }
+      flush();
+      const reads = readsOf(s.cond);
+      const written = writesOf([...s.then, ...(s.else ?? [])]);
+      let cond = s.cond;
+      if ([...reads].some((r) => written.has(r))) {
+        const keep = flatTemp(depth + 1);
+        out.push({
+          k: "set",
+          name: keep,
+          to: guard ? and(guard, s.cond) : s.cond,
+        });
+        cond = ref(keep);
+        emit(s.then, cond, depth + 1);
+        if (s.else?.length)
+          emit(s.else, guard ? and(guard, not(cond)) : not(cond), depth + 1);
+        continue;
+      }
+      emit(s.then, guard ? and(guard, cond) : cond, depth + 1);
+      if (s.else?.length)
+        emit(s.else, guard ? and(guard, not(cond)) : not(cond), depth + 1);
+    }
+    flush();
+  };
+  emit(steps, null, 0);
+  return out;
+}
+
+/** The booleans flatIfs writes for these steps, as declarations to create next to the program's
+ * variables (false at the start; each is written before it is read in an event). */
+export function flatTemps(...lists: (readonly Step[])[]): VarDecl[] {
+  const names = new Set<string>();
+  for (const list of lists)
+    for (const s of flatIfs(list))
+      if (s.k === "set" && s.name.startsWith("flat/")) names.add(s.name);
+  return [...names]
+    .sort()
+    .map((name) => ({ name, ty: "bool", init: false, role: "temp" }));
+}
+
 /** Flow steps as Figma actions. Checks every set against its variable's declared type. */
 export function compileSteps(
   steps: readonly Step[],
@@ -189,7 +300,7 @@ export function compileSteps(
         s.else ? conv(s.else) : undefined,
       );
     });
-  return conv(steps);
+  return conv(opts.ifs === "flat" ? flatIfs(steps) : steps);
 }
 
 // ---------- the size of a handler ----------
@@ -235,10 +346,10 @@ export function maxDepth(input: readonly Step[]): number {
           : s.k === "unit"
             ? maxDepth(s.steps)
             : Math.max(
-            depth(s.cond),
-            maxDepth(s.then),
-            s.else ? maxDepth(s.else) : 0,
-          ),
+                depth(s.cond),
+                maxDepth(s.then),
+                s.else ? maxDepth(s.else) : 0,
+              ),
     );
   return d;
 }

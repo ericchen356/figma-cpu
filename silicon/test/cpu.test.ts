@@ -78,7 +78,10 @@ function pulseReset(sim: Sim, model: IsaModel, ticks = 1): void {
   sim.settle();
 }
 
-const JUMPS: Record<number, "Z" | "C" | "N"> = { 0xc: "Z", 0xd: "C", 0xe: "N" };
+/** Conditional jumps (opcode → flag), read from the microcode's `when` steps. */
+const JUMPS: Record<number, "Z" | "C" | "N"> = Object.fromEntries(
+  OPCODES.flatMap((o) => o.steps.filter((s) => s.when).map((s) => [o.code, s.when!.flag])),
+);
 /** What the lockstep runs exercised, across all tests in this file. */
 const coverage = { ops: new Set<string>(), taken: new Set<string>(), notTaken: new Set<string>(), outAt15: 0, resets: 0 };
 
@@ -600,22 +603,23 @@ const HAND: Record<string, { src: string; bytes: number[]; ticks: number; halts:
     halts: true,
     outputs: [0],
   },
-  // LD, MOV, ADD with carry, JC taken, JN not taken, NOT, ST R1 to OUT, JN taken, HLT.
-  flags: {
+  // LD, MOV, ADD with carry, JC taken, LDR through a pointer, STR through a pointer to OUT, HLT.
+  pointers: {
     src: `      LD R3, [14]
           MOV R1, R3
           ADD R1, R1
           JC skip
     stop: HLT
-    skip: JN stop
-          NOT R1
-          ST R1, [15]
-          JN stop
+    skip: LDI R2, 14
+          LDR R0, [R2]
+          LDI R2, OUT
+          STR R1, [R2]
+          HLT
           .db 0x9C`,
-    bytes: [0x2c, 0x0e, 0x47, 0x55, 0xd0, 0x07, 0xf0, 0xe0, 0x06, 0xa4, 0x31, 0x0f, 0xe0, 0x06, 0x9c],
+    bytes: [0x2c, 0x0e, 0x47, 0x55, 0xd0, 0x07, 0xf0, 0x18, 0x0e, 0xa2, 0x18, 0x0f, 0xe9, 0xf0, 0x9c],
     ticks: 400,
     halts: true,
-    outputs: [0xc7],
+    outputs: [0x38],
   },
   // AND, OR, XOR to zero, JZ taken, SUB with borrow, JZ and JC not taken, then PC wraps to 0.
   wrap: {
@@ -654,7 +658,9 @@ describe("CPU vs IsaModel, tick by tick (RefSim)", () => {
     mul: { outputs: [42], halts: true, ticks: 162 },
     fib: { outputs: [1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233], halts: true, ticks: 448 },
     sub: { outputs: [5, 4, 3, 2, 1, 0], halts: true },
-    logic: { outputs: [0x33, 0x30, 0xc3], halts: true },
+    logic: { outputs: [0x33, 0x30, 0x3c], halts: true },
+    ptrout: { outputs: [7, 6, 5, 4, 3, 2, 1, 0], halts: true },
+    copy: { outputs: [0x5a], halts: true },
     mem: { outputs: [0x42], halts: true },
     count: { outputs: Array.from({ length: 20 }, (_, i) => i + 1), halts: false },
   };
@@ -712,8 +718,8 @@ describe("CPU vs IsaModel, tick by tick (RefSim)", () => {
 
   it("covered every opcode, both outcomes of every conditional jump, OUT and RESET", () => {
     expect([...coverage.ops].sort()).toEqual(OPCODES.map((o) => o.mnem).sort());
-    expect([...coverage.taken].sort()).toEqual(["JC", "JN", "JZ"]);
-    expect([...coverage.notTaken].sort()).toEqual(["JC", "JN", "JZ"]);
+    expect([...coverage.taken].sort()).toEqual(["JC", "JZ"]);
+    expect([...coverage.notTaken].sort()).toEqual(["JC", "JZ"]);
     expect(coverage.outAt15).toBeGreaterThan(10);
     expect(coverage.resets).toBeGreaterThan(1);
   });

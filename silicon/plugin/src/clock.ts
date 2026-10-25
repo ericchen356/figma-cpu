@@ -7,6 +7,7 @@ import { FastSim } from "../../src/compile";
 import type { Schedule } from "../../src/compile/types";
 import { readProbes } from "../../src/cpu/probes";
 import type { FlatNetlist } from "../../src/netlist/types";
+import type { DeviceHook } from "./devices";
 import type { ClockStatus } from "./messages";
 
 /** A variable and the mode its value lives in (the collection's default mode). */
@@ -36,6 +37,9 @@ export interface ClockOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   onError?: (e: unknown) => void;
+  /** Device layer (devices.ts): applied at the tick boundary before each frame's ticks and
+   * before a manual step(). What it pokes into the simulator is written by the usual diff. */
+  devices?: DeviceHook;
 }
 
 export class PluginClock {
@@ -142,6 +146,7 @@ export class PluginClock {
     this.pause();
     if (this.loop) await this.loop;
     const sim = await this.attach();
+    this.opts.devices?.apply(sim);
     for (let i = 0; i < n; i++) {
       sim.tick();
       this.count++;
@@ -197,6 +202,7 @@ export class PluginClock {
         if (this.tps > 0) due = Math.min(due + ((t - last) * this.tps) / 1000, Math.max(1, this.tps));
         last = t;
         let ran = 0;
+        this.opts.devices?.apply(sim);
         if (this.tps <= 0) {
           // Max speed: fill the time budget, checking the clock every 16 ticks.
           do {

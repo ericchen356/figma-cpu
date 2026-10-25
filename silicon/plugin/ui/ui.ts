@@ -1,7 +1,10 @@
 // The plugin panel (an iframe): buttons → messages to the plugin code, and the plugin's
 // progress, stats, clock readout and log back. The program editor assembles as you type.
+import helloSrc from "../../os/hello-os.asm";
+import helloBindings from "../../os/hello-os.bindings.json";
+import helloManifest from "../../os/hello-os.json";
 import { assemble, PROGRAMS } from "../../src/isa";
-import type { ClockStatus, CompileStats, DocStatus, ToMain, ToUi } from "../src/messages";
+import type { ClockStatus, CompileStats, DocStatus, OsReport, ToMain, ToUi } from "../src/messages";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const post = (msg: ToMain) => parent.postMessage({ pluginMessage: msg }, "*");
@@ -47,9 +50,10 @@ checkAsm();
 
 // ---------- buttons ----------
 
-const busyButtons = ["build", "panel", "compile", "load", "verify", "c-step", "c-run", "c-reset"];
+const busyButtons = ["build", "panel", "compile", "load", "verify", "c-step", "c-run", "c-reset", "os-load", "os-run", "os-demo", "live"];
 $("build").onclick = () => post({ type: "build", gateLabels: checked("labels"), redraw: checked("redraw"), separatePages: checked("separate") });
 $("panel").onclick = () => post({ type: "panel" });
+$("live").onclick = () => post({ type: "live" });
 $("compile").onclick = () => {
   const chunk = Number($<HTMLInputElement>("chunk").value);
   if (checkAsm())
@@ -77,9 +81,132 @@ $("c-reset").onclick = () => {
 $<HTMLSelectElement>("tps").onchange = () => {
   if (clockRunning) post({ type: "clock", action: "run", tps: tps() });
 };
+
+// ---------- input byte (memory-mapped at RAM[14], see plugin/src/devices.ts) ----------
+
+const inByte = $<HTMLInputElement>("in-byte");
+function sendInput(value: number) {
+  post({ type: "input", value });
+  $("in-last").textContent = hex(value, 2);
+}
+for (let k = 0; k < 16; k++) {
+  const b = document.createElement("button");
+  b.textContent = hex(k, 1);
+  b.title = `send ${hex(k, 2)}`;
+  b.onclick = () => sendInput(k);
+  $("keypad").appendChild(b);
+}
+function sendTyped() {
+  const t = inByte.value.trim();
+  if (/^[0-9a-f]{1,2}$/i.test(t)) {
+    inByte.style.borderColor = "";
+    sendInput(parseInt(t, 16));
+  } else inByte.style.borderColor = "var(--err)";
+}
+$("in-send").onclick = sendTyped;
+inByte.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendTyped();
+});
+
 src.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && checkAsm()) post({ type: "load", source: src.value });
 });
+
+// ---------- OS card (plugin/src/os-host.ts) ----------
+
+const osBox = {
+  manifest: $<HTMLTextAreaElement>("os-manifest"),
+  source: $<HTMLTextAreaElement>("os-source"),
+  bindings: $<HTMLTextAreaElement>("os-bindings"),
+};
+type OsTab = keyof typeof osBox;
+function osTab(tab: OsTab) {
+  for (const k of Object.keys(osBox) as OsTab[]) {
+    osBox[k].style.display = k === tab ? "" : "none";
+    $(`os-tab-${k}`).className = k === tab ? "on" : "";
+  }
+}
+for (const k of Object.keys(osBox) as OsTab[]) $(`os-tab-${k}`).onclick = () => osTab(k);
+function osDefaults() {
+  osBox.manifest.value = JSON.stringify(helloManifest, null, 2);
+  osBox.source.value = helloSrc;
+  osBox.bindings.value = JSON.stringify(helloBindings, null, 2);
+}
+osDefaults();
+$("os-default").onclick = osDefaults;
+$<HTMLInputElement>("os-files").onchange = async (e) => {
+  for (const f of Array.from((e.target as HTMLInputElement).files ?? [])) {
+    const t = await f.text();
+    const tab: OsTab = /\.bindings\.json$/i.test(f.name) ? "bindings" : /\.json$/i.test(f.name) ? "manifest" : "source";
+    osBox[tab].value = t;
+    osTab(tab);
+  }
+};
+const osFiles = () => ({ manifest: osBox.manifest.value, source: osBox.source.value, bindings: osBox.bindings.value });
+$("os-load").onclick = () => post({ type: "os-load", ...osFiles() });
+$("os-run").onclick = () => post({ type: "os-run", tps: 0, load: osFiles() });
+$("os-pause").onclick = () => post({ type: "clock", action: "pause" });
+$("os-demo").onclick = () => post({ type: "os-demo" });
+
+function osEvent(event: Extract<ToMain, { type: "os-event" }>["event"]) {
+  post({ type: "os-event", event });
+  $("os-pending").textContent = event.type === "click" ? `click ${event.node}` : `key ${event.key}`;
+}
+const keycatch = $("os-keycatch");
+keycatch.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") return;
+  e.preventDefault();
+  osEvent({ type: "key", key: e.key });
+});
+
+function showOs(r: OsReport) {
+  const msgs = $("os-msgs");
+  msgs.innerHTML = "";
+  for (const e of r.errors) line(msgs, e, "err");
+  for (const w of r.warnings) line(msgs, w, "");
+  if (r.loaded) line(msgs, `loaded "${r.name}" · ${r.bytes.map((b) => hex(b, 2)).join(" ")}`, "ok");
+  else if (!r.errors.length) line(msgs, "not loaded", "err");
+  const cell = (t: string, bold = false) => {
+    const td = document.createElement("td");
+    if (bold) {
+      const b = document.createElement("b");
+      b.textContent = t;
+      td.appendChild(b);
+    } else td.textContent = t;
+    return td;
+  };
+  const table = (id: string, rows: string[][]) => {
+    const t = $(id);
+    t.innerHTML = "";
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      row.forEach((c, i) => tr.appendChild(cell(c, i === 0)));
+      t.appendChild(tr);
+    }
+  };
+  table(
+    "os-regions",
+    r.regions.map((g) => [g.name, g.kind, g.start === g.end ? `${g.start}` : `${g.start}–${g.end}`]),
+  );
+  table(
+    "os-binds",
+    r.bindings.map((b) => [b.node, b.prop, b.ram, b.map]),
+  );
+  const keys = $("os-keys");
+  keys.innerHTML = "";
+  for (const [node, v] of Object.entries(r.keymap.click)) {
+    const b = document.createElement("button");
+    b.textContent = `click ${node} → ${hex(v, 2)}`;
+    b.onclick = () => osEvent({ type: "click", node });
+    keys.appendChild(b);
+  }
+  for (const [key, v] of Object.entries(r.keymap.key)) {
+    const b = document.createElement("button");
+    b.textContent = `key ${key} → ${hex(v, 2)}`;
+    b.onclick = () => osEvent({ type: "key", key });
+    keys.appendChild(b);
+  }
+}
 
 // ---------- readouts ----------
 
@@ -111,10 +238,14 @@ function showStatus(s: DocStatus) {
   $("s-page").textContent = s.page ? `on: ${s.page}` : "Nothing built yet. Start with Build hardware.";
 }
 
+/** The task whose progress bar is mid-way, so an error can mark it failed instead of leaving it stuck. */
+let activeProgress: string | null = null;
+
 function progress(task: string, done: number, total: number, label: string) {
   const bar = $(`${task}-bar`);
   const text = $(`${task}-prog`);
   if (!bar || !text) return;
+  activeProgress = done >= total ? null : task;
   bar.style.width = `${total ? Math.round((100 * done) / total) : 0}%`;
   text.textContent = done >= total ? "done" : `${done}/${total} · ${label}`;
 }
@@ -152,6 +283,11 @@ window.onmessage = (e: MessageEvent) => {
       return;
     case "log":
       log(m.text, m.level === "error" ? "err" : m.level === "ok" ? "ok" : "");
+      if (m.level === "error" && activeProgress) {
+        const text = $(`${activeProgress}-prog`);
+        if (text) text.textContent = "✗ failed (see the log below)";
+        activeProgress = null;
+      }
       return;
     case "busy": {
       const b = $("busy");
@@ -179,6 +315,16 @@ window.onmessage = (e: MessageEvent) => {
     case "clock":
       showClock(m.status);
       return;
+    case "os":
+      showOs(m.report);
+      return;
+    case "live": {
+      const st = m.stats;
+      $("live-prog").textContent =
+        `${st.layers} layers · ${st.bound} lit layers bound (${st.magnifierGates} gates in ${st.magnifiers} magnifiers) · ${st.texts} texts` +
+        (st.wired ? ` · ${st.frames.length} frames, ${st.eventsPerTick} events/tick · ${(st.ms / 1000).toFixed(1)} s` : ` · not wired: ${st.note ?? "?"}`);
+      return;
+    }
     case "verify": {
       const v = $("verdict");
       v.textContent = m.text;

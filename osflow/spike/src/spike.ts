@@ -13,7 +13,13 @@
 //   Editor         the real compiled editor (src/editor.ts): its variables, a hotspot per canvas cell
 //                  with real reactions, tool/swatch/layer buttons, and 8 slots drawn by bound geometry.
 // Plugin code only builds this; at run time Figma's prototype engine does all the work.
-import { compileSteps, statsOf, typesOf, type VarIds } from "../../src/compile";
+import {
+  compileSteps,
+  flatTemps,
+  statsOf,
+  typesOf,
+  type VarIds,
+} from "../../src/compile";
 import { buildEditor } from "../../src/editor";
 import { PALETTE } from "../../src/spec";
 import type { FlowEvent } from "../../src/ir";
@@ -666,7 +672,9 @@ async function editorBuild(
     `editor: ${stats.variables} variables, ${stats.events} events, ${stats.stored} stored actions, at most ${stats.maxWorst} executed per event`,
   );
   await removeCollections(api, EDITOR_COLLECTION);
-  const specs: VariableSpec[] = ed.vars.map((v) => ({
+  // The flow's variables, and the booleans the flat reactions keep conditions in.
+  const decls = [...ed.vars, ...flatTemps(...ed.events.map((e) => e.steps))];
+  const specs: VariableSpec[] = decls.map((v) => ({
     name: v.name,
     type: v.ty === "num" ? "FLOAT" : v.ty === "bool" ? "BOOLEAN" : "STRING",
     init: v.init as boolean | number | string,
@@ -674,9 +682,9 @@ async function editorBuild(
   const made = await createVariables(api, EDITOR_COLLECTION, specs, {
     log: (m) => log.info(m),
   });
-  const byName = new Map(ed.vars.map((v, i) => [v.name, made.vars[i]]));
+  const byName = new Map(decls.map((v, i) => [v.name, made.vars[i]]));
   const ids: VarIds = new Map([...byName].map(([n, v]) => [n, v.id]));
-  const types = typesOf(ed.vars);
+  const types = typesOf(decls);
   const varOf = (name: string) => {
     const v = byName.get(name);
     if (!v) throw new Error(`no variable ${name}`);
@@ -833,7 +841,8 @@ async function editorBuild(
     const list = byNode.get(nodeName) ?? [];
     list.push({
       trigger: TRIGGER[e.trigger.type](e),
-      actions: compileSteps(e.steps, ids, types),
+      // Flat: Figma rejects a CONDITIONAL inside another conditional's block.
+      actions: compileSteps(e.steps, ids, types, { ifs: "flat" }),
     });
     byNode.set(nodeName, list);
     wired++;
