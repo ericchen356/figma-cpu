@@ -1,0 +1,32 @@
+{
+  "name": "FigmaCPU Flowchart",
+  "id": "figmacpu-flowchart-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": [
+    "figma"
+  ],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": [
+      "none"
+    ],
+    "devAllowedDomains": [
+      "http://localhost:8823"
+    ]
+  },
+  "menu": [
+    {
+      "name": "Build the flowchart",
+      "command": "build"
+    },
+    {
+      "name": "Build the full flowchart",
+      "command": "build-full"
+    },
+    {
+      "name": "Inspect this file",
+      "command": "inspect"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Figma CPU Live Link",
+  "version": "1.0.0",
+  "description": "Streams the gate-level CPU running in Figma Present to Supabase Realtime, so the Silicon CPU Lab (Figma Make) mirrors it live.",
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.figma.com/proto/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Figma CPU Live Link",
+    "default_popup": "popup.html"
+  }
+}
