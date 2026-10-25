@@ -1,0 +1,113 @@
+{
+  "file": {
+    "name": "testing2",
+    "key": "LEOq3pLU5b8Rd10EBFY0Wn",
+    "url": "https://www.figma.com/design/LEOq3pLU5b8Rd10EBFY0Wn/testing2",
+    "readOn": "2026-10-24, through the Figma MCP (use_figma), read-only",
+    "program": "ptrout (OUT counts 7 → 0, then HALT)",
+    "pages": [["Silicon · Spike", "1:2"], ["Silicon", "5:743"]]
+  },
+  "variables": {
+    "collection": ["CPU", "VariableCollectionId:2009:149424"],
+    "count": 2314,
+    "nets": 2298,
+    "controls": ["ctl/ticks", "ctl/running", "ctl/tickText", "ctl/phase", "ctl/phaseText", "ctl/phaseIs/0 … ctl/phaseIs/10"],
+    "list": "variables.json (every name, type and power-on value; fingerprint 508f9676 matches the file)",
+    "otherCollections": "Spike, Spike Test, Spike Stress 500/2000/5000, Spike chunked, Spike v2: Eric's viewer-limit experiments on the Silicon · Spike page"
+  },
+  "silicon": {
+    "gates": {
+      "note": "the only logic primitives; each has body, leads, pins, labels and a hidden `lit` layer that the CPU binds to its output wire",
+      "components": [["gate/BUF", "2001:71107"], ["gate/NOT", "2001:71117"], ["gate/AND", "2001:71127"], ["gate/OR", "2001:71139"], ["gate/NAND", "2001:71151"], ["gate/NOR", "2001:71163"], ["gate/XOR", "2001:71175"], ["gate/XNOR", "2001:71187"]],
+      "size": [96, 48]
+    },
+    "cells": {
+      "note": "circuits made of gate instances (and smaller cells); nothing in them is code",
+      "components": [
+        ["cell/DLATCH", "2001:71199", 512, 200], ["cell/DFF", "2001:71265", 1352, 280], ["cell/DFFE", "2001:71431", 1504, 288],
+        ["cell/REG_W3", "2001:71615", 1704, 976], ["cell/REG_W4", "2001:72203", 1720, 1288], ["cell/REG_W8", "2001:72979", 1784, 2536],
+        ["cell/MUX2", "2001:74507", 512, 208], ["cell/MUX2_W4", "2001:74579", 704, 432], ["cell/MUX2_W8", "2001:74771", 928, 720], ["cell/MUX4_W8", "2001:75123", 992, 1232],
+        ["cell/HALF_ADDER", "2001:75766", 240, 184], ["cell/FULL_ADDER", "2001:75814", 544, 208], ["cell/ADDER_W8", "2001:75904", 5088, 464],
+        ["cell/INC_W3", "2001:76714", 728, 320], ["cell/INC_W4", "2001:76850", 1032, 320],
+        ["cell/DEC2", "2001:77040", 600, 272], ["cell/DEC3", "2001:77154", 680, 736], ["cell/DEC4", "2001:77376", 1016, 992], ["cell/ZERO_W8", "2001:77754", 584, 328], ["cell/HEX7SEG", "2001:77866", 1008, 1248],
+        ["cell/CTRL_DEC2", "2001:78409", 432, 280], ["cell/CTRL_DEC3", "2001:78493", 816, 784], ["cell/CTRL_DEC4", "2001:78709", 904, 1480], ["cell/CONTROL", "2001:79105", 2896, 2672],
+        ["cell/ALU", "2001:80738", 7376, 2832], ["cell/REGFILE", "2001:83039", 6120, 5784], ["cell/RAM_ROW", "2001:90068", 1240, 1832], ["cell/RAM16", "2001:90764", 7120, 8440],
+        ["cell/PC4", "2001:103519", 4088, 1384], ["cell/TSTATE", "2001:104827", 3072, 1064], ["cell/HALT_FF", "2001:105675", 1808, 352], ["cell/BUSMUX", "2001:105903", 760, 1400]
+      ]
+    },
+    "cpu": {
+      "component": ["cell/CPU", "2001:106422", 45416, 9480],
+      "insideFrame": ["CPU · Step", "2030:72891"],
+      "gates": 2296,
+      "wires": 2298,
+      "blocks": [
+        ["pc", "2001:106425"], ["alatch", "2001:111575"], ["halt", "2001:116031"], ["tstate", "2001:115183"], ["rsel0", "2001:117892"], ["rsel1", "2001:117964"],
+        ["regs", "2001:118036"], ["alu", "2001:125594"], ["ylatch", "2001:113103"], ["fz", "2001:114631"], ["fc", "2001:114815"], ["fn", "2001:114999"],
+        ["busmux", "2001:125075"], ["ir", "2001:108509"], ["ctrl", "2001:116259"], ["mar", "2001:107733"], ["ram", "2001:128247"], ["mdr_src", "2001:127895"],
+        ["mdr", "2001:110047"], ["outreg", "2001:141042"], ["seg_lo", "2001:142570"], ["seg_hi", "2001:143113"]
+      ]
+    },
+    "frontPanel": ["Silicon · Front panel", "5:73096", 604, 168]
+  },
+  "prototype": {
+    "flows": [["CPU", "2009:151739", "CPU · Control"], ["CPU · Step", "2030:72891", "CPU · Step"], ["CPU · Live", "2033:73066", "CPU · Live"]],
+    "frames": {
+      "CPU · Control": "2009:151739",
+      "CPU · Run 1…11": ["2009:151922", "2009:152105", "2009:152288", "2009:152471", "2009:152654", "2009:152837", "2009:153020", "2009:153203", "2009:153386", "2009:153569", "2009:153752"],
+      "CPU · Reset 1…7": ["2025:72954", "2025:72955", "2025:72956", "2025:72957", "2025:72958", "2025:72959", "2025:72960"],
+      "CPU · Step": "2030:72891",
+      "CPU · Live": "2033:73066",
+      "CPU · Live views": [["view/full CPU", "2033:73067"], ["header", "2033:110323"], ["view/ALU", "2033:222321"], ["view/registers", "2033:259577"], ["view/control", "2033:296833"]],
+      "CPU · Live Run 1…11 (overlays)": ["2041:222253", "2041:222257", "2041:222261", "2041:222265", "2041:222269", "2041:222273", "2041:222277", "2041:222281", "2041:222285", "2041:222289", "2041:222293"],
+      "CPU · Live Reset 1…7 (overlays)": ["2041:222319", "2041:222321", "2041:222323", "2041:222325", "2041:222327", "2041:222329", "2041:222331"]
+    },
+    "reactions": {
+      "note": "every reaction on the Silicon page, grouped; counts are the stored actions (a CONDITIONAL counts itself plus its blocks). The same 11 Step reactions exist on CPU · Control, CPU · Step and CPU · Live.",
+      "stepButtons": {
+        "where": ["CPU · Control / button/Step × 11", "CPU · Step / header / button/Step × 11", "CPU · Live / header / button/Step × 11"],
+        "trigger": "ON_CLICK",
+        "visibleWhen": "ctl/phaseIs/k (k = 0 … 10, stacked; only the current phase's button is visible)",
+        "chunks": [
+          { "k": 0, "actions": 384, "netSets": 380, "fns": { "NOT": 183, "AND": 192, "OR": 4 } },
+          { "k": 1, "actions": 384, "netSets": 380, "fns": { "AND": 258, "NOT": 55, "OR": 67 } },
+          { "k": 2, "actions": 384, "netSets": 380, "fns": { "NOT": 64, "AND": 253, "OR": 63 } },
+          { "k": 3, "actions": 384, "netSets": 380, "fns": { "AND": 257, "OR": 62, "NOT": 61 } },
+          { "k": 4, "actions": 384, "netSets": 380, "fns": { "NOT": 62, "AND": 156, "OR": 158, "NOT_EQUAL": 3 } },
+          { "k": 5, "actions": 384, "netSets": 380, "fns": { "NOT": 117, "AND": 218, "OR": 44, "NOT_EQUAL": 2 } },
+          { "k": 6, "actions": 384, "netSets": 380, "fns": { "OR": 71, "AND": 213, "NOT": 96 } },
+          { "k": 7, "actions": 384, "netSets": 380, "fns": { "AND": 206, "OR": 107, "NOT": 33, "NOT_EQUAL": 32, "EQUALS": 3 } },
+          { "k": 8, "actions": 384, "netSets": 380, "fns": { "AND": 286, "NOT": 94 } },
+          { "k": 9, "actions": 384, "netSets": 380, "fns": { "AND": 163, "NOT": 54, "OR": 163 } },
+          { "k": 10, "actions": 61, "netSets": 55, "fns": { "OR": 29, "NOT": 4, "AND": 22 }, "alsoSets": ["ctl/ticks", "ctl/tickText"] }
+        ],
+        "eachAlsoSets": ["ctl/phase", "ctl/phaseText (ADDITION)", "ctl/phaseIs/k := false", "ctl/phaseIs/k+1 := true"],
+        "perTick": { "netSets": 3855, "AND": 2224, "NOT": 823, "OR": 768, "NOT_EQUAL (XOR)": 37, "EQUALS (buffer)": 3, "literals": "net/CLK := false / true (the clock)" }
+      },
+      "runButtons": {
+        "trigger": "ON_CLICK",
+        "visibleWhen": "ctl/phaseIs/k",
+        "actions": ["ctl/running := true", "CPU · Control and CPU · Step: NAVIGATE → CPU · Run k+1", "CPU · Live: OVERLAY → CPU · Live Run k+1"]
+      },
+      "runFrames": {
+        "where": "CPU · Run 1…11",
+        "trigger": "AFTER_TIMEOUT 1ms",
+        "actions": "388 (65 for Run 11): CONDITIONAL [running (∧ ¬net/halted for Run 1)] → chunk k + NAVIGATE → next Run frame; else running := false, NAVIGATE → CPU · Control",
+        "stopButtons": "ON_CLICK: ctl/running := false"
+      },
+      "liveRunOverlays": {
+        "where": "CPU · Live Run 1…11",
+        "trigger": "AFTER_TIMEOUT 1ms",
+        "actions": "same chunk as the Run frames, then SWAP → next overlay; else running := false, CLOSE",
+        "stopButtons": "ON_CLICK: ctl/running := false"
+      },
+      "reset": {
+        "buttons": ["CPU · Control / button/Reset → NAVIGATE CPU · Reset 1", "CPU · Step / header / button/Reset → NAVIGATE CPU · Reset 1", "CPU · Live / header / button/Reset → OVERLAY CPU · Live Reset 1"],
+        "chain": "Reset 1…7 (and Live Reset 1…7): AFTER_TIMEOUT 1ms, 381 literal sets each (35 in the last), restoring all 2,314 variables to their power-on values; Reset → … → CPU · Control, Live Reset → … → CLOSE"
+      }
+    },
+    "checks": {
+      "replay": "tools/connector/check-replay.js on CPU · Live: 1,836 clicks, OUT 7, 6, … 0 from tick 23 (every 18 ticks), HALTED at tick 165",
+      "render": "tools/connector/check-render.js: every net := 1 lights every bound gate; values restored exactly"
+    }
+  }
+}
