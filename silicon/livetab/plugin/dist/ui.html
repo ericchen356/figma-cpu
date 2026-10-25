@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { --bg: #1e1e1e; --card: #2c2c2c; --line: #444; --text: #fff; --dim: #b3b3b3; --accent: #0c8ce9; --ok: #2bd67b; --err: #ff5a5f; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.45 Inter, system-ui, sans-serif; }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      .sub { color: var(--dim); font-size: 11px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; }
+      button { font: inherit; font-weight: 600; color: var(--text); background: var(--accent); border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+      button.quiet { background: #444; }
+      button:disabled, select:disabled { opacity: 0.45; cursor: default; }
+      select { font: inherit; color: var(--text); background: #383838; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+      label { color: var(--dim); font-size: 11px; margin-right: 6px; }
+      .row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .help { color: var(--dim); font-size: 11px; margin-top: 6px; }
+      #log { height: 170px; overflow: auto; background: #0d0d0d; border-radius: 6px; padding: 6px; margin-top: 6px; font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--dim); white-space: pre-wrap; }
+      #log .ok { color: var(--ok); } #log .error { color: var(--err); }
+    </style>
+  </head>
+  <body>
+    <h1>Figma OS · Leila's CPU</h1>
+    <div class="sub">Puts the gate-level CPU and its Live view into the live OS's CPU tab. Nothing is rebuilt.</div>
+    <div class="card">
+      <div class="row"><label for="program">Program at power-on</label><select id="program"></select></div>
+      <button id="add">Add Leila's CPU</button>
+      <button id="remove" class="quiet">Remove</button>
+      <div class="help">Run the "Figma OS · CPU + Learn" extension first: this goes in its CPU tab, and has to be added again after that one is. In Present, the CPU tab shows the Live view: Step runs one chunk of a clock tick, Run plays to HALT, the program buttons load a program. "OS chip ›" switches back to the OS's own CPU page. Remove takes out everything this added.</div>
+    </div>
+    <div class="card"><div id="log"></div></div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const send = (m) => parent.postMessage({ pluginMessage: m }, "*");
+      $("add").onclick = () => send({ type: "add", program: $("program").value });
+      $("remove").onclick = () => send({ type: "remove" });
+      window.onmessage = (e) => {
+        const m = e.data.pluginMessage;
+        if (!m) return;
+        if (m.type === "busy") for (const b of document.querySelectorAll("button, select")) b.disabled = m.on;
+        if (m.type === "programs")
+          for (const n of m.names) {
+            const o = document.createElement("option");
+            o.value = o.textContent = n;
+            o.selected = n === m.selected;
+            $("program").appendChild(o);
+          }
+        if (m.type === "log") {
+          const line = document.createElement("div");
+          line.className = m.level;
+          line.textContent = m.text;
+          $("log").appendChild(line);
+          $("log").scrollTop = 1e9;
+        }
+      };
+    </script>
+  </body>
+</html>
