@@ -3,19 +3,10 @@
 // (it rejects malformed shapes and type mismatches), on the same random sessions as the lockstep
 // test. Every variable and every executed-action count must agree after every event.
 import { describe, expect, it } from "vitest";
-import {
-  compileSteps,
-  flatTemps,
-  statsOf,
-  typesOf,
-  type VarIds,
-} from "../src/compile";
+import { compileSteps, flatTemps, statsOf, typesOf, type VarIds } from "../src/compile";
 import { buildEditor } from "../src/editor";
 import { Machine } from "../src/interp";
-import {
-  runFigmaActions,
-  type FigmaValue,
-} from "../../silicon/src/prototype/emulate";
+import { runFigmaActions, type FigmaValue } from "../../silicon/src/prototype/emulate";
 import { nestedConditional } from "../../silicon/src/prototype/figma-actions";
 import { drive } from "./support";
 
@@ -23,13 +14,9 @@ function setup(K: number, copy: "expr" | "alias") {
   const ed = buildEditor({ K });
   const types = typesOf(ed.vars);
   const ids: VarIds = new Map(ed.vars.map((v) => [v.name, `id:${v.name}`]));
-  const actions = new Map(
-    ed.events.map((e) => [e.id, compileSteps(e.steps, ids, types, { copy })]),
-  );
+  const actions = new Map(ed.events.map((e) => [e.id, compileSteps(e.steps, ids, types, { copy })]));
   const machine = new Machine(ed);
-  const figma = new Map<string, FigmaValue>(
-    ed.vars.map((v) => [`id:${v.name}`, v.init as FigmaValue]),
-  );
+  const figma = new Map<string, FigmaValue>(ed.vars.map((v) => [`id:${v.name}`, v.init as FigmaValue]));
   return { ed, ids, actions, machine, figma };
 }
 
@@ -37,8 +24,7 @@ describe("compiled Figma actions", () => {
   it("every event compiles and is type-correct", () => {
     const { actions, ed } = setup(40, "expr");
     expect(actions.size).toBe(ed.events.length);
-    for (const [id, list] of actions)
-      expect(list.length, id).toBeGreaterThan(0);
+    for (const [id, list] of actions) expect(list.length, id).toBeGreaterThan(0);
   });
 
   for (const copy of ["expr", "alias"] as const)
@@ -60,10 +46,7 @@ describe("compiled Figma actions", () => {
           const executedFigma = runFigmaActions(actions.get(id)!, figma);
           expect(executedFigma, `${id}: executed actions`).toBe(executedInterp);
           for (const v of ed.vars) {
-            if (figma.get(`id:${v.name}`) !== machine.vars.get(v.name))
-              expect.fail(
-                `${id}: ${v.name} is ${figma.get(`id:${v.name}`)} in Figma, ${machine.vars.get(v.name)} in the interpreter`,
-              );
+            if (figma.get(`id:${v.name}`) !== machine.vars.get(v.name)) expect.fail(`${id}: ${v.name} is ${figma.get(`id:${v.name}`)} in Figma, ${machine.vars.get(v.name)} in the interpreter`);
           }
         });
       }
@@ -76,27 +59,16 @@ describe("compiled Figma actions", () => {
     expect(decls.length).toBeGreaterThan(ed.vars.length); // some conditions need a kept copy
     const types = typesOf(decls);
     const ids: VarIds = new Map(decls.map((v) => [v.name, `id:${v.name}`]));
-    const flat = new Map(
-      ed.events.map((e) => [
-        e.id,
-        compileSteps(e.steps, ids, types, { ifs: "flat" }),
-      ]),
-    );
-    for (const [id, list] of flat)
-      expect(nestedConditional(list), id).toBeNull();
+    const flat = new Map(ed.events.map((e) => [e.id, compileSteps(e.steps, ids, types, { ifs: "flat" })]));
+    for (const [id, list] of flat) expect(nestedConditional(list), id).toBeNull();
     let events = 0;
     for (let seed = 1; seed <= 6; seed++) {
       const machine = new Machine(ed);
-      const figma = new Map<string, FigmaValue>(
-        decls.map((v) => [`id:${v.name}`, v.init as FigmaValue]),
-      );
+      const figma = new Map<string, FigmaValue>(decls.map((v) => [`id:${v.name}`, v.init as FigmaValue]));
       events += drive(seed, 40, 100, (id) => {
         if (id.startsWith("@origin")) {
           const [, x, y] = id.split(" ").map(Number);
-          for (const [name, v] of [
-            ["v/x", x],
-            ["v/y", y],
-          ] as const) {
+          for (const [name, v] of [["v/x", x], ["v/y", y]] as const) {
             machine.vars.set(name, v);
             figma.set(`id:${name}`, v);
           }
@@ -106,9 +78,7 @@ describe("compiled Figma actions", () => {
         runFigmaActions(flat.get(id)!, figma);
         for (const v of ed.vars)
           if (figma.get(`id:${v.name}`) !== machine.vars.get(v.name))
-            expect.fail(
-              `${id}: ${v.name} is ${figma.get(`id:${v.name}`)} flat, ${machine.vars.get(v.name)} in the interpreter`,
-            );
+            expect.fail(`${id}: ${v.name} is ${figma.get(`id:${v.name}`)} flat, ${machine.vars.get(v.name)} in the interpreter`);
       });
     }
     expect(events).toBeGreaterThan(1000);
@@ -118,16 +88,7 @@ describe("compiled Figma actions", () => {
     const ed = buildEditor();
     const names = new Set(ed.vars.map((v) => v.name));
     expect(names.size).toBe(ed.vars.length);
-    for (const e of ed.events)
-      expect(
-        () =>
-          compileSteps(
-            e.steps,
-            new Map([...names].map((n) => [n, `id:${n}`])),
-            typesOf(ed.vars),
-          ),
-        e.id,
-      ).not.toThrow();
+    for (const e of ed.events) expect(() => compileSteps(e.steps, new Map([...names].map((n) => [n, `id:${n}`])), typesOf(ed.vars)), e.id).not.toThrow();
   });
 });
 
@@ -135,9 +96,7 @@ describe("how big the flow is", () => {
   const stats = statsOf(buildEditor());
 
   it("no event can execute more actions than the viewer survives (500 is the proven-safe size)", () => {
-    const worst = [...stats.byEvent]
-      .sort((a, b) => b.worst - a.worst)
-      .slice(0, 5);
+    const worst = [...stats.byEvent].sort((a, b) => b.worst - a.worst).slice(0, 5);
     expect(worst[0].worst, JSON.stringify(worst)).toBeLessThan(500);
   });
 
