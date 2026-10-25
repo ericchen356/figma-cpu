@@ -566,7 +566,9 @@ export class NathanApp {
       return out;
     };
     for (const [run, entry] of catalog) {
-      const lead = run.startsWith("click/") ? copyPointer : [];
+      // a canvas click takes the hovered column, unless its reaction has the column built in
+      const lead =
+        run.startsWith("click/") && !("PX" in entry.spec.ties) ? copyPointer : [];
       // a reaction as events: the logic (everything before its first register write) cut anywhere,
       // the writes and the screen lines all in the last event; null if those do not fit one
       const eventsOf = (r: Synthesized): PlanAction[][] | null => {
@@ -641,19 +643,18 @@ export class NathanApp {
       ]);
       await this.breathe();
     }
+    // a hover stores the pointer's column (column c)
+    const store = (c: number): Action[] =>
+      pxh.map((v, i) => setVariable(v.id, boolData(((c >> i) & 1) === 1)));
     const reactionsFor = (ref: ReactionRef): Reaction[] => {
       const t = ref.trigger;
-      if (ref.run.startsWith("pointer/")) {
-        const c = Number(ref.run.slice("pointer/".length));
+      if (ref.run.startsWith("pointer/"))
         return [
           {
             trigger: mouseEnter(0),
-            actions: pxh.map((v, i) =>
-              setVariable(v.id, boolData(((c >> i) & 1) === 1)),
-            ),
+            actions: store(Number(ref.run.slice("pointer/".length))),
           },
         ];
-      }
       const actions = triggered.get(ref.run);
       if (!actions)
         throw new Error(
@@ -661,8 +662,16 @@ export class NathanApp {
         );
       return [
         {
-          trigger: t.on === "key" ? keyDown(t.codes) : onClick(),
-          actions,
+          trigger:
+            t.on === "key"
+              ? keyDown(t.codes)
+              : t.on === "enter"
+                ? mouseEnter(0)
+                : onClick(),
+          actions:
+            ref.pointer === undefined
+              ? actions
+              : [...store(ref.pointer), ...actions],
         },
       ];
     };
@@ -831,7 +840,7 @@ export class NathanApp {
       present,
       text(
         this.api,
-        "Click in the editor: every layer, colour and lamp on it is a gate-level register bit; \"see the machine\" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.",
+        "Click in the editor: every layer, colour, pixel of ink and lamp on it is a gate-level register bit; \"see the machine\" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels. Pen (P): click to put it down, move to draw, click to lift.",
         { size: 12, color: COLORS.dim },
       ),
       PAD,

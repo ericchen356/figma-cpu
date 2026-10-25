@@ -40,14 +40,29 @@ handling until it is reloaded.
   cold page, 1,000 sequential actions in one event ran and 1,200 overflowed the stack, after which
   the prototype ignores every click until reloaded. Warmed up, 2,000 ran. Only executed actions
   count: actions behind a false `if` cost nothing. Every event here stays at 700 or fewer: the
-  CPU's ticks are 22 to 324 actions, the OS's controls are specialized per canvas row and per
+  CPU's events at 600 or fewer (`EVENT_BUDGET`), the OS's controls are specialized per canvas row and per
   selected slot (the longest is 694), and a reaction longer than the part continues through timed
   overlays (below), with all its register writes in the last event. The OS frame also runs a
   one-time warm-up when Present opens (a few hundred throwaway actions).
 - An overlay's `AFTER_TIMEOUT` timer (0.001 s) fires again after a `SWAP` to another overlay, so
   two overlays swapping into each other form a clock: the CPU's Run and Instruction, and the OS's
   continuations (an event runs part 1 and opens a 1×1 overlay whose timer runs part 2 on a fresh
-  stack, then swaps on or closes). `CLOSE` inside a CONDITIONAL stops it. About 8 CPU ticks/s.
+  stack, then swaps on or closes). `CLOSE` inside a CONDITIONAL stops it. A `SWAP` to the overlay
+  itself is rejected by `setReactionsAsync`.
+- Where the time goes (Chrome, the CPU file, timer loops counting events): a timer event costs
+  about 20 ms; every expression node evaluated about 6 µs (a false IF costs its condition); a
+  `SET_VARIABLE` that leaves the value as it was about 0.12 ms. A write that changes the value
+  costs more the more stored reaction code names the variable, file-wide (other pages too, reads
+  or writes alike): a reaction of a few thousand actions that names it adds about 1 ms to every
+  change. And every layer of the presented frame costs time on every event, used or not: removing
+  2,285 static rectangles from a 5,173-layer frame made a run 23% faster. Lamp bindings, clipping
+  and where a reaction sits matter little.
+- So the CPU's Run event runs one whole instruction (its IFs laid out by T-state; T moves once per
+  T-state, not in every body), folds gates into expressions, writes a flip-flop once, keeps the
+  every-gate Step code on shadow copies (small reactions copy them in and back, in pieces of 64),
+  and draws unlit lamps as one vector per colour and row. The CPU went from 7.6 ticks/s (one
+  tick an event, every gate written) to 95 ticks/s on `count`; fib runs to HALT in about 5 s
+  instead of 59 s.
 - `ON_CLICK` does not fire on a layer that also has `MOUSE_DOWN`/`MOUSE_UP`. An `ON_KEY_DOWN` key
   list is a chord (all keys held), not alternatives. A key goes to the showing layer that takes it
   before the frame, and hidden layers never take keys, so the OS's D [ ] sit on 8 layers picked by

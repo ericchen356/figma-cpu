@@ -23,14 +23,14 @@ import {
 let base: Built; // the default part, 700: every reaction is one event
 let edge: Built; // a part one action short of the longest reaction, which may not stay one event
 let chains: Built; // part 400: reactions continue through one overlay, none torn
-let torn: Built; // part 300: overlays swap on, and some reactions are torn by design
+let torn: Built; // part 250: overlays swap on (the pick-up takes 3 events), and some reactions are torn by design
 const builds = () => [base, edge, chains, torn];
 
 beforeAll(async () => {
   base = await build();
   edge = await build({ part: base.gen.stats.longest.actions - 1 });
   chains = await build({ part: 400 });
-  torn = await build({ part: 300 });
+  torn = await build({ part: 250 });
 }, 300000);
 
 /** No problems: the first few a check found, and how many (all of them would bury the message). */
@@ -193,12 +193,12 @@ describe("reactions that continue through overlays (smaller parts)", () => {
     expect(s.worst).toBeLessThanOrEqual(400);
   });
 
-  it("part 300: overlays swap on; the reactions written early are exactly the torn ones", () => {
+  it("part 250: overlays swap on; the reactions written early are exactly the torn ones", () => {
     const { stats } = torn.gen;
     expect(stats.torn).toBeGreaterThan(0);
     expect(writesEarly(torn)).toHaveLength(stats.torn);
     const s = session(torn);
     expect(s.longestChain).toBeGreaterThan(2);
-    expect(s.worst).toBeLessThanOrEqual(300);
+    expect(s.worst).toBeLessThanOrEqual(250);
   });
 });

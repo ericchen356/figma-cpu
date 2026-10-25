@@ -2126,3 +2126,152 @@ svg {
   background: var(--accent-bg);
   color: #79b8ff;
 }
+
+/* ---- CPU tab (cpuview.ts): the chip this editor runs on, its gate map and its last event. ---- */
+.cpu-lede {
+  padding: 0 16px 12px;
+  color: var(--muted);
+}
+.cpu-map {
+  position: relative;
+  margin: 0 8px;
+}
+.cpu-map canvas {
+  display: block;
+  width: 100%;
+  height: 160px;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.cpu-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+}
+.cpu-map.ready .cpu-wait,
+.cpu-tip[hidden],
+.cpu-focus[hidden] {
+  display: none;
+}
+.cpu-focus {
+  position: absolute;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.cpu-row[data-cpu-block] {
+  cursor: default;
+}
+.cpu-row[data-cpu-block]:hover {
+  background: #ffffff14;
+}
+.cpu-tip {
+  position: absolute;
+  z-index: 3;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  box-shadow: 0 2px 8px #0008;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+.cpu-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 8px 0;
+  color: var(--muted);
+}
+.cpu-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cpu-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.cpu-info {
+  padding-bottom: 16px;
+}
+.cpu-h {
+  padding: 12px 16px 4px;
+  font-weight: 550;
+}
+.cpu-line {
+  padding: 2px 16px;
+  overflow-wrap: anywhere;
+}
+.cpu-line code {
+  font:
+    11px/16px ui-monospace,
+    Menlo,
+    monospace;
+}
+.cpu-panel .dim {
+  color: var(--dim);
+}
+.cpu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin: 0 8px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+}
+.cpu-row .grow {
+  flex: 1;
+}
+.cpu-status {
+  display: flex;
+  gap: 8px;
+  margin: 12px 8px 0;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--muted);
+}
+.cpu-status svg {
+  flex: none;
+}
+.cpu-status.step svg {
+  color: #0ca30c;
+}
+.cpu-status.resync svg {
+  color: #79b8ff;
+}
+.cpu-status.off svg {
+  color: #ec835a;
+}
+.cpu-status.bug svg {
+  color: #d03b3b;
+}
+.cpu-status.wait svg {
+  color: var(--dim);
+}
+/* The chip's 14 x 10 cell window on the editor canvas while the CPU tab shows: where its pointer events land. */
+.chip-window {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1px dashed var(--accent);
+  pointer-events: none;
+}
+.chip-window span {
+  position: absolute;
+  left: -1px;
+  top: 100%;
+  margin-top: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  white-space: nowrap;
+}

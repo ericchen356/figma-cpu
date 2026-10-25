@@ -29,6 +29,7 @@ import {
   paletteCommands,
 } from "./chrome";
 import { imageToCells, layerCss, nearestColor } from "./code";
+import { cpu } from "./cpu";
 import {
   BASE_CELL,
   cellPx,
@@ -68,16 +69,17 @@ function remember(before: State): void {
   if (undoStack.length > 100) undoStack.shift();
   redoStack.length = 0;
 }
-function restore(from: State[], to: State[]): void {
+function restore(from: State[], to: State[], label: string): void {
   const prev = from.pop();
   if (!prev) return;
   to.push(state);
   state = { ...prev, tool: state.tool, drag: null, clipboard: state.clipboard };
+  cpu.sync(state, label); // no chip event replaces a whole file: the CPU tab's chip loads it
   render(state, root);
 }
 // Dev Mode is read-only, so it cannot rewind the file either.
-const undo = () => mode !== "dev" && restore(undoStack, redoStack);
-const redo = () => mode !== "dev" && restore(redoStack, undoStack);
+const undo = () => mode !== "dev" && restore(undoStack, redoStack, "Undo");
+const redo = () => mode !== "dev" && restore(redoStack, undoStack, "Redo");
 
 /** A toolbar group's button shows the last tool picked from it, whether by click, flyout or key. */
 function syncGroupPick(tool: Tool): void {
@@ -99,6 +101,7 @@ function dispatch(action: Action): void {
   if (!a) return;
   const before = state;
   state = update(state, a);
+  cpu.step(before, a, state); // the CPU tab's chip fires the same action as gate events
   if (state.tool !== before.tool) syncGroupPick(state.tool);
   if (a.t === "down") pending = before;
   else if (a.t === "up") {

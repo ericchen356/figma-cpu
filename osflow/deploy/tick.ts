@@ -164,8 +164,29 @@ export interface TickOptions {
    * up to this expression depth, instead of storing its wire: far fewer actions a tick, still all
    * two-input gates, but a folded gate's wire (and its lamp) keeps its last value. */
   fold?: number;
+  /** With `fold`, also fold a gate that several expressions read, when the copies this adds come to
+   * at most this many expression nodes. */
+  share?: number;
   /** Wires always stored, even when they could be folded (e.g. the ones a display shows). */
   keep?: Set<number>;
+  /** Commit a flip-flop straight into its slave, Q = D·EN + Q·¬EN, one write instead of the
+   * master's and then the slave's. Its master keeps its last value, and nothing but a commit reads
+   * a master, so a tick without `direct` must hold a master through its slave (see `heldBySlave`). */
+  direct?: boolean;
+  /** A master that does not take D holds its slave's value, not its own: equal in the circuit, where
+   * the slave copied the master the tick before, but right even after `direct` ticks left the
+   * master behind. */
+  heldBySlave?: boolean;
+  /** Latches (by the output of the latch that takes D: a flip-flop's master) this tick leaves to
+   * the caller: no commit, and none of the logic only they need. */
+  skip?: Set<number>;
+  /** Without `direct`: leave the HIGH pass (every slave takes its master) to the caller, which runs
+   * it after these actions; the refresh then reads the masters that loaded. */
+  noHighPass?: boolean;
+  /** State nets read through other variables (copies the caller makes before the tick). */
+  readAs?: Map<number, number>;
+  /** Latches and refreshed wires written to other variables (that the caller copies back). */
+  writeAs?: Map<number, number>;
 }
 
 export interface TickPlan {
@@ -187,9 +208,11 @@ export function tickPlan(
   for (const [n, v] of o.ties) val[n] = v;
   // what each net is, as an expression of the state: a constant, a state net, or a gate
   const expr: Array<Expr | undefined> = new Array(net.netNames.length);
+  const readNet = (n: number) => o.readAs?.get(n) ?? n;
+  const writeNet = (n: number) => o.writeAs?.get(n) ?? n;
   const exprOf = (n: number): Expr => {
     if (val[n] !== 2) return { const: val[n] as 0 | 1 };
-    return expr[n] ?? { var: n };
+    return expr[n] ?? { var: readNet(n) };
   };
   const real = new Set<number>(); // gates that stay gates (not folded away)
   for (const gi of lm.order) {
@@ -210,7 +233,9 @@ export function tickPlan(
     }
   }
   // the latches that can load, and the gates their D and EN need
-  const loading = lm.loaders.filter((l) => val[l.en] !== 0);
+  const loading = lm.loaders.filter(
+    (l) => val[l.en] !== 0 && !o.skip?.has(l.q),
+  );
   const need = new Set<number>();
   const want = (n: number) => {
     const d = net.driver[n];
@@ -227,7 +252,8 @@ export function tickPlan(
       if ("var" in e) want(e.var);
     }
   }
-  const ins = (g: FlatGate) => (g.in.length > 1 ? [g.in[0], g.in[1]] : [g.in[0]]);
+  const ins = (g: FlatGate) =>
+    g.in.length > 1 ? [g.in[0], g.in[1]] : [g.in[0]];
   // how often this tick's expressions read each wire (the latch equation reads EN twice)
   const reads = new Map<number, number>();
   const read = (e: Expr) => {
@@ -243,7 +269,9 @@ export function tickPlan(
   const foldable = (n: number, to: Expr, readers: number) =>
     o.fold !== undefined &&
     !o.keep?.has(n) &&
-    (readers <= 1 || ("not" in to && "var" in to.not)) &&
+    (readers <= 1 ||
+      ("not" in to && "var" in to.not) ||
+      size(to) * (readers - 1) <= (o.share ?? 0)) &&
     depth(to) <= o.fold;
   const actions: PlanAction[] = [];
   for (const gi of lm.order) {
@@ -254,55 +282,151 @@ export function tickPlan(
     if (foldable(g.out, to, reads.get(g.out) ?? 0)) folded.set(g.out, to);
     else actions.push({ set: g.out, to });
   }
-  // commit: masters and RAM take D (LOW pass), then slaves take their masters (HIGH pass)
-  const loaded = new Set<number>();
-  for (const l of loading) {
+  const slaveOf = new Map(lm.slaves.map((s) => [s.master!.q, s.q]));
+  // a latch takes D when enabled and otherwise holds `hold`
+  const commitOf = (l: Latch, q: number, hold: number) => {
     const d = sub(exprOf(l.d));
     const en = sub(exprOf(l.en));
-    const to =
-      val[l.en] === 1 ? d : or(and(en, d), and(not(en), { var: l.q }));
-    // all latches load at once: a folded expression must not read a latch this tick already wrote
-    if (o.fold !== undefined && leaves(to).some((n) => loaded.has(n)))
-      return tickPlan(net, lm, { ...o, fold: undefined });
-    actions.push({ set: l.q, to });
-    loaded.add(l.q);
+    return {
+      set: writeNet(q),
+      to:
+        val[l.en] === 1
+          ? d
+          : or(and(en, d), and(not(en), { var: readNet(hold) })),
+    };
+  };
+  const loaded = new Set<number>();
+  if (o.direct) {
+    // every commit reads the state from before the tick, so one that reads another's latch goes
+    // first (a counter writes its top bit first); a cycle of them needs the masters after all
+    // a latch whose next value is its own (a sticky flag this tick cannot set), or the constant it
+    // is tied to, needs no write
+    const ordered = readersFirst(
+      loading
+        .map((l) => {
+          const q = slaveOf.get(l.q) ?? l.q;
+          return commitOf(l, q, q);
+        })
+        .filter(
+          (c) =>
+            !("var" in c.to && c.to.var === c.set) &&
+            !("const" in c.to && val[c.set] === c.to.const),
+        ),
+    );
+    // (the masters, which `direct` ticks leave behind, then hold through their slaves)
+    if (!ordered)
+      return tickPlan(net, lm, { ...o, direct: false, heldBySlave: true });
+    actions.push(...ordered);
+    for (const l of loading) loaded.add(l.q);
+  } else {
+    // commit: masters and RAM take D (LOW pass), then slaves take their masters (HIGH pass)
+    for (const l of loading) {
+      const c = commitOf(
+        l,
+        l.q,
+        o.heldBySlave ? (slaveOf.get(l.q) ?? l.q) : l.q,
+      );
+      // all latches load at once: a folded expression must not read a latch this tick already wrote
+      if (o.fold !== undefined && leaves(c.to).some((n) => loaded.has(n)))
+        return tickPlan(net, lm, { ...o, fold: undefined });
+      actions.push(c);
+      loaded.add(l.q);
+    }
+    if (!o.noHighPass)
+      for (const s of lm.slaves)
+        if (loaded.has(s.master!.q))
+          actions.push({ set: s.q, to: { var: s.master!.q } });
   }
-  for (const s of lm.slaves)
-    if (loaded.has(s.master!.q))
-      actions.push({ set: s.q, to: { var: s.master!.q } });
+  // a flip-flop that loaded, as the refresh reads it: its master when the slaves copy later
+  const masterOf = new Map(lm.slaves.map((s) => [s.q, s.master!.q]));
+  const now = (n: number) =>
+    !o.direct && o.noHighPass && loaded.has(masterOf.get(n) ?? -1)
+      ? masterOf.get(n)!
+      : n;
   if (o.refresh && [...o.refresh.when].some((q) => loaded.has(q))) {
+    // a refresh gate reads one before it where that one was written, and the state as the tick reads it
+    const outs = new Set(o.refresh.gates.map((gi) => net.gates[gi].out));
     const src = (n: number): Expr =>
-      n === NET0 ? { const: 0 } : n === NET1 ? { const: 1 } : { var: n };
+      n === NET0
+        ? { const: 0 }
+        : n === NET1
+          ? { const: 1 }
+          : {
+              var: outs.has(n)
+                ? writeNet(n)
+                : now(n) !== n
+                  ? now(n)
+                  : readNet(n),
+            };
     const inRefresh = new Map<number, number>();
     for (const gi of o.refresh.gates)
       for (const i of ins(net.gates[gi]))
         inRefresh.set(i, (inRefresh.get(i) ?? 0) + 1);
     const refolded = new Map<number, Expr>();
-    const resub = (e: Expr): Expr => ("var" in e ? (refolded.get(e.var) ?? e) : e);
+    const resub = (e: Expr): Expr =>
+      "var" in e ? (refolded.get(e.var) ?? e) : e;
     for (const gi of o.refresh.gates) {
       const g = net.gates[gi];
       const [a, b] = ins(g).map((i) => resub(src(i)));
       const to = gateOf(g.type, a, b ?? { const: 0 });
-      if (foldable(g.out, to, inRefresh.get(g.out) ?? 0)) refolded.set(g.out, to);
-      else actions.push({ set: g.out, to });
+      if (foldable(g.out, to, inRefresh.get(g.out) ?? 0))
+        refolded.set(g.out, to);
+      else actions.push({ set: writeNet(g.out), to });
     }
   }
   return { actions, loading: loading.length };
+}
+
+/** The commits in an order where each reads only latches not yet written: a commit that reads
+ * another's target goes before it. Null if they read each other in a cycle. */
+function readersFirst(commits: PlanAction[]): PlanAction[] | null {
+  const sets = commits.map((c) => (c as { set: number }).set);
+  const at = new Map(sets.map((q, i) => [q, i]));
+  // before[j]: the commits that read j's latch, so must run before j
+  const before = commits.map(() => new Set<number>());
+  commits.forEach((c, i) => {
+    for (const n of leaves((c as { to: Expr }).to)) {
+      const j = at.get(n);
+      if (j !== undefined && j !== i) before[j].add(i);
+    }
+  });
+  const out: PlanAction[] = [];
+  const done = new Set<number>();
+  while (out.length < commits.length) {
+    const next = commits.findIndex(
+      (_, j) => !done.has(j) && [...before[j]].every((i) => done.has(i)),
+    );
+    if (next < 0) return null;
+    done.add(next);
+    out.push(commits[next]);
+  }
+  return out;
+}
+
+/** Expression nodes in an expression. */
+function size(e: Expr): number {
+  if ("var" in e || "const" in e) return 1;
+  if ("not" in e) return 1 + size(e.not);
+  const [a, b] =
+    "and" in e ? e.and : "or" in e ? e.or : "eq" in e ? e.eq : e.neq;
+  return 1 + size(a) + size(b);
 }
 
 /** Nesting depth of an expression (a wire or a constant is 0). */
 function depth(e: Expr): number {
   if ("var" in e || "const" in e) return 0;
   if ("not" in e) return 1 + depth(e.not);
-  const [a, b] = "and" in e ? e.and : "or" in e ? e.or : "eq" in e ? e.eq : e.neq;
+  const [a, b] =
+    "and" in e ? e.and : "or" in e ? e.or : "eq" in e ? e.eq : e.neq;
   return 1 + Math.max(depth(a), depth(b));
 }
 
 /** The wires an expression reads. */
-function leaves(e: Expr): number[] {
+export function leaves(e: Expr): number[] {
   if ("var" in e) return [e.var];
   if ("const" in e) return [];
   if ("not" in e) return leaves(e.not);
-  const [a, b] = "and" in e ? e.and : "or" in e ? e.or : "eq" in e ? e.eq : e.neq;
+  const [a, b] =
+    "and" in e ? e.and : "or" in e ? e.or : "eq" in e ? e.eq : e.neq;
   return [...leaves(a), ...leaves(b)];
 }

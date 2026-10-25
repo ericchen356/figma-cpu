@@ -7,12 +7,13 @@ import type { Tool } from "./model";
 import { I, svg } from "./icons";
 export { I, svg };
 
-// ---- Left nav rail (Figma's File / Assets / Tools switcher)
-export type LeftTab = "file" | "assets" | "tools";
+// ---- Left nav rail (Figma's File / Assets / Tools switcher, then the chip this editor runs on)
+export type LeftTab = "file" | "assets" | "tools" | "cpu";
 export const RAIL: { id: LeftTab; label: string; icon: string }[] = [
   { id: "file", label: "File", icon: I.file },
   { id: "assets", label: "Assets", icon: I.assets },
   { id: "tools", label: "Tools", icon: I.tools },
+  { id: "cpu", label: "CPU", icon: I.cpu },
 ];
 
 /** Keyboard reference shown in the Tools panel. */

@@ -297,7 +297,10 @@ const RT = (() => {
     // overlays: top-level frames beside this one, opened by the reactions. A previous build's
     // overlays go first, by the prefixes the generator names them with.
     for (const n of [...page().children])
-      if (n.type === "FRAME" && (d.clear || []).some((p) => n.name.startsWith(p)))
+      if (
+        n.type === "FRAME" &&
+        (d.clear || []).some((p) => n.name.startsWith(p))
+      )
         n.remove();
     const overlays = [];
     for (const [i, o] of (d.overlays || []).entries()) {
@@ -322,13 +325,20 @@ const RT = (() => {
           ? figma.createRectangle()
           : s.t === "e"
             ? figma.createEllipse()
-            : figma.createText();
+            : s.t === "v"
+              ? figma.createVector()
+              : figma.createText();
     node.name = s.n;
     if (s.t === "x") {
       node.fontName = s.tx[2] ? BOLD : REG;
       node.fontSize = s.tx[1] || 12;
       node.characters = s.tx[0];
       node.fills = solid(s.tx[3] || "#FFFFFF");
+    } else if (s.t === "v") {
+      // a vector is sized by its path (`p`, SVG path data from its own origin)
+      node.vectorPaths = [{ windingRule: "NONZERO", data: s.p }];
+      node.fills = s.f ? solid(s.f) : [];
+      node.strokes = [];
     } else {
       // a size the spec leaves out keeps Figma's default 100 (a FILL axis is sized by its parent)
       if (s.w !== undefined || s.h !== undefined)
@@ -510,17 +520,41 @@ const RT = (() => {
       t.x = 10;
       t.y = 6;
       const gates = u.gates.split(",");
+      // the unlit lamps of one colour are one vector: every layer a frame holds costs the prototype
+      // time on every event, and the unlit lamps never change
+      const dims = new Map();
+      gates.forEach((g, i) => {
+        const x = d.pad + (i % d.perRow) * d.pitch;
+        const y = d.top + Math.floor(i / d.perRow) * d.pitch;
+        if (!dims.has(g[0])) dims.set(g[0], []);
+        dims.get(g[0]).push([x, y]);
+      });
+      for (const [code, at] of dims) {
+        const x0 = Math.min(...at.map((p) => p[0]));
+        const y0 = Math.min(...at.map((p) => p[1]));
+        const v = figma.createVector();
+        v.name = `dim/${code}`;
+        v.vectorPaths = [
+          {
+            windingRule: "NONZERO",
+            data: at
+              .map(
+                ([x, y]) =>
+                  `M ${x - x0} ${y - y0} L ${x - x0 + d.size} ${y - y0} L ${x - x0 + d.size} ${y - y0 + d.size} L ${x - x0} ${y - y0 + d.size} Z`,
+              )
+              .join(" "),
+          },
+        ];
+        v.fills = solid(d.colors[code], 0.22);
+        v.strokes = [];
+        block.appendChild(v);
+        v.x = x0;
+        v.y = y0;
+      }
       gates.forEach((g, i) => {
         const color = d.colors[g[0]];
         const x = d.pad + (i % d.perRow) * d.pitch;
         const y = d.top + Math.floor(i / d.perRow) * d.pitch;
-        const dim = figma.createRectangle();
-        dim.name = `g${i}`;
-        dim.resize(d.size, d.size);
-        dim.fills = solid(color, 0.22);
-        block.appendChild(dim);
-        dim.x = x;
-        dim.y = y;
         const on = figma.createRectangle();
         on.name = `lit`;
         on.resize(d.size, d.size);

@@ -2,7 +2,7 @@
 // of random editor sessions, each with the spec state that goes with it.
 import { compile, FastSim } from "../../src/compile";
 import type { FlatNetlist } from "../../src/netlist/types";
-import { nathanPowerOn, SCREEN_NETS, STATE_NETS, LAYERS } from "../src/hw";
+import { HOT, nathanPowerOn, SCREEN_NETS, STATE_NETS, LAYERS, TOOL_BITS } from "../src/hw";
 import { applyRef, engineInputs, type Ev, type Probe, prng, randomEvent } from "../src/model/oracle";
 import * as R from "../src/model/reference";
 import { INPUTS } from "./driver";
@@ -52,18 +52,21 @@ export function observedNets(net: FlatNetlist): number[] {
   }
   bus(STATE_NETS.sel, 3);
   bus(STATE_NETS.hassel, 1);
-  bus(STATE_NETS.tool, 2);
+  bus(STATE_NETS.tool, TOOL_BITS);
   bus(STATE_NETS.cur, 4);
   bus(STATE_NETS.drag, 2);
   bus(STATE_NETS.r1, 4);
   bus(STATE_NETS.r2, 4);
+  bus(STATE_NETS.pendown, 1);
+  bus(STATE_NETS.erase, 1);
+  bus(STATE_NETS.pix, R.GRID_W * R.GRID_H);
   bus(SCREEN_NETS.nsel, 3);
   bus(SCREEN_NETS.nkind, 16);
   bus(SCREEN_NETS.nfill, 32);
   bus(SCREEN_NETS.ncur, 4);
   bus(SCREEN_NETS.ell, 8);
   bus(SCREEN_NETS.nell, 8);
-  bus(SCREEN_NETS.hot, 4);
+  bus(SCREEN_NETS.hot, HOT.length);
   return ids;
 }
 

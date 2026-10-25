@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { --bg: #1e1e1e; --card: #2c2c2c; --field: #383838; --line: #444; --text: #fff; --dim: #b3b3b3; --accent: #0c8ce9; --ok: #2bd67b; --err: #ff5a5f; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 12px; background: var(--bg); color: var(--text); font: 12px/1.45 Inter, system-ui, sans-serif; }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      .sub { color: var(--dim); font-size: 11px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; }
+      button { font: inherit; font-weight: 600; color: var(--text); background: var(--accent); border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .help { color: var(--dim); font-size: 11px; margin-top: 6px; }
+      #log { height: 220px; overflow: auto; background: #0d0d0d; border-radius: 6px; padding: 6px; margin-top: 6px; font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--dim); white-space: pre-wrap; }
+      #log .ok { color: var(--ok); } #log .error { color: var(--err); }
+    </style>
+  </head>
+  <body>
+    <h1>Figma OS (gate level)</h1>
+    <div class="sub">os-ui, 1:1, run by Figma's prototype engine</div>
+    <div class="card">
+      <button id="editor">Build every screen</button>
+      <div class="help">Puts every screen of os-ui on the page "Figma OS" (61: the editor, every menu and flyout, ⌘K, Prototype, Present, Dev and Draw modes, Share, each shape, text, comments, styles, export, zoom, Assets, Tools…), taken from the running app (osui/capture), layer for layer. A rebuild replaces them.</div>
+    </div>
+    <div class="card">
+      <button id="live">Build the live OS</button>
+      <button id="selftest">Self-test</button>
+      <div class="help">The Default screen made live on the gate-level CPU: os-ui's own editor (osflow's synthesized os-ui chip, 31,900 gates with its screen decode) drives every layer, row, value and colour of the frame "os-ui · live (gate-level CPU)". ▶ Present the flow "Figma OS (gate-level CPU)". Press on the canvas and release where the shape should end (no live preview: Figma sends no hover while a button is held); drag a selected layer's corner handle to resize; the tool, layer, Design-panel buttons and the shortcuts all work. A value field steps down on its left half and up on its right half. Self-test replays a random session through what is stored in the file and checks every register and screen line against the chip.</div>
+    </div>
+    <div class="card"><div id="log"></div></div>
+    <!-- SCRIPT -->
+  </body>
+</html>
