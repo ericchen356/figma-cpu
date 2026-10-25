@@ -96,15 +96,16 @@ describe("control unit: PLA generated from the microcode table", () => {
       for (let op = 0; op < 16; op++) for (let t = 0; t < 8; t++) for (let f = 0; f < 8; f++) bits += controlTruth(op, t, flagsOf(f), false, false)[s];
       return bits;
     };
+    // (No two signals have the same table since LDRI loads Y without the flags; any that do share.)
     const tables = SIGNALS.map(truth);
-    let shared = 0;
     for (let i = 0; i < SIGNALS.length; i++)
       for (let j = i + 1; j < SIGNALS.length; j++)
-        if (tables[i] === tables[j]) {
-          expect(inputsOf(net, `out_${SIGNALS[i]}`)).toEqual(inputsOf(net, `out_${SIGNALS[j]}`));
-          shared++;
-        }
-    expect(shared).toBeGreaterThan(0);
+        if (tables[i] === tables[j]) expect(inputsOf(net, `out_${SIGNALS[i]}`)).toEqual(inputsOf(net, `out_${SIGNALS[j]}`));
+    // Signals one opcode asserts in the same T-state share its product term: LDRI's T6 term
+    // feeds the OR trees of MDR_OUT, REG_LOAD_D and T_RESET.
+    const term = net.gates.find((g) => g.path === "term_LDRI_T6")!;
+    const readers = net.gates.filter((g) => g.in.includes(term.out)).map((g) => /^(?:or|out)_(.+?)(?:_\d+)?$/.exec(g.path)?.[1]);
+    expect(readers.sort()).toEqual(["MDR_OUT", "REG_LOAD_D", "T_RESET"]);
   });
 
   it("gate count", () => {
@@ -119,6 +120,6 @@ describe("control unit: PLA generated from the microcode table", () => {
     }
     console.log("CONTROL", s, by);
     expect(s.gates).toBe(net.gates.length);
-    expect(s.gates).toBeLessThanOrEqual(140); // regression guard for the term sharing
+    expect(s.gates).toBeLessThanOrEqual(150); // regression guard for the term sharing (145 with LDRI)
   });
 });

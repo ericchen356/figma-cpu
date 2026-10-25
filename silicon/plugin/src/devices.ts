@@ -12,7 +12,7 @@ import { OUT_ADDR, RAM_BYTES } from "../../src/isa/spec";
 /** The memory-mapped input byte. 15 is taken: a store to 15 also latches the OUT display
  * (OUT_ADDR), so the input byte is the one just below it, the last byte that is plain RAM.
  * Programs that read input must fit in bytes 0–13. */
-export const IN_ADDR = OUT_ADDR - 1; // 14
+export const IN_ADDR = OUT_ADDR - 1; // 62, the same byte as IN_ADDR in src/isa/spec.ts
 
 /** What PluginClock calls (see ClockOptions.devices): at a tick boundary, before ticks run. */
 export interface DeviceHook {

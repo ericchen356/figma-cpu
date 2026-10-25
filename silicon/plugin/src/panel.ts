@@ -41,13 +41,17 @@ export function panelRows(): Row[][] {
   ];
 }
 
-// MEM screen: the 16 bytes of RAM as a 16 × 8 lamp matrix (address down, bit 7 on the left), each lamp
-// bound to its RAM latch output. It needs no hardware: the bits already are variables, so it works in
+// MEM screen: the RAM as columns of 16 bytes × 8 lamps (address down, then the next column; bit 7 on
+// the left), each lamp bound to its RAM latch output. Columns keep the panel as tall as with 16 bytes:
+// it is instanced into every frame. It needs no hardware: the bits already are variables, so it works in
 // Present mode and with the plugin clock, and a program "draws" by storing bytes (code shows up too:
 // the RAM is shared).
 const MEM_LAMP = 8;
 const MEM_PITCH = 11;
 const MEM_LABEL_W = 14;
+const MEM_ROWS = 16;
+const MEM_COL_W = MEM_LABEL_W + 8 * MEM_PITCH + 10;
+const MEM_COLS = Math.ceil(RAM_BYTES / MEM_ROWS);
 export const MEM_LAMPS = RAM_BYTES * 8;
 
 /** The RAM matrix rows: `nets[addr][i]` is the latch output of bit (7 - i) of RAM[addr]. */
@@ -129,17 +133,19 @@ export async function drawFrontPanel(api: PluginAPI): Promise<ComponentNode> {
   // MEM screen to the right of the lamp columns.
   const memX = x;
   put(comp, text(api, "MEM", { size: 11, bold: true, color: COLORS.dim }), memX, 16);
+  const digits = (RAM_BYTES - 1).toString(16).length;
   memRows().forEach((nets, a) => {
-    const y = 34 + a * MEM_PITCH;
-    put(comp, text(api, a.toString(16).toUpperCase(), { size: 8, color: COLORS.dim }), memX, y - 1);
+    const cx = memX + Math.floor(a / MEM_ROWS) * MEM_COL_W;
+    const y = 34 + (a % MEM_ROWS) * MEM_PITCH;
+    put(comp, text(api, a.toString(16).toUpperCase().padStart(digits, "0"), { size: 8, color: COLORS.dim }), cx, y - 1);
     nets.forEach((net, i) => {
       const l = lamp(api, MEM_LAMP, COLORS.lampOn, `lamp/${net}`);
       l.lit.visible = false;
-      put(comp, l.node, memX + MEM_LABEL_W + i * MEM_PITCH, y);
+      put(comp, l.node, cx + MEM_LABEL_W + i * MEM_PITCH, y);
     });
   });
-  const memBottom = 34 + RAM_BYTES * MEM_PITCH;
-  x = memX + MEM_LABEL_W + 8 * MEM_PITCH + 24;
+  const memBottom = 34 + Math.min(RAM_BYTES, MEM_ROWS) * MEM_PITCH;
+  x = memX + MEM_COLS * MEM_COL_W - 10 + 24;
   bottom = Math.max(bottom, memBottom);
 
   comp.resize(x - 24 + 16, Math.max(bottom + 12, 168));

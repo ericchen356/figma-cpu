@@ -16,12 +16,13 @@ import blink from "./programs/blink.asm";
 import lfsr from "./programs/lfsr.asm";
 import echo from "./programs/echo.asm";
 import keypad from "./programs/keypad.asm";
+import perceptron from "./programs/perceptron.asm";
 
 export * from "./asm";
 export * from "./model";
 export * from "./spec";
 
-/** Demo programs (assembly source) by name. Each fits in the 16 bytes of RAM. echo and keypad
- * read the input byte at RAM[14] (plugin clock device layer, plugin/src/devices.ts). ptrout, copy
- * and dump use the pointer instructions LDR / STR. */
-export const PROGRAMS: Record<string, string> = { count, mul, fib, sub, logic, mem, pow2, triangle, mod, blink, lfsr, echo, keypad, ptrout, copy, dump };
+/** Demo programs (assembly source) by name. Each fits in the 64 bytes of RAM. echo and keypad
+ * read the input byte at IN (RAM[62], plugin clock device layer, plugin/src/devices.ts). ptrout,
+ * copy and dump use the pointer instructions LDR / STR; perceptron walks its weights with LDRI. */
+export const PROGRAMS: Record<string, string> = { count, mul, fib, sub, logic, mem, pow2, triangle, mod, blink, lfsr, echo, keypad, ptrout, copy, dump, perceptron };

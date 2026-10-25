@@ -16,7 +16,7 @@ export {
   freeSpot,
   setListing,
 } from "./dashboard";
-export { DATAPATH_H, DATAPATH_W, datapathNets, drawDatapath, signalColor, type Transfer, transfers } from "./datapath";
+export { DATAPATH_H, DATAPATH_W, datapathNets, drawDatapath, readSelect, signalColor, type Transfer, transfers } from "./datapath";
 export { drawMicrocode, flagLineNet, type GridCell, gridNets, type GridRow, type MicrocodeTable, microcodeTable, opLineNet, short, SHORT, tLineNet } from "./grid";
 export { collectPrefixed, componentPorts, DEFAULT_MAGNIFIERS, drawMagnifier, type MagnifierResult, type MagnifierSpec, type PrefixedBindings } from "./magnifier";
 export * from "./names";

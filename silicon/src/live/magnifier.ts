@@ -7,6 +7,7 @@
 // a path prefix: an instance whose path is a gate is that gate; any other instance is a cell
 // to walk into; `wire/<net>/lit` layers resolve <prefix><scope>/<net> through the aliases.
 import { formatNets, LIT, parsePortMarker, PORT_PREFIX, propName, wireLitNet } from "../figma/names";
+import { OUT_ADDR } from "../isa/spec";
 import type { FlatNetlist } from "../netlist/types";
 import { portBits } from "../netlist/types";
 import { magName } from "./names";
@@ -76,11 +77,11 @@ export interface MagnifierSpec {
 }
 
 /** Default magnifiers: the adder's bit 3, R0's bit 0, and the RAM bit that holds bit 1 of the
- * OUT byte (a store to 15 flips it in mul). */
+ * OUT byte (a store to OUT flips it in mul). */
 export const DEFAULT_MAGNIFIERS: MagnifierSpec[] = [
   { cell: "FULL_ADDER", prefix: "alu/add/fa3", title: "the adder's bit 3", caption: "cell/FULL_ADDER at alu/add/fa3 · these gates are the CPU's own, live" },
   { cell: "DFFE", prefix: "regs/r0/b0", title: "R0, bit 0", caption: "cell/DFFE at regs/r0/b0 · a flip-flop: master + slave latch" },
-  { cell: "DLATCH", prefix: "ram/row15/b1", title: "RAM[15], bit 1", caption: "cell/DLATCH at ram/row15/b1 · one bit of memory" },
+  { cell: "DLATCH", prefix: `ram/row${OUT_ADDR}/b1`, title: `RAM[${OUT_ADDR}], bit 1`, caption: `cell/DLATCH at ram/row${OUT_ADDR}/b1 · one bit of memory` },
 ];
 
 /** Port definitions of a cell component, read from its port markers (the canvas contract). */

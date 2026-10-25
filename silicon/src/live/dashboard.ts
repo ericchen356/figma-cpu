@@ -4,14 +4,14 @@
 //   ┌ top bar: FigmaCPU · Live — Step Run Stop Reset — tick, phase, running ───────────────┐
 //   │ disks      │ datapath: PC MAR RAM MDR IR CONTROL ‖ bus ‖ R0–R3 A ALU Y FLAGS OUT  │ clock pad │
 //   │ (programs) │                                                                     │ 7-segment │
-//   │ listing    │ microcode grid: 16 opcodes × T0–T7 (row = opcode in IR, col = T)    │ RAM 16×8  │
+//   │ listing    │ microcode grid: 16 opcodes × T0–T7 (row = opcode in IR, col = T)    │ RAM 64×8  │
 //   │ about      │ magnifiers: real cell instances bound to one copy inside the CPU   │ legend    │
 //   └────────────┴─────────────────────────────────────────────────────────────────────┴───────────┘
 //
 // buildDashboard draws it (no bindings); bindDashboard binds every lit layer by name
 // (names.ts) to an existing variable. Lane L2 (src/prototype/live.ts) instances the component
 // into its Present-mode frames and attaches reactions to ctl/step … ctl/pad/<i>, disk/<name>.
-import { PROGRAMS } from "../isa";
+import { PROGRAMS, RAM_BYTES } from "../isa";
 import type { FlatNetlist } from "../netlist/types";
 import { bindVisible } from "../prototype/draw";
 import { DATAPATH_H, DATAPATH_W, drawDatapath } from "./datapath";
@@ -55,7 +55,7 @@ export interface DashboardOptions {
   magnifiers?: MagnifierSpec[];
   /** Pages searched for the `cell/<NAME>` components the magnifiers instance (default: [page]). Must be loaded. */
   cellPages?: PageNode[];
-  /** Clock pad grid (default 6 × 5 = 30 cells: each cell's reaction holds the whole chunk dispatcher). */
+  /** Clock pad grid (default 6 × 3 = 18 cells: each cell's reaction holds the whole chunk dispatcher). */
   padCols?: number;
   padRows?: number;
   log?: (msg: string) => void;
@@ -245,14 +245,14 @@ export async function buildDashboard(api: PluginAPI, page: PageNode, net: FlatNe
   const lw = SIDE_L - 32;
   header(ctx, comp, "Disks", lx, 64);
   text(ctx, comp, "click one to load it, in Present mode", lx + 52, 64, { size: 9, color: L.text3, name: "hint/disks" });
-  const disks = drawDisks(ctx, comp, lx, 84, lw, programs);
+  const disks = drawDisks(ctx, comp, lx, 84, lw, programs, 32, 4, 2);
   const loading = frame(ctx, comp, varBound("ctl/loading"), lx, 58, lw, 22, { fill: null });
   const loadLit = frame(ctx, loading, "lit", 0, 0, lw, 22, { fill: L.mem, radius: 11 });
   text(ctx, loadLit, "loading disk…  (one chunk per hop)", 0, 0, { size: 10, font: "semibold", color: "#FFFFFF", w: lw, h: 22, align: "CENTER", valign: "CENTER", name: "label" });
   loadLit.visible = false;
-  const listY = 84 + disks.size * 38 + 18;
+  const listY = 84 + Math.ceil(disks.size / 2) * 36 + 18;
   header(ctx, comp, "Listing", lx, listY);
-  const { listing, program } = drawListing(ctx, comp, lx, listY + 20, lw, programName, source);
+  const { listing, program } = drawListing(ctx, comp, lx, listY + 20, lw, programName, source, DASHBOARD_H - 204 - (listY + 42));
   header(ctx, comp, "How it works", lx, DASHBOARD_H - 196);
   text(
     ctx,
@@ -270,7 +270,7 @@ export async function buildDashboard(api: PluginAPI, page: PageNode, net: FlatNe
   header(ctx, comp, "Clock pad", px, 64);
   text(ctx, comp, "sweep the mouse across the pad: every cell you enter runs one chunk of the tick", px, 80, { size: 9.5, color: L.text3, w: pw, lineHeight: 13, name: "hint/pad" });
   const cols = opts.padCols ?? 6;
-  const rows = opts.padRows ?? 5;
+  const rows = opts.padRows ?? 3;
   const gapP = Math.max(2, Math.floor((pw - 12 - cols * PAD_CELL) / Math.max(1, cols - 1)));
   const { pad, cells: padCells } = drawPad(ctx, comp, px, 112, cols, rows, PAD_CELL, gapP, padCell);
   const outY = 112 + pad.height + 20;
@@ -282,13 +282,15 @@ export async function buildDashboard(api: PluginAPI, page: PageNode, net: FlatNe
   lamp(ctx, comp, "halted", px + 32 + 8 * 17 + 48, outY + 158, 13, L.out);
   const memY = outY + 196;
   header(ctx, comp, "Memory", px, memY);
-  text(ctx, comp, "16 bytes · code and data share it", px + 70, memY, { size: 9, color: L.text3, name: "hint/memory" });
-  const mem = drawRamMatrix(ctx, comp, px, memY + 20, pw, 15, 19);
+  text(ctx, comp, `${RAM_BYTES} bytes · code and data share it`, px + 70, memY, { size: 9, color: L.text3, name: "hint/memory" });
+  const mem = drawRamMatrix(ctx, comp, px, memY + 20, pw, 10, 12, 2);
   const legY = memY + 20 + mem.height + 16;
   header(ctx, comp, "Highlights", px, legY);
   const legend: Array<[string, string]> = [
     [L.blue, "microcode: row = opcode in IR, column = T-state; the cell where they cross is executing"],
-    [L.mem, "memory: the row MAR addresses"],
+    [L.mem, "memory: the row MAR addresses; it flashes on a read (blue) or a write (red)"],
+    [L.alu, "▸ the byte PC points to"],
+    [L.ptr, "datapath: pointer → MAR, PTR on the register used as the address"],
   ];
   let ly = legY + 20;
   for (const [c, s] of legend) {
@@ -300,7 +302,7 @@ export async function buildDashboard(api: PluginAPI, page: PageNode, net: FlatNe
   text(
     ctx,
     comp,
-    "Step runs one chunk of a tick (a tick is several chunks: the viewer allows ~400 actions per event). Run loops by itself (~1 chunk/s). " +
+    "Step runs one chunk of a tick (a tick is several chunks: the viewer allows ~400 actions per event). Run loops by itself. " +
       "The pad clocks at mouse speed. Reset reloads the current disk; a disk loads its program in a few hops.",
     px,
     DASHBOARD_H - 130,
@@ -456,6 +458,7 @@ export function bindDashboard(root: BaseNode & ChildrenMixin, net: FlatNetlist, 
         const id = net.aliases.get(b.net);
         if (id === undefined) report.unknown.push(c.name);
         else bindNet(lit, id, b.kind);
+        walk(c, mag); // containers nested inside (an AND of nets, widgets.gated)
         continue;
       }
       const vn = parseVar(c.name);

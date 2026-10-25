@@ -66,8 +66,8 @@ Exact names and ports; other lanes depend on them. All are built from gates or f
     - SEL: 0 = adder (SUB=1 → A + ¬B + 1), 1 = AND, 2 = OR, 3 = XOR, 4 = NOT A.
     - CO is the adder carry when SEL=0, else 0.
   - `REGFILE`: inputs D[8], WSEL[2], WE, RSEL[2], CLK → outputs Q[8] plus R0..R3[8] for display.
-  - `RAM16`: inputs ADDR[4], DIN[8], WE, CLK → output DOUT[8], following the RAM rule in §2.
-  - `PC4`, `TSTATE` (3-bit counter with T_RESET and RESET), the bus (AND-OR of the drivers), `OUTPORT` (8-bit register plus two `HEX7SEG`).
+  - `RAM<2^N>` (`RAM64` for N = `RAM_ADDR_BITS` = 6): inputs ADDR[N], DIN[8], WE, CLK → output DOUT[8], following the RAM rule in §2.
+  - `PC<N>`, `TSTATE` (3-bit counter with T_RESET and RESET), the bus (AND-OR of the drivers, plus `ONE_OUT` for LDRI's +1), `OUTPORT` (8-bit register plus two `HEX7SEG`).
 - Control (D2, `src/cpu/control.ts`): `CONTROL`, a sum-of-products PLA **generated from `OPCODES` in `src/isa/spec.ts`**.
   - Inputs: OP[4] (= IR[7:4]), T[3], Z, C, N, HALTED, RESET.
   - Outputs: one per `SIGNALS` entry, plus ALU_SEL[3] and ALU_SUB.

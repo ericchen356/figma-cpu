@@ -7,7 +7,7 @@ evaluation, lamps bound to wires. Nothing runs at Present time except Figma's pr
 | generator            | machine                                          | build               | output            |
 | -------------------- | ------------------------------------------------ | ------------------- | ----------------- |
 | `nathan.ts`          | CPU NATHAN, the Figma OS editor (silicon/nathan) | `npm run -s nathan` | `deploy/out/`     |
-| `cpu.ts` + `tick.ts` | silicon's 8-bit CPU, programs count / mul / fib  | `npm run -s cpu`    | `deploy/out-cpu/` |
+| `cpu.ts` + `tick.ts` | silicon's 8-bit CPU (64 bytes), programs count / mul / fib / perceptron | `npm run -s cpu` | `deploy/out-cpu/` |
 
 Each output folder holds numbered chunks (`NN-step.js`) and a `manifest.json`. A chunk is
 `runtime.js` (minified) plus one `RT.run(step, data, checksum)` call that builds part of the file
@@ -62,7 +62,12 @@ handling until it is reloaded.
   every-gate Step code on shadow copies (small reactions copy them in and back, in pieces of 64),
   and draws unlit lamps as one vector per colour and row. The CPU went from 7.6 ticks/s (one
   tick an event, every gate written) to 95 ticks/s on `count`; fib runs to HALT in about 5 s
-  instead of 59 s.
+  instead of 59 s. (Measured on the 16-byte CPU: 2,285 gates, a Run event of at most 292 actions.
+  The 64-byte CPU is 4,803 gates and up to 450 actions an event, with twice the gate-map lamps:
+  in Chrome Present, perceptron ran its 3,678 ticks to HALT in about 105 s, ~35 ticks/s, with the
+  right verdict on every digit (measured 2026-10-24). Its heaviest Step tick, a read of the whole
+  RAM read plane, is 1,159 gate evaluations, so Step runs every body in pieces, one overlay event
+  each, the shared IFs judged on the shadows that no piece changes.)
 - `ON_CLICK` does not fire on a layer that also has `MOUSE_DOWN`/`MOUSE_UP`. An `ON_KEY_DOWN` key
   list is a chord (all keys held), not alternatives. A key goes to the showing layer that takes it
   before the frame, and hidden layers never take keys, so the OS's D [ ] sit on 8 layers picked by

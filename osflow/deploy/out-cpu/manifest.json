@@ -1,16 +1,16 @@
 {
   "stats": {
-    "gates": 2285,
-    "wires": 2584,
+    "gates": 4803,
+    "wires": 5682,
     "cases": 128,
-    "groups": 25,
-    "dispatchStored": 2476,
-    "worstTick": 305,
-    "meanTick": 81,
-    "stateNets": 229,
-    "fastGroups": 48,
-    "worstFast": 48,
-    "perInstruction": 292,
+    "groups": 28,
+    "dispatchStored": 6897,
+    "worstTick": 1159,
+    "meanTick": 262,
+    "stateNets": 617,
+    "fastGroups": 145,
+    "worstFast": 63,
+    "perInstruction": 450,
     "instructionsPerEvent": 1
   },
   "names": {
@@ -34,29 +34,56 @@
       "step 9",
       "step 10",
       "step 11",
+      "step 12",
+      "step 13",
+      "step 14",
+      "step 15",
+      "step 16",
+      "step 17",
+      "step 18",
+      "step 19",
+      "step 20",
+      "step 21",
+      "step 22",
+      "step 23",
+      "step 24",
+      "step 25",
+      "step 26",
       "loading 1",
       "loading 2",
       "loading 3",
-      "loading 4"
+      "loading 4",
+      "loading 5",
+      "loading 6",
+      "loading 7",
+      "loading 8",
+      "loading 9",
+      "loading 10"
     ],
-    "stepBody": "step 6",
+    "stepBody": "step 13",
+    "stepBodies": [
+      "step 13",
+      "step 14",
+      "step 15"
+    ],
     "programs": {
       "count": "/load/count",
       "mul": "/load/mul",
-      "fib": "/load/fib"
+      "fib": "/load/fib",
+      "perceptron": "/load/perceptron"
     }
   },
   "chunks": [
     {
       "file": "01-vars.js",
       "step": "vars",
-      "chars": 20405,
-      "note": "2584 wire variables and the tick counter"
+      "chars": 32838,
+      "note": "5682 wire variables and the tick counter"
     },
     {
       "file": "02-frame.js",
       "step": "frame",
-      "chars": 63470,
+      "chars": 149541,
       "note": "the Present frame and the CPU panel"
     },
     {
@@ -68,7 +95,7 @@
     {
       "file": "04-react.js",
       "step": "react",
-      "chars": 10395,
+      "chars": 10396,
       "note": "reactions of /instruction: instruction"
     },
     {
@@ -80,13 +107,13 @@
     {
       "file": "06-react.js",
       "step": "react",
-      "chars": 10398,
+      "chars": 10399,
       "note": "reactions of /load/count: load/count"
     },
     {
       "file": "07-react.js",
       "step": "react",
-      "chars": 10392,
+      "chars": 10393,
       "note": "reactions of /load/mul: load/mul"
     },
     {
@@ -98,134 +125,272 @@
     {
       "file": "09-react.js",
       "step": "react",
-      "chars": 10428,
-      "note": "reactions of the frame: step, instruction"
+      "chars": 10414,
+      "note": "reactions of /load/perceptron: load/perceptron"
     },
     {
       "file": "10-react.js",
       "step": "react",
-      "chars": 35843,
-      "note": "reactions of @running A: tick/0, pause"
+      "chars": 10428,
+      "note": "reactions of the frame: step, instruction"
     },
     {
       "file": "11-react.js",
       "step": "react",
-      "chars": 35843,
-      "note": "reactions of @running B: tick/1, pause"
+      "chars": 119106,
+      "note": "reactions of @running A: tick/0, pause"
     },
     {
       "file": "12-react.js",
       "step": "react",
-      "chars": 10982,
-      "note": "reactions of @step 1: stepping/0"
+      "chars": 119105,
+      "note": "reactions of @running B: tick/1, pause"
     },
     {
       "file": "13-react.js",
+      "step": "react",
+      "chars": 10983,
+      "note": "reactions of @step 1: stepping/0"
+    },
+    {
+      "file": "14-react.js",
       "step": "react",
       "chars": 10990,
       "note": "reactions of @step 2: stepping/1"
     },
     {
-      "file": "14-react.js",
-      "step": "react",
-      "chars": 11010,
-      "note": "reactions of @step 3: stepping/2"
-    },
-    {
       "file": "15-react.js",
       "step": "react",
-      "chars": 11087,
-      "note": "reactions of @step 4: stepping/3"
+      "chars": 10998,
+      "note": "reactions of @step 3: stepping/2"
     },
     {
       "file": "16-react.js",
       "step": "react",
-      "chars": 11015,
-      "note": "reactions of @step 5: stepping/4"
+      "chars": 11086,
+      "note": "reactions of @step 4: stepping/3"
     },
     {
       "file": "17-react.js",
       "step": "react",
-      "chars": 44841,
-      "note": "reactions of @step 6: stepping/5"
+      "chars": 11087,
+      "note": "reactions of @step 5: stepping/4"
     },
     {
       "file": "18-react.js",
       "step": "react",
-      "chars": 10954,
-      "note": "reactions of @step 7: stepping/6"
+      "chars": 11086,
+      "note": "reactions of @step 6: stepping/5"
     },
     {
       "file": "19-react.js",
       "step": "react",
-      "chars": 11056,
-      "note": "reactions of @step 8: stepping/7"
+      "chars": 11087,
+      "note": "reactions of @step 7: stepping/6"
     },
     {
       "file": "20-react.js",
       "step": "react",
       "chars": 11087,
-      "note": "reactions of @step 9: stepping/8"
+      "note": "reactions of @step 8: stepping/7"
     },
     {
       "file": "21-react.js",
       "step": "react",
-      "chars": 10675,
-      "note": "reactions of @step 10: stepping/9"
+      "chars": 11088,
+      "note": "reactions of @step 9: stepping/8"
     },
     {
       "file": "22-react.js",
       "step": "react",
-      "chars": 11085,
-      "note": "reactions of @step 11: stepping/10"
+      "chars": 11088,
+      "note": "reactions of @step 10: stepping/9"
     },
     {
       "file": "23-react.js",
       "step": "react",
-      "chars": 10702,
-      "note": "reactions of @loading 1: loading/0"
+      "chars": 11070,
+      "note": "reactions of @step 11: stepping/10"
     },
     {
       "file": "24-react.js",
       "step": "react",
-      "chars": 10829,
-      "note": "reactions of @loading 2: loading/1"
+      "chars": 10422,
+      "note": "reactions of @step 12: stepping/11"
     },
     {
       "file": "25-react.js",
       "step": "react",
-      "chars": 11201,
-      "note": "reactions of @loading 3: loading/2"
+      "chars": 64598,
+      "note": "reactions of @step 13: stepping/12"
     },
     {
       "file": "26-react.js",
       "step": "react",
-      "chars": 10805,
+      "chars": 42646,
+      "note": "reactions of @step 14: stepping/13"
+    },
+    {
+      "file": "27-react.js",
+      "step": "react",
+      "chars": 28445,
+      "note": "reactions of @step 15: stepping/14"
+    },
+    {
+      "file": "28-react.js",
+      "step": "react",
+      "chars": 10959,
+      "note": "reactions of @step 16: stepping/15"
+    },
+    {
+      "file": "29-react.js",
+      "step": "react",
+      "chars": 11053,
+      "note": "reactions of @step 17: stepping/16"
+    },
+    {
+      "file": "30-react.js",
+      "step": "react",
+      "chars": 11091,
+      "note": "reactions of @step 18: stepping/17"
+    },
+    {
+      "file": "31-react.js",
+      "step": "react",
+      "chars": 11091,
+      "note": "reactions of @step 19: stepping/18"
+    },
+    {
+      "file": "32-react.js",
+      "step": "react",
+      "chars": 11090,
+      "note": "reactions of @step 20: stepping/19"
+    },
+    {
+      "file": "33-react.js",
+      "step": "react",
+      "chars": 11091,
+      "note": "reactions of @step 21: stepping/20"
+    },
+    {
+      "file": "34-react.js",
+      "step": "react",
+      "chars": 11091,
+      "note": "reactions of @step 22: stepping/21"
+    },
+    {
+      "file": "35-react.js",
+      "step": "react",
+      "chars": 11090,
+      "note": "reactions of @step 23: stepping/22"
+    },
+    {
+      "file": "36-react.js",
+      "step": "react",
+      "chars": 11089,
+      "note": "reactions of @step 24: stepping/23"
+    },
+    {
+      "file": "37-react.js",
+      "step": "react",
+      "chars": 10722,
+      "note": "reactions of @step 25: stepping/24"
+    },
+    {
+      "file": "38-react.js",
+      "step": "react",
+      "chars": 11115,
+      "note": "reactions of @step 26: stepping/25"
+    },
+    {
+      "file": "39-react.js",
+      "step": "react",
+      "chars": 10701,
+      "note": "reactions of @loading 1: loading/0"
+    },
+    {
+      "file": "40-react.js",
+      "step": "react",
+      "chars": 10979,
+      "note": "reactions of @loading 2: loading/1"
+    },
+    {
+      "file": "41-react.js",
+      "step": "react",
+      "chars": 11483,
+      "note": "reactions of @loading 3: loading/2"
+    },
+    {
+      "file": "42-react.js",
+      "step": "react",
+      "chars": 11066,
       "note": "reactions of @loading 4: loading/3"
     },
     {
-      "file": "27-chart.js",
-      "step": "chart",
-      "chars": 19236,
-      "note": "gate map: ram, regs, alu, ctrl, ir, mdr, alatch, ylatch"
+      "file": "43-react.js",
+      "step": "react",
+      "chars": 10959,
+      "note": "reactions of @loading 5: loading/4"
     },
     {
-      "file": "28-chart.js",
-      "step": "chart",
-      "chars": 12968,
-      "note": "gate map: outreg, pc, seg_lo, seg_hi, busmux, tstate, mar, mdr_src"
+      "file": "44-react.js",
+      "step": "react",
+      "chars": 10931,
+      "note": "reactions of @loading 6: loading/5"
     },
     {
-      "file": "29-chart.js",
-      "step": "chart",
-      "chars": 11366,
-      "note": "gate map: halt, fz, fc, fn, rsel0, rsel1, mdr_load, reg_out"
+      "file": "45-react.js",
+      "step": "react",
+      "chars": 11001,
+      "note": "reactions of @loading 7: loading/6"
     },
     {
-      "file": "30-chart.js",
+      "file": "46-react.js",
+      "step": "react",
+      "chars": 11008,
+      "note": "reactions of @loading 8: loading/7"
+    },
+    {
+      "file": "47-react.js",
+      "step": "react",
+      "chars": 11010,
+      "note": "reactions of @loading 9: loading/8"
+    },
+    {
+      "file": "48-react.js",
+      "step": "react",
+      "chars": 10780,
+      "note": "reactions of @loading 10: loading/9"
+    },
+    {
+      "file": "49-chart.js",
       "step": "chart",
-      "chars": 10861,
-      "note": "gate map: mar_lo, mar_hi, at_out, out_load"
+      "chars": 31588,
+      "note": "gate map: ram, regs, alu, ctrl, pc, ir, mdr, alatch"
+    },
+    {
+      "file": "50-chart.js",
+      "step": "chart",
+      "chars": 13133,
+      "note": "gate map: ylatch, outreg, mar, seg_lo, seg_hi, busmux, tstate, mdr_src"
+    },
+    {
+      "file": "51-chart.js",
+      "step": "chart",
+      "chars": 11382,
+      "note": "gate map: halt, fz, fc, fn, rsel0, rsel1, wsel0, wsel1"
+    },
+    {
+      "file": "52-chart.js",
+      "step": "chart",
+      "chars": 11254,
+      "note": "gate map: mdr_load, reg_we, reg_out, mar_and0_0, mar_and0_1, mar_and0_2, mar_and1_0, at_out"
+    },
+    {
+      "file": "53-chart.js",
+      "step": "chart",
+      "chars": 11146,
+      "note": "gate map: out_load, pc_not0, pc_not1, pc_not2, pc_not3, pc_not4, pc_not5"
     }
   ]
 }

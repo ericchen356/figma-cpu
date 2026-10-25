@@ -130,14 +130,15 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const stats = await app.build({ gateLabels: true });
     const ms = Math.round(performance.now() - t0);
     expect(fig.root.children.map((p) => p.name)).toEqual(["Page 1"]); // no page was created
-    expect(stats).toMatchObject({ modules: 33, drawn: 33, reused: 0, gates: cpuNetlist().gates.length, page: "Page 1" });
+    // 33 modules for 4-bit addresses, + DEC6, INC_W6, MUX2_W6 and REG_W6 for the 64-byte RAM.
+    expect(stats).toMatchObject({ modules: 37, drawn: 37, reused: 0, gates: cpuNetlist().gates.length, page: "Page 1" });
     const comps = page.children.filter((n) => n.type === "COMPONENT");
     expect(comps.filter((n) => n.name.startsWith("gate/")).length).toBe(8);
-    expect(comps.filter((n) => n.name.startsWith("cell/")).length).toBe(33);
+    expect(comps.filter((n) => n.name.startsWith("cell/")).length).toBe(37);
     const progress = msgs.filter((m): m is Extract<ToUi, { type: "progress" }> => m.type === "progress" && m.task === "build");
-    expect(progress.length).toBeGreaterThanOrEqual(34);
+    expect(progress.length).toBeGreaterThanOrEqual(38);
     expect(progress.map((p) => p.label)).toContain("ALU");
-    expect(progress[progress.length - 1]).toMatchObject({ done: 33, total: 33 });
+    expect(progress[progress.length - 1]).toMatchObject({ done: 37, total: 37 });
     // Regions: below the user's design, gates above cells above the CPU, nothing overlapping.
     const cpu = kid(page, "cell/CPU")!;
     const cells = comps.filter((n) => n.name.startsWith("cell/") && n !== cpu);
@@ -163,9 +164,9 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const lits = panelLits(comp as unknown as ComponentNode, net);
     const lampBits = ["OUT", "BUS", "IR", "PC", "T", "R0", "R1", "R2", "R3", "Z", "C", "N", "HALTED"].reduce((n, k) => n + PROBES[k].width, 0);
     expect(lits.missing).toEqual([]);
-    expect(lits.lamps).toBe(lampBits + 14 + MEM_LAMPS); // + 2 digits × 7 segments + the 16 × 8 MEM screen
-    for (const k of ["SEG_LO[0]", "SEG_HI[6]", "pc[3]", "flag_z", "halted", "OUT[7]", "bus[0]", "t[2]", "ram/row0/b7/Q", "ram/row15/b0/Q"]) expect(lits.wireLit.has(net.aliases.get(k)!), k).toBe(true);
-    expect(comp.findAll().length).toBeLessThan(700); // small next to the CPU (~37k layers), but it is instanced into every frame; the MEM screen adds ~290
+    expect(lits.lamps).toBe(lampBits + 14 + MEM_LAMPS); // + 2 digits × 7 segments + the 64 × 8 MEM screen
+    for (const k of ["SEG_LO[0]", "SEG_HI[6]", "pc[3]", "flag_z", "halted", "OUT[7]", "bus[0]", "t[2]", "ram/row0/b7/Q", "ram/row63/b0/Q"]) expect(lits.wireLit.has(net.aliases.get(k)!), k).toBe(true);
+    expect(comp.findAll().length).toBeLessThan(1400); // small next to the CPU, but it is instanced into every frame; the 64 × 8 MEM screen is ~1,100 of it
     const cpu = kid(page, "cell/CPU")!;
     expect(comp.x + comp.width).toBeLessThan(cpu.x - 48);
     expect(fk(await app.frontPanel())).toBe(comp);
@@ -187,9 +188,10 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     expect(s.variables).toBeGreaterThan(r.plan.variables.length);
     expect(s.actionsPerTick).toBe(compile(ref, { inputs: [] }).stats.actionsPerTick + 2);
     expect(s.actionsPerStep).toBeGreaterThan(0);
-    expect(s).toMatchObject({ collections: 1, missingLits: 0, unbound: 0 });
+    expect(s).toMatchObject({ collections: 2, missingLits: 0, unbound: 0 }); // 4,000 variables a collection
     expect(s.panelLamps).toBe(panelLits(fk(kid(page, PANEL_NAME)) as unknown as ComponentNode, ref).lamps);
-    expect(fig.collections.map((c) => `${c.name}:${c.vars.length}`)).toEqual([`${NAME}:${s.variables}`]);
+    expect(fig.collections.map((c) => c.name)).toEqual([NAME, `${NAME} · 2`]);
+    expect(fig.collections.reduce((n, c) => n + c.vars.length, 0)).toBe(s.variables);
 
     // The Step frame holds the CPU main component itself, the front panel and the buttons.
     const frame = kid(page, STEP_FRAME)!;
@@ -224,7 +226,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     // Every gate's lit layer inside cell/CPU and the panel lamps are bound to CPU variables.
     const gateLits = cpu[0].findAll((n) => n.name === "lit" && n.parent?.type === "INSTANCE" && n.parent.name !== PANEL_NAME);
     expect(gateLits.length).toBe(ref.gates.length);
-    for (const l of gateLits) expect(fig.variableById.get(l.boundVariables.visible?.id)?.collection.name).toBe(NAME);
+    for (const l of gateLits) expect(fig.variableById.get(l.boundVariables.visible?.id)?.collection.name).toMatch(new RegExp(`^${NAME}( · \\d+)?$`));
     const lamp = fk(kid(page, PANEL_NAME))!.findOne((n) => n.name === "lamp/OUT[0]")!;
     expect(kid(lamp, "lit")!.boundVariables.visible.id).toBe(varOf(fig, "OUT[0]").id);
     expect(overlaps(page)).toEqual([]);
@@ -296,7 +298,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const hooks = { navigate: (d: string | null) => void (at = d!) };
     runFigmaActions(onClick(kid(control, "button/Run")), vals, hooks);
     let frames = 0;
-    while (at !== control.id && frames < 162 * 20) {
+    while (at !== control.id && frames < 162 * 40) { // a tick is a chunk per hop
       const f = fig.nodeById(at)!;
       runFigmaActions(f.reactions.find((x) => x.trigger?.type === "AFTER_TIMEOUT")!.actions!, vals, hooks);
       frames++;
@@ -305,7 +307,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     expect(ticksIn(fig, vals)).toBe(162);
     expect(probeFromVars(fig, vals, "OUT")).toBe(42);
     expect(vals.get(fig.variableNamed(NAME, "ctl/running").id)).toBe(false);
-  });
+  }, 180_000); // 162 ticks of 24 chunk hops each, every one replayed in the emulator
 
   it("Plugin clock: FastSim from the variables, writes only what changed, reaches the same OUT = 42 / HALTED", async () => {
     const before = fig.variableValues();
@@ -381,18 +383,19 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
 
   it("re-compile (options passed through to plan/apply) and re-build are idempotent", async () => {
     await app.compile(PROGRAMS.mul);
-    expect(fig.collections.map((c) => c.name)).toEqual([NAME]);
+    const names = (n: number) => Array.from({ length: n }, (_, i) => (i ? `${NAME} · ${i + 1}` : NAME));
+    expect(fig.collections.map((c) => c.name)).toEqual(names(2));
     // plan() / apply() options pass straight through: flat expressions, collection size, delay.
     const plain = (await app.compile(PROGRAMS.mul)).stats.actionsPerTick;
     const r = await app.compile(PROGRAMS.mul, { runDelayMs: 7, maxActionsPerEvent: 600, plan: { flat: true }, apply: { maxPerCollection: 1500 } });
     expect(r.stats.actionsPerTick).toBeGreaterThan(plain);
-    expect(fig.collections.map((c) => c.name)).toEqual([NAME, `${NAME} · 2`]);
+    expect(fig.collections.map((c) => c.name)).toEqual(names(Math.ceil(r.stats.variables / 1500)));
     expect(kid(page, `${NAME} · Run A`)!.reactions[0].trigger).toEqual({ type: "AFTER_TIMEOUT", timeout: 0.007 }); // 7 ms, in seconds
     for (const n of [STEP_FRAME, `${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, PANEL_NAME]) expect(page.children.filter((c) => c.name === n).length, n).toBe(1);
     expect(page.flowStartingPoints.length).toBe(2);
 
     const stats = await app.build({ gateLabels: true });
-    expect(stats).toMatchObject({ drawn: 0, reused: 33 });
+    expect(stats).toMatchObject({ drawn: 0, reused: 37 });
     const cpu = page.findAll((n) => n.name === "cell/CPU" && n.type === "COMPONENT");
     expect(cpu.length).toBe(1);
     expect(cpu[0].parent?.name).toBe(STEP_FRAME);
@@ -462,7 +465,7 @@ describe("where the silicon goes", () => {
     const msgs: ToUi[] = [];
     const app = new SiliconApp(asApi(fig), (m) => msgs.push(m), { yield: async () => {} });
     const stats = await app.build({ separatePages: true, gateLabels: false });
-    expect(stats).toMatchObject({ drawn: 33, page: "separate pages" });
+    expect(stats).toMatchObject({ drawn: 37, page: "separate pages" });
     expect(fig.root.children.map((p) => p.name)).toEqual(["Page 1", PAGE_GATES, PAGE_CELLS, PAGE_CPU]);
     const cpuPage = fig.root.children[3];
     expect(cpuPage.children.map((n) => n.name)).toEqual(["cell/CPU"]);
@@ -471,7 +474,7 @@ describe("where the silicon goes", () => {
     expect(overlaps(cpuPage)).toEqual([]);
     expect((await app.verify(PROGRAMS.mul)).ok).toBe(true);
     // A second build finds the same pages again.
-    expect((await app.build({ separatePages: true })).reused).toBe(33);
+    expect((await app.build({ separatePages: true })).reused).toBe(37);
   });
 });
 
@@ -486,7 +489,7 @@ describe("verifyAgainstModel", () => {
     const r = verifyAgainstModel(net, broken, bytes);
     expect(r.ok).toBe(false);
     expect(r.mismatch?.tick).toBe(1);
-    expect(r.text).toMatch(/^✗ tick 1 \(NOP T0, PC=0\)/);
+    expect(r.text).toMatch(/^✗ tick 1 \(LDRI T0, PC=0\)/); // power-on IR = 0, LDRI's code
   });
 });
 

@@ -8,7 +8,7 @@ import { buildControl } from "../src/cpu/control";
 import { buildCpu, cpuLibrary, cpuNetlist, gatesByBlock } from "../src/cpu/cpu";
 import { buildDatapath } from "../src/cpu/datapath";
 import { loadProgram, PROBES, ramBit, readProbes, readRam, type SimLike } from "../src/cpu/probes";
-import { alu, assemble, IsaModel, OPCODES, PROBE_KEYS, PROGRAMS, RAM_BYTES } from "../src/isa";
+import { alu, assemble, IsaModel, OPCODES, OUT_ADDR, PROBE_KEYS, PROGRAMS, RAM_ADDR_BITS, RAM_BYTES } from "../src/isa";
 import { flatten, stats } from "../src/netlist/flatten";
 import type { FlatNetlist, Library } from "../src/netlist/types";
 import { RefSim } from "../src/sim/reference";
@@ -212,17 +212,17 @@ describe("REGFILE", () => {
   });
 });
 
-describe("RAM16", () => {
+describe(`RAM${RAM_BYTES}`, () => {
   it("writes only during the LOW pass, reads every row back, leaves other rows alone", () => {
-    const sim = moduleSim("RAM16");
-    const mem = new Array<number>(16).fill(0);
+    const sim = moduleSim(`RAM${RAM_BYTES}`);
+    const mem = new Array<number>(RAM_BYTES).fill(0);
     const row = (k: number) => {
       let v = 0;
       for (let i = 0; i < 8; i++) v |= sim.peek(`row${k}/b${i}/Q`) << i;
       return v;
     };
     const checkAll = () => {
-      for (let k = 0; k < 16; k++) {
+      for (let k = 0; k < RAM_BYTES; k++) {
         expect(row(k), `row ${k}`).toBe(mem[k]);
         sim.set("ADDR", k);
         sim.settle();
@@ -231,8 +231,8 @@ describe("RAM16", () => {
     };
     const r = rng(5);
     // Write every row (in a scrambled order), checking the LOW-pass-only rule each time.
-    for (let n = 0; n < 32; n++) {
-      const k = (n * 7) % 16;
+    for (let n = 0; n < 2 * RAM_BYTES; n++) {
+      const k = (n * 7) % RAM_BYTES;
       const v = r();
       sim.set("ADDR", k);
       sim.set("DIN", v);
@@ -251,7 +251,7 @@ describe("RAM16", () => {
     }
     // WE = 1 with CLK high: wiggling ADDR / DIN writes nothing.
     sim.set("WE", 1);
-    for (let k = 0; k < 16; k++) {
+    for (let k = 0; k < RAM_BYTES; k++) {
       sim.set("ADDR", k);
       sim.set("DIN", ~mem[k] & 0xff);
       sim.settle();
@@ -260,7 +260,7 @@ describe("RAM16", () => {
     sim.settle();
     checkAll();
     // WE = 0 through whole clock cycles: nothing written.
-    for (let k = 0; k < 16; k++) {
+    for (let k = 0; k < RAM_BYTES; k++) {
       sim.set("ADDR", k);
       sim.set("DIN", ~mem[k] & 0xff);
       sim.tick();
@@ -269,9 +269,9 @@ describe("RAM16", () => {
   });
 });
 
-describe("PC4, TSTATE, HALT_FF", () => {
-  it("PC4: RESET beats LOAD beats INC; holds otherwise; wraps at 16", () => {
-    const sim = moduleSim("PC4");
+describe(`PC${RAM_ADDR_BITS}, TSTATE, HALT_FF`, () => {
+  it(`PC${RAM_ADDR_BITS}: RESET beats LOAD beats INC; holds otherwise; wraps at ${RAM_BYTES}`, () => {
+    const sim = moduleSim(`PC${RAM_ADDR_BITS}`);
     const step = (d: number, load: number, inc: number, reset: number) => {
       sim.set("D", d);
       sim.set("LOAD", load);
@@ -286,7 +286,7 @@ describe("PC4, TSTATE, HALT_FF", () => {
     expect(step(0, 0, 0, 0)).toBe(9);
     expect(step(3, 1, 1, 0)).toBe(3); // LOAD wins over INC (never asserted together)
     expect(step(5, 1, 1, 1)).toBe(0); // RESET wins
-    expect(step(15, 1, 0, 0)).toBe(15);
+    expect(step(RAM_BYTES - 1, 1, 0, 0)).toBe(RAM_BYTES - 1);
     expect(step(0, 0, 1, 0)).toBe(0); // wraps
   });
 
@@ -339,8 +339,8 @@ describe("CPU structure", () => {
     const cpu = cpuLibrary().get("CPU")!;
     const inst = new Map(cpu.instances.map((i) => [i.name, i.cell]));
     for (const [name, cell] of Object.entries({
-      pc: "PC4",
-      mar: "REG_W4",
+      pc: `PC${RAM_ADDR_BITS}`,
+      mar: `REG_W${RAM_ADDR_BITS}`,
       ir: "REG_W8",
       mdr: "REG_W8",
       alatch: "REG_W8",
@@ -351,7 +351,7 @@ describe("CPU structure", () => {
       tstate: "TSTATE",
       halt: "HALT_FF",
       regs: "REGFILE",
-      ram: "RAM16",
+      ram: `RAM${RAM_BYTES}`,
       alu: "ALU",
       ctrl: "CONTROL",
       busmux: "BUSMUX",
@@ -431,7 +431,7 @@ describe("CPU structure", () => {
     it("finds every storage bit", () => {
       const counts = { ram: 0, master: 0, slave: 0, other: 0 };
       for (const l of latches) counts[kind(l)]++;
-      expect(counts.ram).toBe(128);
+      expect(counts.ram).toBe(RAM_BYTES * 8);
       expect(counts.other).toBe(0);
       expect(counts.master).toBe(counts.slave);
     });
@@ -588,7 +588,7 @@ describe("CPU structure", () => {
 
 /** Hand-assembled programs (independent of the assembler), with their source for a cross-check. */
 const HAND: Record<string, { src: string; bytes: number[]; ticks: number; halts: boolean; outputs?: number[] }> = {
-  // NOP, LDI, SUB, JZ not taken twice then taken, JMP, ST to OUT, HLT.
+  // NOP (MOV R0, R0), LDI, SUB, JZ not taken twice then taken, JMP, ST to OUT, HLT.
   jz: {
     src: `NOP
           LDI R0, 3
@@ -596,9 +596,9 @@ const HAND: Record<string, { src: string; bytes: number[]; ticks: number; halts:
     loop: SUB R0, R1
           JZ done
           JMP loop
-    done: ST R0, [15]
+    done: ST R0, [OUT]
           HLT`,
-    bytes: [0x00, 0x10, 0x03, 0x14, 0x01, 0x61, 0xc0, 0x0a, 0xb0, 0x05, 0x30, 0x0f, 0xf0],
+    bytes: [0x40, 0x10, 0x03, 0x14, 0x01, 0x61, 0xc0, 0x0a, 0xb0, 0x05, 0x30, OUT_ADDR, 0xf0],
     ticks: 400,
     halts: true,
     outputs: [0],
@@ -616,12 +616,29 @@ const HAND: Record<string, { src: string; bytes: number[]; ticks: number; halts:
           STR R1, [R2]
           HLT
           .db 0x9C`,
-    bytes: [0x2c, 0x0e, 0x47, 0x55, 0xd0, 0x07, 0xf0, 0x18, 0x0e, 0xa2, 0x18, 0x0f, 0xe9, 0xf0, 0x9c],
+    bytes: [0x2c, 0x0e, 0x47, 0x55, 0xd0, 0x07, 0xf0, 0x18, 0x0e, 0xa2, 0x18, OUT_ADDR, 0xe9, 0xf0, 0x9c],
     ticks: 400,
     halts: true,
     outputs: [0x38],
   },
-  // AND, OR, XOR to zero, JZ taken, SUB with borrow, JZ and JC not taken, then PC wraps to 0.
+  // LDRI walks a table (ONE_OUT + Y_LOAD steps the pointer, REG_LOAD_S writes it back); with
+  // Rd = Rs the loaded byte wins over the step, so the last LDRI turns R1 into the OUT address.
+  ldri: {
+    src: `      LDI R1, tbl
+          LDRI R0, [R1+]
+          LDRI R2, [R1+]
+          ADD R0, R2
+          LDRI R1, [R1+]
+          STR R0, [R1]
+          HLT
+    tbl:  .db 5, 7, OUT`,
+    bytes: [0x14, 0x08, 0x01, 0x09, 0x52, 0x05, 0xe4, 0xf0, 0x05, 0x07, OUT_ADDR],
+    ticks: 200,
+    halts: true,
+    outputs: [12],
+  },
+  // AND, OR, XOR to zero, JZ taken, SUB with borrow, JZ and JC not taken, then on into the zeroed
+  // RAM, where every 0 byte is LDRI R0, [R0+].
   wrap: {
     src: `      LDI R0, 0x5A
           LDI R1, 0xF0
@@ -663,6 +680,8 @@ describe("CPU vs IsaModel, tick by tick (RefSim)", () => {
     copy: { outputs: [0x5a], halts: true },
     mem: { outputs: [0x42], halts: true },
     count: { outputs: Array.from({ length: 20 }, (_, i) => i + 1), halts: false },
+    // The perceptron's verdict per digit d: d·16 + 1 for the even digits, d·16 for the odd ones.
+    perceptron: { outputs: Array.from({ length: 10 }, (_, d) => d * 16 + (d % 2 ? 0 : 1)), halts: true, ticks: 3678 },
   };
   for (const [name, src] of Object.entries(PROGRAMS))
     it(`program: ${name}.asm`, () => {
@@ -670,7 +689,7 @@ describe("CPU vs IsaModel, tick by tick (RefSim)", () => {
       expect(asm.errors).toEqual([]);
       const { sim, model } = boot(net, asm.bytes);
       const exp = expected[name];
-      const ticks = lockstep(sim, model, exp?.halts === false ? 20 * exp.outputs.length + 6 : 2000, 10);
+      const ticks = lockstep(sim, model, exp?.halts === false ? 20 * exp.outputs.length + 6 : Math.max(2000, (exp?.ticks ?? 0) + 20), 10);
       const g = readProbes(sim);
       expect(g.OUT).toBe(model.state.OUT);
       if (exp) {

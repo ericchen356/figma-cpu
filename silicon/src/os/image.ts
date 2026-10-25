@@ -1,7 +1,7 @@
 // OS image loader (docs/OS-CPU-CONTRACT.md §2, §7): an OS program is assembly source plus a
 // manifest that names its entry point and RAM regions. loadImage() assembles the source with the
 // ISA assembler and checks the result against the memory map of the current machine:
-//   0–13 code and data, 14 INPUT (written by the plugin), 15 OUT (CPU ST latches the display).
+//   0–61 code and data, 62 INPUT (written by the plugin), 63 OUT (CPU ST latches the display).
 // It never throws on a user mistake: every problem comes back as an error with a code and a
 // precise message (line numbers where the assembler knows them). Pure: no Figma API.
 import { assemble, disassemble, PREDEFINED_SYMBOLS } from "../isa/asm";
@@ -9,7 +9,7 @@ import { OPCODES, OUT_ADDR, RAM_BYTES } from "../isa/spec";
 
 /** The memory-mapped input byte: the last plain RAM byte, just below OUT (plugin/src/devices.ts IN_ADDR). */
 export const INPUT_ADDR = OUT_ADDR - 1;
-/** Code must end below this address (§2: "Programs must end below 14"). */
+/** Code must end below this address (§2: programs must end below INPUT). */
 export const CODE_LIMIT = INPUT_ADDR;
 
 export const REGION_KINDS = ["code", "data", "input", "output"] as const;
@@ -217,7 +217,7 @@ export function loadImage(manifest: unknown, source: string): OsImage {
   const warnings: ImageIssue[] = [];
   const m = checkManifest(manifest, errors);
   if (m.ram !== null && m.ram !== RAM_BYTES)
-    errors.push({ code: "ram-size", msg: `manifest is for ${m.ram} bytes of RAM; this machine has ${RAM_BYTES} (CPU v2 is needed for more, see docs/CPU-V2.md)` });
+    errors.push({ code: "ram-size", msg: `manifest is for ${m.ram} bytes of RAM; this machine has ${RAM_BYTES} (docs/CPU-V2.md prices larger RAM)` });
   const regions = checkRegions(m.regions, errors, warnings);
 
   const use: ByteUse[] = new Array<ByteUse>(RAM_BYTES).fill(null);

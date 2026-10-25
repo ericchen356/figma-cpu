@@ -72,3 +72,36 @@ export function defineDec4(lib: Library): void {
     "4→16 one-hot decoder: Y[A] = EN, all other outputs 0",
   );
 }
+
+/** DEC<N> for any N ≥ 2 (the wide RAMs use it from N = 5): address pairs predecoded from the low
+ * bits up, the top group carrying EN (an odd top bit is a group of two: EN·¬a, EN·a), then the
+ * groups ANDed together from the bottom, the last AND per output being Y. Returns the name. */
+export function defineDecN(lib: Library, N: number): string {
+  const name = `DEC${N}`;
+  if (lib.has(name)) return name;
+  if (N < 2) throw new Error(`DEC${N}: needs at least 2 address bits`);
+  define(
+    lib,
+    name,
+    { in: { A: N, EN: 1 }, out: { Y: 1 << N } },
+    (b) => {
+      const [A, EN, Y] = [b.in("A"), b.in1("EN"), b.out("Y")];
+      const n = inverters(b, A);
+      const groups: string[][] = [];
+      for (let lo = 0, g = 0; lo < N; lo += 2, g++) {
+        const en = lo + 2 >= N ? { net: EN, name: `g${g}_en` } : undefined;
+        if (lo + 1 < N) groups.push(minterms2(b, `g${g}_`, [A[lo], n[lo]], [A[lo + 1], n[lo + 1]], en));
+        else groups.push([place(b, "AND", `g${g}_0`, [EN, n[lo]]), place(b, "AND", `g${g}_1`, [EN, A[lo]])]);
+      }
+      let acc = groups[0];
+      for (let g = 1; g < groups.length; g++) {
+        const [low, hi, last] = [acc, groups[g], g === groups.length - 1];
+        acc = Array.from({ length: low.length * hi.length }, (_, v) =>
+          place(b, "AND", last ? `y${v}` : `c${g}_${v}`, [hi[Math.floor(v / low.length)], low[v % low.length]], last ? Y[v] : undefined),
+        );
+      }
+    },
+    `${N}→${1 << N} one-hot decoder: Y[A] = EN, all other outputs 0`,
+  );
+  return name;
+}

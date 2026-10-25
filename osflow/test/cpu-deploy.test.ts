@@ -88,7 +88,7 @@ const SEVEN_SEG = [
 ];
 
 /** A fresh prototype session on the built file with `program` loaded by its button. */
-function session(program: "count" | "mul" | "fib") {
+function session(program: "count" | "mul" | "fib" | "perceptron") {
   const values = fake.variableValues() as Map<string, FigmaValue>;
   const ids = new Map<string, string>();
   for (const c of fake.collections)
@@ -324,7 +324,7 @@ describe("the CPU build", () => {
       );
     });
 
-  for (const program of ["mul", "fib"] as const)
+  for (const program of ["mul", "fib", "perceptron"] as const)
     it(`runs ${program} to HALT with one Run click, and pauses when the pill is clicked`, () => {
       const s = session(program);
       const per = gen.stats.instructionsPerEvent;
@@ -352,7 +352,8 @@ describe("the CPU build", () => {
       expect(worst).toBeLessThanOrEqual(EVENT_BUDGET);
       s.compare("after Run");
       s.comparePanel("after Run");
-      expect(s.peek(PROBES.OUT.name, 8)).toBe(program === "mul" ? 42 : 0xe9);
+      // mul 6 × 7, fib's last term, the perceptron's verdict on 9 (odd: 9·16 + 0)
+      expect(s.peek(PROBES.OUT.name, 8)).toBe({ mul: 42, fib: 0xe9, perceptron: 0x90 }[program]);
       expect(s.values.get(s.ids.get("cpu/ticksText")!)).toBe(
         `ticks ${s.model.ticks}`,
       );

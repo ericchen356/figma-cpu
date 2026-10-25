@@ -3,16 +3,18 @@
 // with stable names (names.ts): lane L2 attaches their reactions; nothing here runs at Present
 // time except the variable bindings.
 import { ramBit } from "../cpu/probes";
-import { assemble, disassemble, RAM_BYTES } from "../isa";
+import { assemble, disassemble, RAM_ADDR_BITS, RAM_BYTES } from "../isa";
 import { CTL_PAD, CUSTOM_DISK, diskName, LISTING, PROGRAM_NAME, bound, padCellName } from "./names";
 import { type Ctx, frame, glow, header, L, put, rect, solid, text } from "./style";
-import { bitLabels, lamp } from "./widgets";
+import { bitLabels, gated, lamp } from "./widgets";
 
 type Parent = BaseNode & ChildrenMixin;
 
 // ---------- program listing ----------
 
 const hex = (n: number, w: number) => n.toString(16).toUpperCase().padStart(w, "0");
+/** Hex digits of an address. */
+const ADDR_DIGITS = (RAM_BYTES - 1).toString(16).length;
 
 /** A program as an assembler listing: address, bytes, source (comments dropped), e.g.
  * "8  51     loop: ADD R0, R1". Invalid source comes back as the source itself. */
@@ -26,13 +28,13 @@ export function listingText(source: string): string {
     if (!code) return;
     const addr = r.lineAddr[i + 1];
     if (addr === undefined) {
-      if (/^[A-Za-z_]\w*:$/.test(code)) out.push(`         ${code}`);
+      if (/^[A-Za-z_]\w*:$/.test(code)) out.push(`${" ".repeat(ADDR_DIGITS + 9)}${code}`);
       return;
     }
     const op = code.replace(/^[A-Za-z_]\w*:\s*/, "");
     const size = op.startsWith(".") ? Math.max(1, op.slice(op.indexOf(" ") + 1).split(",").length) : disassemble(r.bytes, addr).size;
     const bytes = r.bytes.slice(addr, Math.min(RAM_BYTES, addr + size)).map((b) => hex(b, 2)).join(" ");
-    out.push(`${hex(addr, 1)}  ${bytes.padEnd(5)}  ${code}`);
+    out.push(`${hex(addr, ADDR_DIGITS)}  ${bytes.padEnd(5)}  ${code}`);
   });
   return out.join("\n");
 }
@@ -48,10 +50,12 @@ export function programBlurb(source: string): string {
   return s.length > 36 ? `${s.slice(0, 35)}…` : s;
 }
 
-/** Program name + listing text layers. setListing (dashboard.ts) rewrites them. */
-export function drawListing(ctx: Ctx, parent: Parent, x: number, y: number, w: number, name: string, source: string): { program: TextNode; listing: TextNode } {
+/** Program name + listing text layers. setListing (dashboard.ts) rewrites them. With `h`, the
+ * listing sits in a frame that clips it to that height (a long program shows its first lines). */
+export function drawListing(ctx: Ctx, parent: Parent, x: number, y: number, w: number, name: string, source: string, h?: number): { program: TextNode; listing: TextNode } {
   const program = text(ctx, parent, name, x, y, { size: 12, font: "semibold", color: L.text, name: PROGRAM_NAME });
-  const listing = text(ctx, parent, listingText(source), x, y + 22, { size: 10, font: "mono", color: L.text2, w, lineHeight: 15, name: LISTING });
+  const at = h ? frame(ctx, parent, "listing", x, y + 22, w, h, { fill: null, clip: true }) : parent;
+  const listing = text(ctx, at, listingText(source), h ? 0 : x, h ? 0 : y + 22, { size: 10, font: "mono", color: L.text2, w, lineHeight: 15, name: LISTING });
   return { program, listing };
 }
 
@@ -66,12 +70,14 @@ function diskColor(name: string): string {
 }
 
 /** The disks: one button per program, then the custom slot. Returns them by program name. */
-export function drawDisks(ctx: Ctx, parent: Parent, x: number, y: number, w: number, programs: Record<string, string>, rowH = 36, gap = 2): Map<string, FrameNode> {
+export function drawDisks(ctx: Ctx, parent: Parent, x: number, y: number, w: number, programs: Record<string, string>, rowH = 36, gap = 2, cols = 1): Map<string, FrameNode> {
   const disks = new Map<string, FrameNode>();
   const names = [...Object.keys(programs), CUSTOM_DISK];
+  const dw = cols > 1 ? Math.floor((w - (cols - 1) * 4) / cols) : w;
   names.forEach((name, i) => {
     const custom = name === CUSTOM_DISK && !(name in programs);
-    const f = frame(ctx, parent, diskName(name), x, y + i * (rowH + gap), w, rowH, custom ? { fill: L.chrome, radius: 6, stroke: L.line2 } : { fill: L.cell, radius: 6 });
+    const [dx, dy] = [(i % cols) * (dw + 4), Math.floor(i / cols) * (rowH + gap)];
+    const f = frame(ctx, parent, diskName(name), x + dx, y + dy, dw, rowH, custom ? { fill: L.chrome, radius: 6, stroke: L.line2 } : { fill: L.cell, radius: 6 });
     if (custom) f.dashPattern = [4, 3];
     const c = custom ? L.text3 : diskColor(name);
     // A floppy: body, label, shutter.
@@ -82,7 +88,8 @@ export function drawDisks(ctx: Ctx, parent: Parent, x: number, y: number, w: num
     }
     text(ctx, f, name, 40, 4, { size: 11.5, font: "semibold", color: custom ? L.text2 : L.text, name: "name" });
     const blurb = custom ? "the program the plugin loaded last" : programBlurb(programs[name]);
-    text(ctx, f, blurb, 40, 19, { size: 9, color: L.text3, name: "blurb" });
+    const room = Math.floor((dw - 44) / 5); // characters of 9 px text that fit
+    text(ctx, f, blurb.length > room ? `${blurb.slice(0, room - 1)}…` : blurb, 40, 19, { size: 9, color: L.text3, name: "blurb" });
     disks.set(name, f);
   });
   return disks;
@@ -159,23 +166,45 @@ export function drawSevenSeg(ctx: Ctx, parent: Parent, x: number, y: number, w: 
 
 // ---------- RAM matrix ----------
 
-/** RAM as 16 rows × 8 lamps (bit 7 on the left), each lamp a RAM latch output (ramBit). The
- * addressed row (the RAM's address decoder line ram/sel[k], i.e. MAR) is highlighted. */
-export function drawRamMatrix(ctx: Ctx, parent: Parent, x: number, y: number, w: number, lampSize = 13, pitch = 17): FrameNode {
-  const h = 18 + RAM_BYTES * pitch + 4;
+/** RAM as columns of bytes × 8 lamps (bit 7 on the left), each lamp a RAM latch output (ramBit).
+ * Highlights, every one a binding (nested layers make an AND: no gate, no action):
+ *   · the row MAR addresses (the RAM decoder's line ram/sel[k]), and inside it a read flash
+ *     (MEM_READ) and a write flash (MEM_WRITE) on the T-state that reads or writes that byte;
+ *   · ▸ at the byte PC points to: a tree of layers, one level per PC bit (pc[i] or pc_n[i]), so
+ *     exactly one leaf shows. */
+export function drawRamMatrix(ctx: Ctx, parent: Parent, x: number, y: number, w: number, lampSize = 10, pitch = 12, cols = 2): FrameNode {
+  const perCol = Math.ceil(RAM_BYTES / cols);
+  const colW = Math.floor(w / cols);
+  const h = 18 + perCol * pitch + 4;
   const f = frame(ctx, parent, "memory", x, y, w, h, { fill: null });
-  const lx = 22;
-  bitLabels(ctx, f, 8, lx, 2, pitch, lampSize);
+  const lx = 30; // ▸ at 0, the address from 9, the lamps from 30
+  const at = (a: number): [number, number] => [Math.floor(a / perCol) * colW, 16 + (a % perCol) * pitch];
+  for (let c = 0; c < cols; c++) bitLabels(ctx, f, 8, c * colW + lx, 2, pitch, lampSize);
+  const bw = colW - 4;
   for (let a = 0; a < RAM_BYTES; a++) {
-    const ry = 16 + a * pitch;
-    const band = frame(ctx, f, bound("row", `ram/sel[${a}]`), 0, ry - 2, w, pitch, { fill: null });
-    const lit = frame(ctx, band, "lit", 0, 0, w, pitch, { fill: L.mem, fillOpacity: 0.16, radius: 4 });
+    const [cx, ry] = at(a);
+    const band = frame(ctx, f, bound("row", `ram/sel[${a}]`), cx, ry - 1, bw, pitch, { fill: null });
+    const lit = frame(ctx, band, "lit", 0, 0, bw, pitch, { fill: L.mem, fillOpacity: 0.16, radius: 3 });
     lit.strokes = [{ type: "SOLID", color: solid(L.mem)[0].color, opacity: 0.6 }];
-    text(ctx, lit, "← MAR", w - 46, 2, { size: 8.5, font: "monoBold", color: L.mem, name: "label" });
+    for (const [net, color] of [["MEM_READ", L.load], ["MEM_WRITE", L.out]] as const) {
+      const flash = gated(ctx, lit, "tag", [net], 0, 0, bw, pitch);
+      rect(ctx, flash, "flash", 0, 0, bw, pitch, { fill: color, fillOpacity: 0.4, radius: 3 });
+    }
     lit.visible = false;
-    text(ctx, f, hex(a, 1), 4, ry, { size: 9, font: "mono", color: L.text3, name: `addr/${a}` });
-    for (let i = 0; i < 8; i++) lamp(ctx, f, ramBit(a, 7 - i), lx + i * pitch, ry, lampSize, L.mem, { radius: 3 });
+    text(ctx, f, hex(a, ADDR_DIGITS), cx + 9, ry, { size: 8.5, font: "mono", color: L.text3, name: `addr/${a}` });
+    for (let i = 0; i < 8; i++) lamp(ctx, f, ramBit(a, 7 - i), cx + lx + i * pitch, ry, lampSize, L.mem, { radius: 2 });
   }
+  // PC ▸: the tree's levels test pc[N-1] … pc[0]; the leaf for address a sits on a's row.
+  const tree = (into: Parent, depth: number, prefix: number): void => {
+    if (depth === RAM_ADDR_BITS) {
+      const [cx, ry] = at(prefix);
+      text(ctx, into, "▸", cx, ry - 2, { size: 10, font: "monoBold", color: L.alu, name: "pc" });
+      return;
+    }
+    const bit = RAM_ADDR_BITS - 1 - depth;
+    for (const v of [0, 1]) tree(gated(ctx, into, "tag", [v ? `pc[${bit}]` : `pc_n[${bit}]`], 0, 0, w, h), depth + 1, (prefix << 1) | v);
+  };
+  tree(f, 0, 0);
   return f;
 }
 

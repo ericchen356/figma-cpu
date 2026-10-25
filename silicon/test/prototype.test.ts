@@ -1264,14 +1264,14 @@ describe("applyPerChunk() on the real CPU", () => {
     const p = plan(net, compile(net, { inputs: [] }), { initial: powerOnWith(net, assemble(PROGRAMS.ptrout).bytes), name: "CPU", halt: PROBES.HALTED.name });
     const f = new FakeFigma();
     const res = await applyPerChunk(asApi(f), p, {});
-    expect(res.chunks).toBe(11);
+    expect(res.chunks).toBe(24); // the 64-byte CPU; docs/CPU-V2.md predicted 24
     for (const n of [...res.buttons.steps, ...res.frames.runs] as unknown as FNode[])
       for (const r of n.reactions) expect(worstCase(r.actions ?? [])).toBeLessThanOrEqual(res.actionsPerStep + 2);
     const vals = f.values();
     const bit = (name: string) => (vals.get(res.varIds.get(netId(net, name))!) ? 1 : 0);
     const out = () => [0, 1, 2, 3, 4, 5, 6, 7].reduce((s, i) => s | (bit(`OUT[${i}]`) << i), 0);
     const seen: number[] = [];
-    for (let click = 0; click < 200 * 11 && !(bit(PROBES.HALTED.name) && vals.get(res.phase!.id) === 0); click++) {
+    for (let click = 0; click < 200 * res.chunks && !(bit(PROBES.HALTED.name) && vals.get(res.phase!.id) === 0); click++) {
       runFigmaActions(onClick(shown(res.buttons.steps as unknown as FNode[], vals)), vals);
       if (seen[seen.length - 1] !== out()) seen.push(out());
     }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { assemble, disassemble, IsaModel, microcode, OPCODES, PROBE_KEYS, PROGRAMS, REGISTERS } from "../src/isa/index";
+import { assemble, disassemble, IN_ADDR, IsaModel, microcode, OPCODES, OUT_ADDR, PROBE_KEYS, PROGRAMS, RAM_BYTES, REGISTERS } from "../src/isa/index";
+
+const MASK = RAM_BYTES - 1;
 
 /** Assembles, failing the test on any error. */
 function asm(src: string): number[] {
@@ -16,7 +18,7 @@ function pick<K extends string>(m: IsaModel, keys: readonly K[]): Record<K, numb
 
 /** One sample line per opcode with its hand-encoded bytes ([7:4] op · [3:2] Rd · [1:0] Rs, operand). */
 const SAMPLES: Record<string, [string, number[]]> = {
-  NOP: ["NOP", [0x00]],
+  LDRI: ["LDRI R2, [R1+]", [0x09]],
   LDI: ["LDI R2, 0x5A", [0x18, 0x5a]],
   LD: ["LD R3, [7]", [0x2c, 0x07]],
   ST: ["ST R2, [15]", [0x32, 0x0f]],
@@ -49,11 +51,20 @@ describe("assembler: encoding", () => {
       for (let d = 0; d < 4; d++)
         for (let s = 0; s < 4; s++) {
           const args = op.operands.map(
-            (k) => ({ Rd: REGISTERS[d], Rs: REGISTERS[s], "[Rd]": `[${REGISTERS[d]}]`, "[Rs]": `[${REGISTERS[s]}]`, imm: "200", addr: "[6]" })[k],
+            (k) =>
+              ({
+                Rd: REGISTERS[d],
+                Rs: REGISTERS[s],
+                "[Rd]": `[${REGISTERS[d]}]`,
+                "[Rs]": `[${REGISTERS[s]}]`,
+                "[Rs+]": `[${REGISTERS[s]}+]`,
+                imm: "200",
+                addr: "[6]",
+              })[k],
           );
           const text = `${op.mnem} ${args.join(", ")}`.trim();
           const hasRd = op.operands.includes("Rd") || op.operands.includes("[Rd]");
-          const hasRs = op.operands.includes("Rs") || op.operands.includes("[Rs]");
+          const hasRs = op.operands.includes("Rs") || op.operands.includes("[Rs]") || op.operands.includes("[Rs+]");
           const first = (op.code << 4) | (hasRd ? d << 2 : 0) | (hasRs ? s : 0);
           const second = op.operands.includes("imm") ? [200] : op.operands.includes("addr") ? [6] : [];
           const bytes = asm(text);
@@ -67,7 +78,9 @@ describe("assembler: encoding", () => {
   it("disassembles jumps bare, memory operands in brackets", () => {
     expect(disassemble([0xb0, 9]).text).toBe("JMP 9");
     expect(disassemble([0x2c, 7]).text).toBe("LD R3, [7]");
-    expect(disassemble([0x32, 15]).text).toBe("ST R2, [OUT]");
+    expect(disassemble([0x32, 63]).text).toBe("ST R2, [OUT]");
+    expect(disassemble([0x32, 15]).text).toBe("ST R2, [15]");
+    expect(disassemble([0x09]).text).toBe("LDRI R2, [R1+]");
     expect(disassemble([0x18, 0x5a]).text).toBe("LDI R2, 90");
     expect(disassemble([0xff, 0, 0, 0xad], 3)).toEqual({ text: "LDR R3, [R1]", size: 1 });
     expect(disassemble([0xe6]).text).toBe("STR R2, [R1]");
@@ -82,17 +95,18 @@ describe("assembler: encoding", () => {
     expect(asm("ldr r0, [ r2 ]").slice(0, 1)).toEqual([0xa2]);
   });
 
-  it("zero-fills the 16-byte image", () => {
+  it("zero-fills the RAM image", () => {
     const r = assemble("HLT");
     expect(r.ok).toBe(true);
-    expect(r.bytes).toEqual([0xf0, ...new Array(15).fill(0)]);
+    expect(r.bytes).toEqual([0xf0, ...new Array(RAM_BYTES - 1).fill(0)]);
   });
 
   it("is case-insensitive for mnemonics and registers, accepts [addr] or addr", () => {
     expect(asm("ldi r2, 5\nAdd R2, r3\nhlt").slice(0, 4)).toEqual([0x18, 5, 0x5b, 0xf0]);
     expect(asm("JMP [3]")).toEqual(asm("JMP 3"));
-    expect(asm("ST R1, OUT")).toEqual(asm("ST R1, [15]"));
-    expect(asm("ST R1, [OUT]")).toEqual(asm("st r1, [15]"));
+    expect(asm("ST R1, OUT")).toEqual(asm(`ST R1, [${OUT_ADDR}]`));
+    expect(asm("ST R1, [OUT]")).toEqual(asm(`st r1, [${OUT_ADDR}]`));
+    expect(asm("LD R1, [IN]")).toEqual(asm(`LD R1, [${IN_ADDR}]`));
   });
 
   it("resolves labels (forward and back), records lineAddr and symbols", () => {
@@ -100,7 +114,7 @@ describe("assembler: encoding", () => {
     expect(r.errors).toEqual([]);
     expect(r.bytes.slice(0, 7)).toEqual([0x10, 1, 0x50, 0xb0, 2, 0xc0, 7]);
     expect(r.lineAddr).toEqual({ 1: 0, 3: 2, 4: 3, 5: 5 });
-    expect(r.symbols).toEqual({ OUT: 15, start: 0, loop: 2, end: 7 });
+    expect(r.symbols).toEqual({ OUT: OUT_ADDR, IN: IN_ADDR, start: 0, loop: 2, end: 7 });
   });
 
   it("numbers, characters, expressions, .db and .org", () => {
@@ -113,7 +127,8 @@ describe("assembler: encoding", () => {
       ].join("\n"),
     );
     expect(r.errors).toEqual([]);
-    expect(r.bytes).toEqual([10, 0x1f, 5, 65, 10, 59, 44, 0xff, 0x80, 255, 13, 16, 0xfe, 0, 7, 8]);
+    expect(r.bytes.slice(0, 16)).toEqual([10, 0x1f, 5, 65, 10, 59, 44, 0xff, 0x80, 255, 13, OUT_ADDR + 1, 0xfe, 0, 7, 8]);
+    expect(r.bytes.slice(16).every((b) => b === 0)).toBe(true);
     expect(r.symbols).toMatchObject({ x: 14, last: 14 });
     expect(r.lineAddr).toEqual({ 1: 0, 2: 7, 4: 14 });
   });
@@ -140,7 +155,7 @@ describe("assembler: errors", () => {
     ["MOV R0, 5", 1, /expected a register/],
     ["LDI R0, 256", 1, /256 does not fit in a byte/],
     ["LDI R0, -129", 1, /-129 does not fit in a byte/],
-    ["ST R0, [16]", 1, /address 16 is outside RAM \(0\.\.15\)/],
+    [`ST R0, [${RAM_BYTES}]`, 1, new RegExp(`address ${RAM_BYTES} is outside RAM \\(0\\.\\.${MASK}\\)`)],
     ["JMP -1", 1, /address -1 is outside RAM/],
     ["\n\nJMP nowhere", 3, /unknown symbol "nowhere"/],
     ["LDI R0, out", 1, /unknown symbol "out" \(did you mean "OUT"\?\)/],
@@ -156,11 +171,11 @@ describe("assembler: errors", () => {
     ["R2: NOP", 1, /"R2" is a register name/],
     ["OUT: NOP", 1, /"OUT" is predefined/],
     ["@@@", 1, /cannot parse "@@@"/],
-    [".org 16", 1, /.org 16 is outside RAM/],
+    [`.org ${RAM_BYTES}`, 1, new RegExp(`.org ${RAM_BYTES} is outside RAM`)],
     [".org later\nlater: NOP", 1, /unknown symbol "later"/],
     ["NOP\n.org 0\nHLT", 3, /address 0 is already used by line 1/],
-    [".org 15\nLDI R0, 1", 2, /program needs 17 bytes but RAM has 16/],
-    [new Array(9).fill("LDI R0, 1").join("\n"), 9, /program needs 18 bytes but RAM has 16/],
+    [`.org ${MASK}\nLDI R0, 1`, 2, new RegExp(`program needs ${RAM_BYTES + 1} bytes but RAM has ${RAM_BYTES}`)],
+    [new Array(RAM_BYTES / 2 + 1).fill("LDI R0, 1").join("\n"), RAM_BYTES / 2 + 1, new RegExp(`program needs ${RAM_BYTES + 2} bytes but RAM has ${RAM_BYTES}`)],
   ];
   for (const [src, line, msg] of bad)
     it(`${JSON.stringify(src).slice(0, 40)} → line ${line}: ${msg.source}`, () => {
@@ -179,21 +194,21 @@ describe("assembler: errors", () => {
     expect(r.bytes[4]).toBe(0xf0);
   });
 
-  it("exactly 16 bytes fits", () => {
-    expect(assemble(new Array(8).fill("LDI R0, 1").join("\n")).ok).toBe(true);
+  it("exactly RAM_BYTES bytes fits", () => {
+    expect(assemble(new Array(RAM_BYTES / 2).fill("LDI R0, 1").join("\n")).ok).toBe(true);
   });
 
   it("warns when code sits at the OUT address and the program stores to [OUT]", () => {
-    const r = assemble("LDI R0, 1\nST R0, [OUT]\n.org 15\nHLT");
+    const r = assemble(`LDI R0, 1\nST R0, [OUT]\n.org ${OUT_ADDR}\nHLT`);
     expect(r.ok).toBe(true);
     expect(r.warnings).toEqual([{ line: 4, msg: expect.stringMatching(/OUT port/) }]);
-    expect(assemble(".org 15\nHLT").warnings).toEqual([]); // nothing writes OUT
+    expect(assemble(`.org ${OUT_ADDR}\nHLT`).warnings).toEqual([]); // nothing writes OUT
   });
 });
 
 describe("model: T-state behaviour", () => {
   it("fetch / operand / write-back, tick by tick (LDI R1, 0x2A at address 1)", () => {
-    const m = boot("NOP\nLDI R1, 0x2A"); // 00 14 2A
+    const m = boot("NOP\nLDI R1, 0x2A"); // 40 14 2A (NOP is MOV R0, R0)
     m.step();
     expect(m.nextBus()).toBe(1); // T0 drives PC
     const rows = [];
@@ -202,8 +217,8 @@ describe("model: T-state behaviour", () => {
       rows.push(pick(m, ["T", "BUS", "MAR", "MDR", "IR", "PC", "R1"] as const));
     }
     expect(rows).toEqual([
-      { T: 1, BUS: 0x01, MAR: 1, MDR: 0x00, IR: 0x00, PC: 1, R1: 0x00 }, // T0 PC_OUT MAR_LOAD
-      { T: 2, BUS: 0x00, MAR: 1, MDR: 0x14, IR: 0x00, PC: 2, R1: 0x00 }, // T1 MEM_READ PC_INC
+      { T: 1, BUS: 0x01, MAR: 1, MDR: 0x40, IR: 0x40, PC: 1, R1: 0x00 }, // T0 PC_OUT MAR_LOAD
+      { T: 2, BUS: 0x00, MAR: 1, MDR: 0x14, IR: 0x40, PC: 2, R1: 0x00 }, // T1 MEM_READ PC_INC
       { T: 3, BUS: 0x14, MAR: 1, MDR: 0x14, IR: 0x14, PC: 2, R1: 0x00 }, // T2 MDR_OUT IR_LOAD
       { T: 4, BUS: 0x02, MAR: 2, MDR: 0x14, IR: 0x14, PC: 2, R1: 0x00 }, // T3 PC_OUT MAR_LOAD
       { T: 5, BUS: 0x00, MAR: 2, MDR: 0x2a, IR: 0x14, PC: 3, R1: 0x00 }, // T4 MEM_READ PC_INC
@@ -283,14 +298,14 @@ describe("model: instructions", () => {
     m.runUntilHalt();
     expect(m.state.RAM[10]).toBe(0x5a); // data: the byte after HLT
     expect(pick(m, ["R3", "OUT", "Z", "C", "N"] as const)).toEqual({ R3: 0x5a, OUT: 0x5a, Z: 1, C: 0, N: 1 });
-    expect(m.outputs).toEqual([0x5a]); // STR to 15 latches OUT like ST
+    expect(m.outputs).toEqual([0x5a]); // STR to OUT latches OUT like ST
   });
 
-  it("LDR and STR use the low 4 bits of the pointer as the address", () => {
-    const m = boot(["LDI R1, 0x1D", "LDR R0, [R1]", "LDI R2, 0x77", "LDI R1, 0xFE", "STR R2, [R1]", "HLT", ".org 13", ".db 0x42"].join("\n"));
+  it("LDR and STR use the low address bits of the pointer as the address", () => {
+    const m = boot(["LDI R1, 0x5D", "LDR R0, [R1]", "LDI R2, 0x77", "LDI R1, 0xFE", "STR R2, [R1]", "HLT", `.org ${0x5d & MASK}`, ".db 0x42"].join("\n"));
     m.runUntilHalt();
-    expect(m.state.R[0]).toBe(0x42); // 0x1D → address 13
-    expect(m.state.RAM[14]).toBe(0x77); // 0xFE → address 14
+    expect(m.state.R[0]).toBe(0x42); // 0x5D → address 29
+    expect(m.state.RAM[0xfe & MASK]).toBe(0x77); // 0xFE → address 62
   });
 
   it("ADD/SUB/... with Rd = Rs", () => {
@@ -326,12 +341,12 @@ describe("model: instructions", () => {
     expect(m.outputs).toEqual([]);
   });
 
-  it("ST to address 15 also latches OUT; other addresses do not", () => {
+  it("ST to OUT also latches OUT; other addresses do not", () => {
     const m = boot("LDI R3, 9\nST R3, [OUT]\nLDI R3, 4\nST R3, [14]\nLD R0, [OUT]\nHLT");
     m.step();
     m.step();
     expect(pick(m, ["OUT"] as const)).toEqual({ OUT: 9 });
-    expect(m.state.RAM[15]).toBe(9);
+    expect(m.state.RAM[OUT_ADDR]).toBe(9);
     m.runUntilHalt();
     expect(pick(m, ["OUT", "R0"] as const)).toEqual({ OUT: 9, R0: 9 });
     expect(m.state.RAM[14]).toBe(4);
@@ -358,8 +373,8 @@ describe("model: instructions", () => {
       }
     });
 
-  it("PC wraps from 15 to 0", () => {
-    const m = boot("JMP 15\n.org 15\nNOP");
+  it("PC wraps from the top address to 0", () => {
+    const m = boot(`JMP ${MASK}\n.org ${MASK}\nNOP`);
     m.step();
     m.step();
     expect(m.state.PC).toBe(0);
@@ -415,7 +430,7 @@ describe("model: microcode implements the ISA", () => {
     if (s.halted) return;
     const fetch = () => {
       const b = s.ram[s.pc];
-      s.pc = (s.pc + 1) & 15;
+      s.pc = (s.pc + 1) & MASK;
       return b;
     };
     const ir = fetch();
@@ -428,22 +443,26 @@ describe("model: microcode implements the ISA", () => {
       s.c = 0;
     };
     const jump = (taken: boolean) => {
-      const a = fetch() & 15;
+      const a = fetch() & MASK;
       if (taken) s.pc = a;
     };
     switch (OPCODES[ir >> 4].mnem) {
-      case "NOP":
+      case "LDRI": {
+        const v = s.ram[s.r[rs] & MASK];
+        s.r[rs] = (s.r[rs] + 1) & 0xff;
+        s.r[rd] = v; // with Rd = Rs the byte wins
         break;
+      }
       case "LDI":
         s.r[rd] = fetch();
         break;
       case "LD":
-        s.r[rd] = s.ram[fetch() & 15];
+        s.r[rd] = s.ram[fetch() & MASK];
         break;
       case "ST": {
-        const a = fetch() & 15;
+        const a = fetch() & MASK;
         s.ram[a] = s.r[rs];
-        if (a === 15) s.out = s.r[rs];
+        if (a === OUT_ADDR) s.out = s.r[rs];
         break;
       }
       case "MOV":
@@ -471,12 +490,12 @@ describe("model: microcode implements the ISA", () => {
         logic(s.r[rd] ^ s.r[rs]);
         break;
       case "LDR":
-        s.r[rd] = s.ram[s.r[rs] & 15];
+        s.r[rd] = s.ram[s.r[rs] & MASK];
         break;
       case "STR": {
-        const a = s.r[rd] & 15;
+        const a = s.r[rd] & MASK;
         s.ram[a] = s.r[rs];
-        if (a === 15) s.out = s.r[rs];
+        if (a === OUT_ADDR) s.out = s.r[rs];
         break;
       }
       case "JMP":
@@ -502,7 +521,7 @@ describe("model: microcode implements the ISA", () => {
     };
     for (let prog = 0; prog < 300; prog++) {
       // Mostly non-HLT opcodes so runs are long; any byte doubles as data / operand.
-      const ram = Array.from({ length: 16 }, () => ((rnd(50) ? rnd(15) : 15) << 4) | rnd(16));
+      const ram = Array.from({ length: RAM_BYTES }, () => ((rnd(50) ? rnd(15) : 15) << 4) | rnd(16));
       const m = new IsaModel(ram);
       const ref: Arch = { pc: 0, r: [0, 0, 0, 0], z: 0, c: 0, n: 0, halted: 0, out: 0, ram: [...ram] };
       for (let i = 0; i < 200 && !ref.halted; i++) {
@@ -526,8 +545,8 @@ describe("programs", () => {
     return { m: new IsaModel(r.bytes), symbols: r.symbols };
   }
 
-  it("all assemble cleanly into 16 bytes", () => {
-    expect(Object.keys(PROGRAMS).sort()).toEqual(["blink", "copy", "count", "dump", "echo", "fib", "keypad", "lfsr", "logic", "mem", "mod", "mul", "pow2", "ptrout", "sub", "triangle"]);
+  it("all assemble cleanly into the RAM", () => {
+    expect(Object.keys(PROGRAMS).sort()).toEqual(["blink", "copy", "count", "dump", "echo", "fib", "keypad", "lfsr", "logic", "mem", "mod", "mul", "perceptron", "pow2", "ptrout", "sub", "triangle"]);
     for (const name of Object.keys(PROGRAMS)) load(name);
   });
 

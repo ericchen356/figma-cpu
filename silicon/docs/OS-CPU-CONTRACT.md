@@ -29,15 +29,15 @@ Figma variables → canvas    lamps, 7-segment OUT, MEM matrix; planned: OS wind
 | Assembler, plugin clock, loader, bindings | toolchain (us) | `src/isa/asm.ts`, `plugin/src/*` |
 | OS code, UI layers | Nathan | his asm + manifest + bindings |
 
-## 2. Memory map of the CURRENT machine (16 bytes, 4-bit address)
+## 2. Memory map of the CURRENT machine (64 bytes, 6-bit address; it was 16 bytes until 2026-10-24)
 
 | Addr | Role | Who writes |
 |---|---|---|
-| 0–13 | code and data, shared (von Neumann) | OS program, CPU `ST` |
-| 14 | **INPUT** byte (planned) | the plugin, between ticks; the CPU only reads it. A `ST` to 14 is overwritten |
-| 15 | **OUT**: an `ST` here also latches the two 7-segment digits | CPU `ST`. Code must never reach address 15 |
+| 0–61 | code and data, shared (von Neumann) | OS program, CPU `ST` |
+| 62 | **INPUT** byte (`IN`) | the plugin, between ticks; the CPU only reads it. A `ST` to 62 is overwritten |
+| 63 | **OUT**: an `ST` here also latches the two 7-segment digits | CPU `ST`. Code must never reach address 63 |
 
-Entry point is address 0 (PC resets to 0). Programs must end below 14.
+Entry point is address 0 (PC resets to 0). Programs must end below 62. `IN` and `OUT` are predefined assembler symbols.
 
 ## 3. Same map, written to grow (open: depends on CPU v2, see `CPU-V2.md`)
 

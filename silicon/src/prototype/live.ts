@@ -13,9 +13,12 @@
 //     match no chunk (do nothing) during a load;
 //   · Run needs ¬busy ∧ ¬running and Stop needs ¬busy ∧ running. Running ⇔ the Run loop is showing,
 //     so neither navigates to the frame you are on.
-// A disk click writes, with that disk's literals, the nets whose power-on value differs between the
-// disks (the RAM bits and the few nets they settle), then hops through the shared rest. Reset reloads
-// the current disk (ctl/disk) the same way: one exclusive `if disk == e` block per disk.
+// A disk click only sets ctl/disk (and the program's name and listing) and starts the load. The
+// load hops write every net's power-on value, a chunk per hop: first the nets whose value differs
+// between the disks (the RAM bits and the nets they settle), then the shared rest. One number,
+// ctl/loadPhase, says which: j·D + e is varying chunk j of disk e (D disks), V·D + k shared chunk
+// k, -1 done; every case is an exclusive `if loadNow == p`. Reset reloads the current disk the same
+// way. So no event writes more than a chunk, however many bits the disks differ in.
 // Every reaction is flat (no CONDITIONAL inside a conditional's block) and its worst case, as
 // `npm run audit` counts it (eventWorst), is within the cap.
 import { eventWorst, type RestAction } from "../audit/audit";
@@ -46,7 +49,7 @@ import {
   setVariable,
   strData,
 } from "./figma-actions";
-import { chunkTick, DEFAULT_MAX_ACTIONS_PER_EVENT, lit } from "./plan";
+import { DEFAULT_MAX_ACTIONS_PER_EVENT, lit, splitActions } from "./plan";
 import type { Chunking, PlanAction, PrototypePlan } from "./types";
 
 /** A program disk: the power-on state the CPU has with this program in RAM. */
@@ -205,7 +208,6 @@ export async function wireLive(
     else shared.push({ set: v.net, to: lit(disks[0].values[i]) });
   });
   for (const f of plan.flags ?? []) shared.push({ set: f.net, to: lit(false) });
-  const diskWrites = (e: number): Action[] => varying.map((i) => setVariable(varId(vars[i].net), boolData(disks[e].values[i])));
 
   // 2. The dashboard's controls (layers of the component itself, not of instances nested in it).
   const control = (role: keyof typeof CONTROL_NAMES): Reacting[] => {
@@ -279,18 +281,8 @@ export async function wireLive(
   const runHop = (next: FrameNode) => rt.hop(next.id, frames.main.id);
   const runClick: Action[] = [conditional(exprData("AND", [idle, notRunning]), [setVariable(running.id, boolData(true)), navigate(frames.runA.id)])];
   const stopClick: Action[] = [conditional(exprData("AND", [idle, isRunning]), [setVariable(running.id, boolData(false)), navigate(frames.main.id)])];
-  // A load: lock, write the disk's own nets right away, then hop Load A ⇄ B through the shared nets.
+  // A load: lock, point ctl/disk at the disk and loadPhase at its first chunk, then hop Load A ⇄ B.
   const startLoad: Action[] = [setVariable(running.id, boolData(false)), setVariable(busy.id, floatData(LIVE_LOCK)), setVariable(loading.id, boolData(true))];
-  const toLoad: Action[] = [setVariable(loadPhase.id, floatData(0)), navigate(frames.loadA.id)];
-  const diskClick = (e: number): Action[] => [
-    ...startLoad,
-    setVariable(disk.id, floatData(e)),
-    setVariable(program.id, strData(disks[e].name)),
-    ...(listing ? [setVariable(listing.id, strData(disks[e].listing ?? ""))] : []),
-    ...diskWrites(e),
-    ...toLoad,
-  ];
-  const resetClick: Action[] = [...startLoad, ...(varying.length ? disks.map((_, e) => conditional(compareData("EQUALS", disk.id, e), diskWrites(e))) : []), ...toLoad];
   const goVar = rt.controls.get("ctl/go");
   const tail: Action[] = [
     ...rt.resetTail,
@@ -298,19 +290,66 @@ export async function wireLive(
     setVariable(busy.id, floatData(0)),
     setVariable(loading.id, boolData(false)),
   ];
-  // Load hop: snapshot, one chunk per hop (+ 1 action per chunk for loadPhase), the tail with the last one, then go on.
-  const ch = chunkTick(shared, { maxActionsPerEvent: cap, tickExtra: tail.length });
-  const loadChunking: Chunking = ch.chunks.length ? ch : { ...ch, chunks: [[]], perEvent: [0] };
-  const K = loadChunking.chunks.length;
+  // Load hops: one case per phase (V·D disk chunks, S shared chunks). Every hop evaluates all the
+  // case conditions, so the chunk sizes are what the cap leaves after them (found by iterating).
+  const D = disks.length;
+  let V = varying.length ? 1 : 0;
+  let S = 1;
+  let vGroups: number[][] = [];
+  let sChunks: PlanAction[][] = [[]];
+  for (let round = 0; ; round++) {
+    // Executed by every hop besides its chunk: the snapshot, the V·D + S case conditions, loadPhase, the navigation (2).
+    const fixed = 1 + V * D + S + 1 + 2;
+    const vSize = cap - fixed;
+    const sBudget = cap - fixed - tail.length;
+    if (vSize < 1 || sBudget < 1) throw new Error(`wireLive: maxActionsPerEvent ${cap} is too small to load ${D} disks`);
+    vGroups = [];
+    for (let i = 0; i < varying.length; i += vSize) vGroups.push(varying.slice(i, i + vSize));
+    const split = splitActions(shared, sBudget);
+    sChunks = split.length ? split : [[]];
+    if (vGroups.length === V && sChunks.length === S) break;
+    if (round > 32) throw new Error("wireLive: the load chunks do not settle");
+    [V, S] = [vGroups.length, sChunks.length];
+  }
+  const K = V + S;
+  const DONE = -1;
+  const shared0 = V * D;
+  const toLoad: Action[] = [navigate(frames.loadA.id)];
+  const diskClick = (e: number): Action[] => [
+    ...startLoad,
+    setVariable(disk.id, floatData(e)),
+    setVariable(loadPhase.id, floatData(V ? e : shared0)),
+    setVariable(program.id, strData(disks[e].name)),
+    ...(listing ? [setVariable(listing.id, strData(disks[e].listing ?? ""))] : []),
+    ...toLoad,
+  ];
+  const resetClick: Action[] = [
+    ...startLoad,
+    setVariable(loadPhase.id, V ? exprData("ADDITION", [aliasData(disk.id, "FLOAT"), floatData(0)], "FLOAT") : floatData(shared0)),
+    ...toLoad,
+  ];
   const loadHop = (other: FrameNode): Action[] => [
     setVariable(loadNow.id, exprData("ADDITION", [aliasData(loadPhase.id, "FLOAT"), floatData(0)], "FLOAT")),
-    ...loadChunking.chunks.map((c, k) =>
-      conditional(compareData("EQUALS", loadNow.id, k), [...figmaActions(c, compiled.varIds), setVariable(loadPhase.id, floatData((k + 1) % K)), ...(k === K - 1 ? tail : [])]),
+    ...vGroups.flatMap((g, j) =>
+      disks.map((d, e) =>
+        conditional(compareData("EQUALS", loadNow.id, j * D + e), [
+          ...g.map((i) => setVariable(varId(vars[i].net), boolData(d.values[i]))),
+          setVariable(loadPhase.id, floatData(j + 1 < V ? (j + 1) * D + e : shared0)),
+        ]),
+      ),
     ),
-    conditional(compareData("EQUALS", loadPhase.id, 0), [navigate(frames.main.id)], [navigate(other.id)]),
+    ...sChunks.map((c, k) =>
+      conditional(compareData("EQUALS", loadNow.id, shared0 + k), [...figmaActions(c, compiled.varIds), setVariable(loadPhase.id, floatData(k + 1 < S ? shared0 + k + 1 : DONE)), ...(k === S - 1 ? tail : [])]),
+    ),
+    conditional(compareData("EQUALS", loadPhase.id, DONE), [navigate(frames.main.id)], [navigate(other.id)]),
   ];
-  // Executed by hop k: snapshot + K conditions + chunk k + loadPhase (+ tail) + the navigation (2).
-  loadChunking.perEvent = loadChunking.chunks.map((c, k) => 1 + K + c.length + 1 + (k === K - 1 ? tail.length : 0) + 2);
+  const fixedPerHop = 1 + V * D + S + 1 + 2;
+  const loadChunking: Chunking = {
+    maxActionsPerEvent: cap,
+    tickExtra: tail.length,
+    chunks: [...vGroups.map(() => [] as PlanAction[]), ...sChunks],
+    perEvent: [...vGroups.map((g) => fixedPerHop + g.length), ...sChunks.map((c, k) => fixedPerHop + c.length + (k === S - 1 ? tail.length : 0))],
+  };
 
   // 6. Reactions: checked flat and within the cap (as the audit counts), then set.
   const trigger = (t: LiveTrigger): Trigger => (t === "ON_CLICK" ? onClick() : t === "MOUSE_DOWN" ? mouseDown() : t === "MOUSE_UP" ? mouseUp() : mouseEnter());
@@ -378,7 +417,7 @@ export async function wireLive(
     loadHop: worst(loadHop(frames.loadB)),
   };
   log(
-    `Live wired: ${disks.length} disks, ${compiled.chunks} events per tick (≤ ${perEvent.step} actions), a load = 1 click (${varying.length} nets) + ${K} hops (≤ ${perEvent.loadHop} actions), ${padCells.length} pad cells, ${stored} actions stored`,
+    `Live wired: ${disks.length} disks, ${compiled.chunks} events per tick (≤ ${perEvent.step} actions), a load = 1 click + ${K} hops (${varying.length} disk nets in ${V}, ≤ ${perEvent.loadHop} actions), ${padCells.length} pad cells, ${stored} actions stored`,
   );
   return {
     frames,

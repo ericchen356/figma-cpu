@@ -21,15 +21,15 @@
 //   SP<w>     stack pointer (CALL/RET): up/down counter whose all-zero state is its reset value
 //   REGFILE8  8 registers as two banks of 4 (bank bit is memory-mapped)
 //   CPU       the top level of src/cpu/cpu.ts plus the optional v2 hardware
-import { buildCells, defineAdder, defineInc, defineMux2W, defineMux4W, defineReg, place } from "../src/cells";
+import { buildCells, defineAdder, defineDecN as defineDecCell, defineMux4W, defineReg, place } from "../src/cells";
 import { compile, powerOn } from "../src/compile";
-import { defineAlu, defineHaltFf, defineRamRow, defineRegfile, defineTstate } from "../src/cpu/datapath";
+import { defineAlu, defineHaltFf, definePc, defineRam, defineRamRow, defineRegfile, defineTstate } from "../src/cpu/datapath";
 import { dependencyOrder } from "../src/figma/draw";
 import { type CellGeom, layoutModule } from "../src/figma/layout";
 import { textWidth } from "../src/figma/style";
 import { gateGeom } from "../src/figma/symbols";
 import { define, type ModuleBuilder } from "../src/hdl/builder";
-import { FETCH, OPCODES, SIGNALS } from "../src/isa/spec";
+import { FETCH, OPCODES, RAM_ADDR_BITS, SIGNALS } from "../src/isa/spec";
 import { flatten } from "../src/netlist/flatten";
 import { CONST0, CONST1, type FlatNetlist, GATE_ARITY, type GateType, gateTypeOf, isGateCell, type Library } from "../src/netlist/types";
 import { chunkTick, DEFAULT_MAX_ACTIONS_PER_EVENT, needsChunks, plan, worstActions } from "../src/prototype/plan";
@@ -53,7 +53,8 @@ export interface CpuConfig {
   isa?: "v1" | "v2";
 }
 
-export const BASE: CpuConfig = { addrBits: 4, registers: 4, indirectLoadStore: false, callRet: false, inputPort: false };
+/** The CPU as built (src/cpu): v1 ISA, RAM_ADDR_BITS address bits, no extra features. */
+export const BASE: CpuConfig = { addrBits: RAM_ADDR_BITS, registers: 4, indirectLoadStore: false, callRet: false, inputPort: false };
 /** Every v2 feature on (4 registers). */
 export const V2_ALL: Omit<CpuConfig, "addrBits"> = { registers: 4, indirectLoadStore: true, callRet: true, inputPort: true };
 
@@ -502,116 +503,18 @@ const ensure = (lib: Library, name: string, def: () => void) => {
   if (!lib.has(name)) def();
 };
 
-/** DEC<N> — one-hot decoder with enable for any N ≥ 2. N = 2, 3, 4 use the library's DEC2/3/4. */
+/** DEC<N>, RAM<2^N> and PC<N>: the CPU's own builders (src/cells, src/cpu/datapath.ts), which
+ * take the address width; N = 2, 3, 4 decoders are the library's DEC2/3/4. */
 export function defineDecN(lib: Library, N: number): string {
-  const name = `DEC${N}`;
-  if (lib.has(name)) return name;
-  define(
-    lib,
-    name,
-    { in: { A: N, EN: 1 }, out: { Y: 1 << N } },
-    (b) => {
-      const [A, EN, Y] = [b.in("A"), b.in1("EN"), b.out("Y")];
-      const n = A.map((a, i) => place(b, "NOT", `n${i}`, [a]));
-      // Groups of address bits from the LSB: pairs, plus a single top bit when N is odd.
-      const groups: string[][] = [];
-      for (let lo = 0, g = 0; lo < N; lo += 2, g++) {
-        const top = lo + 2 >= N;
-        if (lo + 1 < N) {
-          const [a0, n0, a1, n1] = [A[lo], n[lo], A[lo + 1], n[lo + 1]];
-          const h = top ? [place(b, "AND", `g${g}_en0`, [EN, n1]), place(b, "AND", `g${g}_en1`, [EN, a1])] : [n1, a1];
-          groups.push([0, 1, 2, 3].map((v) => place(b, "AND", `g${g}_${v}`, [h[v >> 1], v & 1 ? a0 : n0])));
-        } else groups.push([place(b, "AND", `g${g}_0`, [EN, n[lo]]), place(b, "AND", `g${g}_1`, [EN, A[lo]])]);
-      }
-      // Balanced AND tree over the groups; lower groups are the lower value bits.
-      let level = groups;
-      let depth = 0;
-      while (level.length > 1) {
-        depth++;
-        const next: string[][] = [];
-        for (let i = 0; i < level.length; i += 2) {
-          if (i + 1 === level.length) {
-            next.push(level[i]);
-            continue;
-          }
-          const [x, y] = [level[i], level[i + 1]];
-          const last = level.length === 2;
-          next.push(
-            Array.from({ length: x.length * y.length }, (_, v) =>
-              place(b, "AND", last ? `y${v}` : `c${depth}_${i / 2}_${v}`, [x[v % x.length], y[Math.floor(v / x.length)]], last ? Y[v] : undefined),
-            ),
-          );
-        }
-        level = next;
-      }
-    },
-    `${N}→${1 << N} one-hot decoder: address pairs predecoded, EN folded into the top group, groups combined by an AND tree`,
-  );
-  return name;
+  return N <= 4 ? `DEC${N}` : defineDecCell(lib, N);
 }
-
-/** RAM<2^N> — RAM16 generalized: 2^N RAM_ROW, write strobe ¬CLK·WE, DEC<N>, per-bit OR plane. */
 export function defineRamN(lib: Library, N: number): string {
-  const rows = 1 << N;
-  const name = `RAM${rows}`;
-  if (lib.has(name)) return name;
-  const dec = N <= 4 ? `DEC${N}` : defineDecN(lib, N);
-  define(
-    lib,
-    name,
-    { in: { ADDR: N, DIN: 8, WE: 1, CLK: 1 }, out: { DOUT: 8 } },
-    (b) => {
-      const [DIN, DOUT] = [b.in("DIN"), b.out("DOUT")];
-      const nclk = place(b, "NOT", "nclk", [b.in1("CLK")]);
-      const we = place(b, "AND", "we_low", [nclk, b.in1("WE")]);
-      const sel = b.wire("sel", rows);
-      b.use(dec, { A: b.in("ADDR"), EN: CONST1, Y: sel }, "dec");
-      const rd: string[][] = [];
-      for (let k = 0; k < rows; k++)
-        rd.push(b.use("RAM_ROW", { D: DIN, WE: we, SEL: sel[k], Q: b.wire(`mem${k}`, 8), RD: b.wire(`rd${k}`, 8) }, `row${k}`).RD);
-      for (let i = 0; i < 8; i++) {
-        let level = rd.map((r) => r[i]);
-        let depth = 1;
-        while (level.length > 1) {
-          const next: string[] = [];
-          for (let j = 0; j < level.length; j += 2)
-            next.push(place(b, "OR", `out${i}_${depth}_${j / 2}`, [level[j], level[j + 1]], level.length === 2 ? DOUT[i] : undefined));
-          level = next;
-          depth++;
-        }
-      }
-    },
-    `${rows} × 8 RAM of D latches: row ADDR is written with DIN while CLK = 0 and WE = 1; DOUT = row ADDR`,
-  );
-  return name;
+  const name = `RAM${1 << N}`;
+  return lib.has(name) ? name : defineRam(lib, N);
 }
-
-/** PC<N> — PC4 generalized: D_next = RESET ? 0 : LOAD ? D : PC + 1, loaded on LOAD + INC + RESET. */
 export function definePcN(lib: Library, N: number): string {
   const name = `PC${N}`;
-  if (lib.has(name)) return name;
-  ensure(lib, `INC_W${N}`, () => defineInc(lib, N));
-  ensure(lib, `MUX2_W${N}`, () => defineMux2W(lib, N));
-  ensure(lib, `REG_W${N}`, () => defineReg(lib, N));
-  define(
-    lib,
-    name,
-    { in: { D: N, LOAD: 1, INC: 1, RESET: 1, CLK: 1 }, out: { Q: N } },
-    (b) => {
-      const [D, Q, LOAD, RESET] = [b.in("D"), b.out("Q"), b.in1("LOAD"), b.in1("RESET")];
-      const next = b.wire("next", N);
-      b.use(`INC_W${N}`, { A: Q, Y: next }, "inc");
-      const pick = b.wire("pick", N);
-      b.use(`MUX2_W${N}`, { A: next, B: D, S: LOAD, Y: pick }, "src");
-      const nrst = place(b, "NOT", "nrst", [RESET]);
-      const d = pick.map((p, i) => place(b, "AND", `clr${i}`, [p, nrst]));
-      const step = place(b, "OR", "step", [LOAD, b.in1("INC")]);
-      const load = place(b, "OR", "load", [step, RESET]);
-      b.use(`REG_W${N}`, { D: d, LOAD: load, CLK: b.in1("CLK"), Q }, "reg");
-    },
-    `${N}-bit program counter: PC ← 0 on RESET, ← D on LOAD, ← PC + 1 on INC`,
-  );
-  return name;
+  return lib.has(name) ? name : definePc(lib, N);
 }
 
 /** SP<w> — stack pointer: SP ← SP + 1 on INC, SP − 1 on DEC, `init` on RESET. The register
@@ -644,12 +547,12 @@ export function defineSp(lib: Library, w: number, init: number): string {
 }
 
 /** BUSMUX — the bus AND-OR (same names as src/cpu/datapath.ts), PC of `pcBits`, optional SP. */
-export function defineBusmuxN(lib: Library, pcBits: number, spBits: number): string {
+export function defineBusmuxN(lib: Library, pcBits: number, spBits: number, one = false): string {
   define(
     lib,
     "BUSMUX",
     {
-      in: { PC: pcBits, PC_OUT: 1, MDR: 8, MDR_OUT: 1, REG: 8, REG_OUT: 1, Y: 8, Y_OUT: 1, ...(spBits ? { SP: spBits, SP_OUT: 1 } : {}) },
+      in: { PC: pcBits, PC_OUT: 1, MDR: 8, MDR_OUT: 1, REG: 8, REG_OUT: 1, Y: 8, Y_OUT: 1, ...(one ? { ONE_OUT: 1 } : {}), ...(spBits ? { SP: spBits, SP_OUT: 1 } : {}) },
       out: { BUS: 8 },
     },
     (b) => {
@@ -664,13 +567,16 @@ export function defineBusmuxN(lib: Library, pcBits: number, spBits: number): str
       for (let i = 0; i < 8; i++) {
         const terms = drivers.filter(([, src]) => i < src.length).map(([name, src, en]) => place(b, "AND", `${name}${i}`, [src[i], en]));
         const ab = place(b, "OR", `or_a${i}`, [terms[0], terms[1]]);
-        if (terms.length === 3) place(b, "OR", `bus${i}`, [ab, terms[2]], BUS[i]);
-        else if (terms.length === 4) place(b, "OR", `bus${i}`, [ab, place(b, "OR", `or_b${i}`, [terms[2], terms[3]])], BUS[i]);
+        const out = one && i === 0 ? undefined : BUS[i]; // bit 0 also takes ONE_OUT (gate "one")
+        let bus: string;
+        if (terms.length === 3) bus = place(b, "OR", `bus${i}`, [ab, terms[2]], out);
+        else if (terms.length === 4) bus = place(b, "OR", `bus${i}`, [ab, place(b, "OR", `or_b${i}`, [terms[2], terms[3]])], out);
         else {
           const cd = place(b, "OR", `or_b${i}`, [terms[2], terms[3]]);
           const abcd = place(b, "OR", `or_c${i}`, [ab, cd]);
-          place(b, "OR", `bus${i}`, [abcd, terms[4]], BUS[i]);
+          bus = place(b, "OR", `bus${i}`, [abcd, terms[4]], out);
         }
+        if (one && i === 0) place(b, "OR", "one", [bus, b.in1("ONE_OUT")], BUS[0]);
       }
     },
     "The bus: an AND-OR of the drivers (PC low bits, MDR, REG, Y and SP when present)",
@@ -710,7 +616,9 @@ function defineTop(lib: Library, cfg: CpuConfig, isa: Isa): void {
   const v2 = isa.name === "v2";
   const sp = spInfo(cfg);
   const io = ioMap(cfg);
-  const base = N === 4 && !cfg.inputPort && cfg.registers === 4;
+  // The CPU as built: its exact OUT decoder. v1 also has LDRI's datapath (ONE_OUT, REG_LOAD_S).
+  const base = N === RAM_ADDR_BITS && !cfg.inputPort && cfg.registers === 4 && !v2;
+  const ldri = isa.signals.includes("REG_LOAD_S");
   define(
     lib,
     "CPU",
@@ -779,16 +687,22 @@ function defineTop(lib: Library, cfg: CpuConfig, isa: Isa): void {
       const rs = ir.slice(0, 2);
       const rsel = b.wire("rsel", 2);
       for (let i = 0; i < 2; i++) b.use("MUX2", { A: rd[i], B: rs[i], S: sig.REG_OUT_S, Y: rsel[i] }, `rsel${i}`);
+      let [wsel, regWe] = [rd, sig.REG_LOAD_D];
+      if (ldri) {
+        wsel = b.wire("wsel", 2);
+        for (let i = 0; i < 2; i++) b.use("MUX2", { A: rd[i], B: rs[i], S: sig.REG_LOAD_S, Y: wsel[i] }, `wsel${i}`);
+        regWe = place(b, "OR", "reg_we", [sig.REG_LOAD_D, sig.REG_LOAD_S]);
+      }
       const regQ = b.wire("reg_q", 8);
       const bank = cfg.registers === 8 ? b.wire1("bank") : "";
       if (cfg.registers === 8)
         b.use(
           "REGFILE8",
-          { D: bus, WSEL: [...rd, bank], WE: sig.REG_LOAD_D, RSEL: [...rsel, bank], CLK, Q: regQ, ...Object.fromEntries(r.map((x, k) => [`R${k}`, x])) },
+          { D: bus, WSEL: [...wsel, bank], WE: regWe, RSEL: [...rsel, bank], CLK, Q: regQ, ...Object.fromEntries(r.map((x, k) => [`R${k}`, x])) },
           "regs",
         );
       else
-        b.use("REGFILE", { D: bus, WSEL: rd, WE: sig.REG_LOAD_D, RSEL: rsel, CLK, Q: regQ, R0: r[0], R1: r[1], R2: r[2], R3: r[3] }, "regs");
+        b.use("REGFILE", { D: bus, WSEL: wsel, WE: regWe, RSEL: rsel, CLK, Q: regQ, R0: r[0], R1: r[1], R2: r[2], R3: r[3] }, "regs");
 
       // The bus.
       const regOut = place(b, "OR", "reg_out", [sig.REG_OUT_D, sig.REG_OUT_S]);
@@ -803,6 +717,7 @@ function defineTop(lib: Library, cfg: CpuConfig, isa: Isa): void {
           REG_OUT: regOut,
           Y: y,
           Y_OUT: sig.Y_OUT,
+          ...(ldri ? { ONE_OUT: sig.ONE_OUT } : {}),
           ...(cfg.callRet ? { SP: spQ, SP_OUT: sig.SP_OUT } : {}),
           BUS: bus,
         },
@@ -825,6 +740,11 @@ function defineTop(lib: Library, cfg: CpuConfig, isa: Isa): void {
       // Output port: a store to the OUT address also latches OUT.
       const outLoad = place(b, "AND", "out_load", [sig.MEM_WRITE, marDec.atOut]);
       b.use("REG_W8", { D: mdr, LOAD: outLoad, CLK, Q: OUT }, "outreg");
+      if (!v2) {
+        // v1's display inverters for the PC marker (src/cpu/cpu.ts).
+        const pcN = b.wire("pc_n", N);
+        pc.forEach((p, i) => place(b, "NOT", `pc_not${i}`, [p], pcN[i]));
+      }
       b.use("HEX7SEG", { A: OUT.slice(0, 4), SEG: b.out("SEG_LO") }, "seg_lo");
       b.use("HEX7SEG", { A: OUT.slice(4, 8), SEG: b.out("SEG_HI") }, "seg_hi");
     },
@@ -833,13 +753,20 @@ function defineTop(lib: Library, cfg: CpuConfig, isa: Isa): void {
 }
 
 /** Address comparators for the memory-mapped IO bytes at the top of memory. The base CPU keeps
- * its exact gates (mar_lo, mar_hi, at_out). Otherwise: hi = AND of MAR[2..N-1] (all ones at the
- * top 4 bytes), and each IO byte ANDs hi with its two low bits. */
+ * its exact gates (a balanced AND of every MAR bit: mar_and<d>_<i>, the root at_out, as in
+ * src/cpu/cpu.ts). Otherwise: hi = AND of MAR[2..N-1] (all ones at the top 4 bytes), and each IO
+ * byte ANDs hi with its two low bits. */
 function ioDecode(b: ModuleBuilder, mar: string[], io: ReturnType<typeof ioMap>, base: boolean): { atOut: string; atIn?: string; atBank?: string } {
   if (base) {
-    const marLo = place(b, "AND", "mar_lo", [mar[0], mar[1]]);
-    const marHi = place(b, "AND", "mar_hi", [mar[2], mar[3]]);
-    return { atOut: place(b, "AND", "at_out", [marLo, marHi]) };
+    let level = mar;
+    for (let depth = 0; level.length > 1; depth++) {
+      const next: string[] = [];
+      for (let j = 0; j + 1 < level.length; j += 2)
+        next.push(place(b, "AND", level.length <= 2 ? "at_out" : `mar_and${depth}_${j / 2}`, [level[j], level[j + 1]]));
+      if (level.length % 2) next.push(level[level.length - 1]);
+      level = next;
+    }
+    return { atOut: level[0] };
   }
   // hi: AND tree over mar[2..]
   let level = mar.slice(2);
@@ -886,7 +813,7 @@ export function buildLibrary(cfg: CpuConfig): Library {
   defineHaltFf(lib);
   const sp = spInfo(cfg);
   if (cfg.callRet) defineSp(lib, sp.width, sp.init);
-  defineBusmuxN(lib, Math.min(N, 8), cfg.callRet ? sp.width : 0);
+  defineBusmuxN(lib, Math.min(N, 8), cfg.callRet ? sp.width : 0, isa.signals.includes("ONE_OUT"));
   if (isa.name === "v2") ensure(lib, "MUX4_W1", () => defineMux4W(lib, 1));
   defineTop(lib, cfg, isa);
   return lib;

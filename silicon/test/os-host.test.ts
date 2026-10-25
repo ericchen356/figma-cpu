@@ -1,6 +1,6 @@
 // The OS card's main side (plugin/src/os-host.ts): Load OS → loadImage + the Load program path,
 // RAM → layer writes after each plugin-clock frame (diff only, by layer name), keymap events →
-// RAM[14] only when it reads 0. Everything runs the REAL gate-level CPU (FastSim over the
+// RAM[IN] only when it reads 0. Everything runs the REAL gate-level CPU (FastSim over the
 // compiled netlist) through PluginClock, first with a fake layer port, then end to end through
 // SiliconApp on the fake Figma API (Build hardware → Compile → Load OS → Build OS demo → events).
 import { describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import { type LayerLike, type LayerPort, OS_DEMO_FRAME, OsHost } from "../plugin
 import { assembleOrThrow, powerOnWith } from "../plugin/src/program";
 import { compile } from "../src/compile";
 import { cpuNetlist, PROBES, ramBit } from "../src/cpu";
-import { PROGRAMS } from "../src/isa";
+import { OUT_ADDR, PROGRAMS, RAM_BYTES } from "../src/isa";
 import { NET1 } from "../src/netlist/types";
 import { plan } from "../src/prototype";
 import { resetFonts } from "../src/figma/style";
@@ -180,12 +180,12 @@ function harness() {
 describe("OS host on the gate-level CPU (PluginClock + fake layer port)", () => {
   it("loader and bindings errors reach the UI verbatim and nothing is loaded", async () => {
     const h = harness();
-    const badManifest = { ...helloManifest, ram: 32, regions: [...helloManifest.regions.slice(0, 1).map((r) => ({ ...r, end: 15 })), ...helloManifest.regions.slice(1)] };
+    const badManifest = { ...helloManifest, ram: 2 * RAM_BYTES, regions: [...helloManifest.regions.slice(0, 1).map((r) => ({ ...r, end: OUT_ADDR })), ...helloManifest.regions.slice(1)] };
     const r = await h.host.load(JSON.stringify(badManifest), "loop: LD R9, [IN]\n", FILES.bindings);
     expect(r.ok).toBe(false);
     expect(r.loaded).toBe(false);
-    expect(r.errors).toContain("error [ram-size] manifest is for 32 bytes of RAM; this machine has 16 (CPU v2 is needed for more, see docs/CPU-V2.md)");
-    expect(r.errors).toContain('error [region-range] code region "code" ends at 15 (OUT); code and data must end below 14 (14 is INPUT, 15 is OUT)');
+    expect(r.errors).toContain(`error [ram-size] manifest is for ${2 * RAM_BYTES} bytes of RAM; this machine has ${RAM_BYTES} (docs/CPU-V2.md prices larger RAM)`);
+    expect(r.errors).toContain(`error [region-range] code region "code" ends at ${OUT_ADDR} (OUT); code and data must end below ${IN_ADDR} (${IN_ADDR} is INPUT, ${OUT_ADDR} is OUT)`);
     expect(r.errors.some((e) => /^error \[asm\] line 1: /.test(e))).toBe(true);
     // Invalid JSON and an invalid binding: their own precise messages.
     const j = await h.host.load("{ name: hello", FILES.source, JSON.stringify({ bindings: [{ ram: { addr: 15, bit: 9 }, node: "window", prop: "color" }] }));
@@ -204,7 +204,7 @@ describe("OS host on the gate-level CPU (PluginClock + fake layer port)", () => 
     const h = harness();
     const r = await h.host.load(FILES.manifest, FILES.source, FILES.bindings);
     expect(r).toMatchObject({ ok: true, loaded: true, name: "hello-os", errors: [], warnings: [] });
-    expect(r.regions.map((g) => `${g.name}:${g.kind}:${g.start}-${g.end}`)).toEqual(["code:code:0-11", "state:data:12-13", "input:input:14-14", "flag:output:15-15"]);
+    expect(r.regions.map((g) => `${g.name}:${g.kind}:${g.start}-${g.end}`)).toEqual(["code:code:0-11", `state:data:12-${IN_ADDR - 1}`, `input:input:${IN_ADDR}-${IN_ADDR}`, `flag:output:${OUT_ADDR}-${OUT_ADDR}`]);
     expect(r.bindings[1]).toEqual({ node: "window", prop: "x", ram: "RAM[12].0–6", map: "×24 + 40" });
     expect(r.keymap).toEqual({ click: { "taskbar-button": 128, "window-move": 1 }, key: { o: 128, ArrowRight: 1 } });
     expect(h.loads()).toBe(1);
@@ -259,18 +259,18 @@ describe("OS host on the gate-level CPU (PluginClock + fake layer port)", () => 
     expect(h.host.pending).toBeNull();
   });
 
-  it("a held key waits until RAM[14] reads 0; at most one is held", async () => {
+  it("a held key waits until RAM[IN] reads 0; at most one is held", async () => {
     const h = harness();
     await h.host.load(FILES.manifest, FILES.source, FILES.bindings);
     await h.step(0);
-    // A raw input byte (the existing "input" message path) is sitting unconsumed in RAM[14].
+    // A raw input byte (the existing "input" message path) is sitting unconsumed in RAM[IN].
     h.bus.input(0x01);
     await h.step(0);
     expect(h.ram(IN_ADDR)).toBe(0x01);
     expect(h.host.send({ type: "click", node: "taskbar-button" })).toBe("held");
     expect(h.host.send({ type: "key", key: "ArrowRight" })).toBe("dropped");
-    expect(h.logs.some(([, t]) => t.includes('dropped: click "taskbar-button" (80) is still waiting for RAM[14] = 0'))).toBe(true);
-    await h.step(0); // boundary with RAM[14] = 1: not delivered
+    expect(h.logs.some(([, t]) => t.includes(`dropped: click "taskbar-button" (80) is still waiting for RAM[${IN_ADDR}] = 0`))).toBe(true);
+    await h.step(0); // boundary with RAM[IN] = 1: not delivered
     expect(h.host.pending).toBe(0x80);
     expect(h.ram(IN_ADDR)).toBe(0x01);
     h.writes.length = 0;
@@ -282,7 +282,7 @@ describe("OS host on the gate-level CPU (PluginClock + fake layer port)", () => 
       ["window-x-label", "characters", "1"],
     ]);
     h.writes.length = 0;
-    await h.step(50); // RAM[14] read 0 at this boundary: delivered, and the window opens
+    await h.step(50); // RAM[IN] read 0 at this boundary: delivered, and the window opens
     expect(h.host.pending).toBeNull();
     expect(h.writes[0]).toEqual(["window", "visible", true]);
     expect(h.clock.status().probes.OUT & 0x80).toBe(0x80);
@@ -296,7 +296,7 @@ describe("OS host on the gate-level CPU (PluginClock + fake layer port)", () => 
     h.writes.length = 0;
     expect(h.host.send({ type: "click", node: "taskbar-button" })).toBe("held");
     await h.step(50);
-    expect(h.host.pending).toBeNull(); // it was delivered (RAM[14] read 0)…
+    expect(h.host.pending).toBeNull(); // it was delivered (RAM[IN] read 0)…
     expect(h.ram(IN_ADDR)).toBe(0);
     expect(h.writes).toEqual([]); // …and lost: the window did not open
     expect(h.clock.status().probes.OUT).toBe(0);
@@ -329,7 +329,7 @@ describe("OS card end to end through SiliconApp on the fake Figma API", () => {
     const lastReport = () => (msgs.filter((m) => m.type === "os").pop() as { report: OsReport } | undefined)?.report;
 
     // A broken OS: the report carries the loader's messages; the CPU keeps mul.
-    await app.handle({ type: "os-load", manifest: FILES.manifest, source: "loop: LD R0, [IN]\n ST R0, [nowhere]\n JMP loop\n.org 14\nIN:", bindings: FILES.bindings });
+    await app.handle({ type: "os-load", manifest: FILES.manifest, source: "loop: LD R0, [IN]\n ST R0, [nowhere]\n JMP loop", bindings: FILES.bindings });
     expect(lastReport()).toMatchObject({ ok: false, loaded: false });
     expect(lastReport()!.errors.some((e) => e.startsWith("error [asm] line 2:"))).toBe(true);
     expect(app.os.isActive).toBe(false);
