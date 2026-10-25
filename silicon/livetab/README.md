@@ -50,9 +50,9 @@ From a figma.com editor tab, where the page's `figma` object is the Plugin API, 
   click. The other ~2,070 go in 6 overlay hops, with the clock's reset in the last one.
 - **Clicks over the canvas.** Every button acts on MOUSE_UP and takes MOUSE_DOWN with the OS's own
   press actions, so the canvas cells underneath never start a gesture.
-- **The clock pad is hidden**, because each of its cells would hold the whole tick in one reaction.
-- Only the three magnified cells (`cell/FULL_ADDER`, `cell/DFFE`, `cell/DLATCH`) are drawn, not the
-  whole ~72k-layer CPU. The dashboard and the overlays sit on the live frame's page, below it.
+- **Layers.** Every layer of the presented frame costs time on every event, so the blocks are drawn
+  without RAM and without the wiring between them (~14.5k layers, against ~31k for the whole CPU).
+  Their cell components and the overlays sit on the live frame's page, below it.
 
 ## Files
 
@@ -61,4 +61,5 @@ From a figma.com editor tab, where the page's `figma` object is the Plugin API, 
 - `plugin/`: the dev plugin (`node livetab/plugin/build.mjs` from `silicon/`).
 - `test/livetab.test.ts`: the whole thing on the fake Figma API, replayed like the viewer. Step and Run
   match FastSim on every wire, ptrout halts with OUT = 0, mul loads from any state and runs to 0x2A,
-  every event stays within the cap, and Remove leaves the file as it was.
+  every gate in the windows lights from its own output wire, every event stays within the cap, and
+  Remove leaves the file as it was.
