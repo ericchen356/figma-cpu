@@ -31,6 +31,7 @@ export const L = {
   alu: "#0ACF83", // ALU, flags
   out: "#F24E1E", // output port, 7-segment
   ctrl: "#FF7262", // control unit
+  ptr: "#FF24BD", // a register used as an address (LDR, LDRI, STR)
   /** Register bits. */
   bit: "#0ACF83",
   segOff: "#3A2420",

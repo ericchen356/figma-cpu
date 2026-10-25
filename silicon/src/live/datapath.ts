@@ -2,12 +2,14 @@
 // one 8-bit bus, as in src/cpu/cpu.ts. Every lamp is a probe bit (src/cpu/probes.ts) or another
 // existing net; every transfer arrow has a lit copy bound to the control signal that makes the
 // transfer happen (PC_OUT lights "PC → bus", MAR_LOAD lights "bus → MAR", …). The bus itself is
-// drawn as its 8 wires, each lit while that bit is 1. No gate is added for any of it.
-import { BUS_DRIVERS, OPCODES, type Signal, SIGNALS } from "../isa/spec";
+// drawn as its 8 wires, each lit while that bit is 1. The pointer path (a register → MAR, with a
+// PTR badge on the register) is nested layers, an AND of MAR_LOAD, reg_out and the register
+// file's read select. No gate is added for any of it.
+import { BUS_DRIVERS, OPCODES, OUT_ADDR, RAM_ADDR_BITS, RAM_BYTES, type Signal, SIGNALS } from "../isa/spec";
 import { opLineNet, tLineNet } from "./grid";
 import { bound } from "./names";
 import { type Ctx, frame, L, type Pt, rect, text } from "./style";
-import { arrow, bitLabels, bitsMsbFirst, block, lamp, lampRow, tag } from "./widgets";
+import { arrow, bitLabels, bitsMsbFirst, block, gated, lamp, lampRow, tag } from "./widgets";
 
 type Parent = BaseNode & ChildrenMixin;
 
@@ -55,6 +57,10 @@ const R_MID = RIGHT_X + RIGHT_W / 2;
 /** Rows of the left column: PC, MAR, MDR, IR (y, h). */
 const ROW = { PC: [48, 60], MAR: [122, 60], MDR: [196, 60], IR: [270, 60], CTRL: [352, 112] } as const;
 const RROW = { REGS: [48, 122], A: [184, 48], ALU: [256, 76], Y: [358, 48] } as const;
+/** The pointer path: register file → (over the bus) → MAR, below the MAR_LOAD arrow. */
+const PTR_Y = 172;
+/** The register file's read select, one line per register (MUX4_W8's decoded S). */
+export const readSelect = (k: number) => `regs/rmux/sel_${"abcd"[k]}`;
 
 /** Every transfer arrow of the diagram, by the net that lights it. */
 export function transfers(): Transfer[] {
@@ -90,12 +96,16 @@ export function transfers(): Transfer[] {
     ]),
     s("MDR_OUT", right(214)),
     s("MDR_LOAD", left(238)),
-    // OUT ← MDR on a store to address 15 (out_load = MEM_WRITE · (MAR = 15), src/cpu/cpu.ts).
+    // OUT ← MDR on a store to OUT (out_load = MEM_WRITE · (MAR = 63), src/cpu/cpu.ts).
     { net: "out_load", pts: [[LEFT_X, 250], [ramR + 30, 250], [ramR + 30, 300], [ramR, 300]], color: L.out, label: "→OUT", labelAt: [-34, 4] },
     s("IR_LOAD", left(300)),
     s("REG_OUT_D", rLeft(80)),
     s("REG_OUT_S", rLeft(104)),
     s("REG_LOAD_D", rRight(140)),
+    // LDRI writes the stepped pointer back into Rs.
+    s("REG_LOAD_S", rRight(160)),
+    // LDRI's +1: the constant 1 on the bus, so Y ← A + 1.
+    s("ONE_OUT", rLeft(244), "1→bus"),
     s("A_LOAD", rRight(208)),
     // The ALU's B input is the bus; it matters when Y_LOAD captures the result.
     s("Y_LOAD", rRight(294), "bus→B"),
@@ -115,9 +125,11 @@ export function transfers(): Transfer[] {
 export function datapathNets(): string[] {
   const nets = new Set<string>(transfers().map((t) => t.net));
   const add = (name: string, width: number) => bitsMsbFirst(name, width).forEach((n) => nets.add(n));
-  for (const [n, w] of [["pc", 4], ["mar", 4], ["mdr", 8], ["ir", 8], ["a", 8], ["y", 8], ["alu_y", 8], ["ram_out", 8], ["OUT", 8], ["t", 3], ["bus", 8], ["r0", 8], ["r1", 8], ["r2", 8], ["r3", 8]] as const) add(n, w);
+  for (const [n, w] of [["pc", RAM_ADDR_BITS], ["mar", RAM_ADDR_BITS], ["mdr", 8], ["ir", 8], ["a", 8], ["y", 8], ["alu_y", 8], ["ram_out", 8], ["OUT", 8], ["t", 3], ["bus", 8], ["r0", 8], ["r1", 8], ["r2", 8], ["r3", 8]] as const) add(n, w);
   for (let k = 0; k < 4; k++) nets.add(`regs/load[${k}]`);
-  for (let k = 0; k < 16; k++) nets.add(`ram/sel[${k}]`);
+  for (let k = 0; k < 4; k++) nets.add(readSelect(k));
+  nets.add("reg_out");
+  for (let k = 0; k < RAM_BYTES; k++) nets.add(`ram/sel[${k}]`);
   for (const n of ["flag_z", "flag_c", "flag_n", "halted", "CLK", "PC_INC", "alu_sub", "alu/sel[0]", "alu/sel[1]", "alu/sel[2]", "alu/sel[3]", "alu/sel[4]"]) nets.add(n);
   for (const s of SIGNALS) nets.add(s);
   for (let t = 0; t < 8; t++) nets.add(tLineNet(t));
@@ -147,9 +159,9 @@ export function drawDatapath(ctx: Ctx, parent: Parent, x: number, y: number, w =
     lampRow(ctx, b, bitsMsbFirst(probe, width), 12, 34, LAMP, PITCH, L.bit);
     return b;
   };
-  const pc = reg("PC", "PC", "program counter · 4 bits", ROW.PC, "pc", 4, L.load);
+  const pc = reg("PC", "PC", `program counter · ${RAM_ADDR_BITS} bits`, ROW.PC, "pc", RAM_ADDR_BITS, L.load);
   tag(ctx, pc, "PC_INC", "+1", LEFT_W - 46, 30, L.alu, { w: 34, h: 18, size: 9 });
-  reg("MAR", "MAR", "memory address · 4 bits", ROW.MAR, "mar", 4, L.load);
+  reg("MAR", "MAR", `memory address · ${RAM_ADDR_BITS} bits`, ROW.MAR, "mar", RAM_ADDR_BITS, L.load);
   reg("MDR", "MDR", "memory data · 8 bits", ROW.MDR, "mdr", 8, L.mem);
   const ir = reg("IR", "IR", "instruction · op | Rd | Rs", ROW.IR, "ir", 8, L.ctrl);
   text(ctx, ir, "opcode", 12, 50, { size: 7, font: "mono", color: L.text3, name: "field/op" });
@@ -163,15 +175,14 @@ export function drawDatapath(ctx: Ctx, parent: Parent, x: number, y: number, w =
   lamp(ctx, st, "CLK", 106, 34, LAMP, L.drive);
   text(ctx, st, "HLT", 132, 36, { size: 8, font: "mono", color: L.text3, name: "label/HLT" });
   lamp(ctx, st, "halted", 156, 34, LAMP, L.out);
-  const ram = block(ctx, card, "RAM", "RAM", RAM_X, ROW.MAR[0], RAM_W, ROW.MDR[0] + ROW.MDR[1] - ROW.MAR[0], "16 × 8 · D latches", L.mem);
-  text(ctx, ram, "address (decoded MAR)", 12, 40, { size: 8, color: L.text3, name: "label/addr" });
-  for (let k = 0; k < 16; k++) lamp(ctx, ram, `ram/sel[${k}]`, 12 + k * 10.5, 54, 8, L.mem, { radius: 2 });
-  text(ctx, ram, "0", 12, 64, { size: 7, font: "mono", color: L.text3, name: "addr/0" });
-  text(ctx, ram, "F", 12 + 15 * 10.5 + 2, 64, { size: 7, font: "mono", color: L.text3, name: "addr/F" });
-  text(ctx, ram, "RAM[MAR]", 12, 80, { size: 8, color: L.text3, name: "label/data" });
-  lampRow(ctx, ram, bitsMsbFirst("ram_out", 8), 12, 94, LAMP, PITCH, L.mem);
-  bitLabels(ctx, ram, 8, 12, 111, PITCH, LAMP);
-  const out = block(ctx, card, "OUT", "OUT", RAM_X, ROW.IR[0], RAM_W, ROW.IR[1], "port 15 · shown on the 7-segment", L.out);
+  const ram = block(ctx, card, "RAM", "RAM", RAM_X, ROW.MAR[0], RAM_W, ROW.MDR[0] + ROW.MDR[1] - ROW.MAR[0], `${RAM_BYTES} × 8 · D latches`, L.mem);
+  text(ctx, ram, `address (decoded MAR), 16 a row from 0`, 12, 36, { size: 8, color: L.text3, name: "label/addr" });
+  for (let k = 0; k < RAM_BYTES; k++) lamp(ctx, ram, `ram/sel[${k}]`, 12 + (k % 16) * 10.5, 49 + Math.floor(k / 16) * 9, 7, L.mem, { radius: 2 });
+  const dataY = 49 + Math.ceil(RAM_BYTES / 16) * 9 + 4;
+  text(ctx, ram, "RAM[MAR]", 12, dataY, { size: 8, color: L.text3, name: "label/data" });
+  lampRow(ctx, ram, bitsMsbFirst("ram_out", 8), 12, dataY + 12, LAMP, PITCH, L.mem);
+  bitLabels(ctx, ram, 8, 12, dataY + 29, PITCH, LAMP);
+  const out = block(ctx, card, "OUT", "OUT", RAM_X, ROW.IR[0], RAM_W, ROW.IR[1], `port ${OUT_ADDR} · shown on the 7-segment`, L.out);
   lampRow(ctx, out, bitsMsbFirst("OUT", 8), 12, 34, LAMP, PITCH, L.out);
 
   // Static links: MAR addresses the RAM, IR's opcode feeds the control unit, A feeds the ALU.
@@ -217,22 +228,27 @@ export function drawDatapath(ctx: Ctx, parent: Parent, x: number, y: number, w =
   text(ctx, alu, "result", 12, 41, { size: 8, color: L.text3, name: "label/result" });
   const yb = block(ctx, card, "Y", "Y", RIGHT_X, RROW.Y[0], RIGHT_W, RROW.Y[1], "ALU result latch", L.alu);
   lampRow(ctx, yb, bitsMsbFirst("y", 8), 96, 17, LAMP, PITCH, L.bit);
+  // The constant 1 that ONE_OUT puts on the bus (LDRI's pointer step).
+  const one = rect(ctx, card, "const/1", RIGHT_X + 4, 237, 18, 14, { fill: L.cell, radius: 3, stroke: L.line2 });
+  void one;
+  text(ctx, card, "1", RIGHT_X + 4, 237, { size: 9, font: "monoBold", color: L.text2, w: 18, h: 14, align: "CENTER", valign: "CENTER", name: "label/const1" });
 
   // Far column: control signals, flags, legend.
-  const sig = block(ctx, card, "SIGNALS", "CONTROL SIGNALS", FAR_X, TOP, FAR_W, 210, "the PLA's outputs this T-state", L.ctrl);
-  SIGNALS.forEach((s, i) => tag(ctx, sig, s, s, 12 + (i % 2) * 138, 38 + Math.floor(i / 2) * 19, signalColor(s), { w: 132, h: 16, size: 8.5 }));
-  const fl = block(ctx, card, "FLAGS", "FLAGS", FAR_X, 270, FAR_W, 60, "Z C N ← ALU on FLAGS_LOAD; read by the jumps", L.alu);
+  const sig = block(ctx, card, "SIGNALS", "CONTROL SIGNALS", FAR_X, TOP, FAR_W, 180, "the PLA's outputs this T-state", L.ctrl);
+  SIGNALS.forEach((s, i) => tag(ctx, sig, s, s, 12 + (i % 3) * 92, 38 + Math.floor(i / 3) * 19, signalColor(s), { w: 88, h: 16, size: 7.5 }));
+  const fl = block(ctx, card, "FLAGS", "FLAGS", FAR_X, 240, FAR_W, 60, "Z C N ← ALU on FLAGS_LOAD; read by the jumps", L.alu);
   (["flag_z", "flag_c", "flag_n"] as const).forEach((n, i) => {
     text(ctx, fl, "ZCN"[i], 12 + i * 48, 36, { size: 9, font: "monoBold", color: L.text2, name: `label/${n}` });
     lamp(ctx, fl, n, 24 + i * 48, 34, LAMP, L.drive);
   });
-  const lg = block(ctx, card, "LEGEND", "ARROWS", FAR_X, 344, FAR_W, BOTTOM - 344, undefined, undefined);
+  const lg = block(ctx, card, "LEGEND", "ARROWS", FAR_X, 312, FAR_W, BOTTOM - 312, undefined, undefined);
   const legend: Array<[string, string]> = [
     [L.drive, "drives the bus (…_OUT)"],
     [L.load, "loads from the bus (…_LOAD)"],
     [L.mem, "memory read / write"],
     [L.alu, "ALU, flags, PC + 1"],
-    [L.out, "output port (store to 15)"],
+    [L.out, `output port (store to ${OUT_ADDR})`],
+    [L.ptr, "pointer: a register is the address (PTR)"],
   ];
   legend.forEach(([c, label], i) => {
     rect(ctx, lg, `swatch/${i}`, 12, 32 + i * 16, 18, 3, { fill: c, radius: 1.5 });
@@ -241,6 +257,23 @@ export function drawDatapath(ctx: Ctx, parent: Parent, x: number, y: number, w =
 
   // The transfers, last so they sit on top of the blocks' edges.
   for (const t of transfers()) arrow(ctx, card, t.net, t.pts, t.color, { label: t.label, ...(t.labelAt ? { labelAt: t.labelAt } : {}) });
+
+  // The pointer path, lit while a register is put on the bus AND MAR loads it (LDR / LDRI read
+  // through Rs, STR writes through Rd), with PTR on the register being read.
+  arrow(ctx, card, null, [
+    [RIGHT_X, PTR_Y],
+    [L_END, PTR_Y],
+  ], L.line2, { name: "link/pointer" });
+  const ptr = gated(ctx, card, "arrow", ["MAR_LOAD", "reg_out"], 0, 0, w, h);
+  arrow(ctx, ptr, "MAR_LOAD", [
+    [RIGHT_X, PTR_Y],
+    [L_END, PTR_Y],
+  ], L.ptr, { label: "pointer → MAR", labelAt: [-150, -4], weight: 2, name: "pointer" }).children.find((c) => c.name === "lit")!.visible = true;
+  for (let k = 0; k < 4; k++) {
+    const badge = gated(ctx, ptr, "tag", [readSelect(k)], RIGHT_X + 216, RROW.REGS[0] + 34 + k * 21 - 1, 28, 16);
+    rect(ctx, badge, "fill", 0, 0, 28, 16, { fill: L.ptr, radius: 8 });
+    text(ctx, badge, "PTR", 0, 0, { size: 7.5, font: "monoBold", color: "#FFFFFF", w: 28, h: 16, align: "CENTER", valign: "CENTER", name: "label" });
+  }
   return card;
 }
 

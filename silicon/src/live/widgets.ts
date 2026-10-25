@@ -27,6 +27,22 @@ export function lamp(ctx: Ctx, parent: Parent, net: string, x: number, y: number
   return f;
 }
 
+/** Containers nested one per net, `<kind>/<net>` › `lit` › `<kind>/<next>` › `lit` …, all at
+ * (x, y, w, h) in `parent`: whatever is drawn into the returned innermost `lit` shows only while
+ * every net is 1. An AND made of layers: no gate, no action. */
+export function gated(ctx: Ctx, parent: Parent, kind: NetKind, nets: string[], x: number, y: number, w: number, h: number): FrameNode {
+  let at: Parent = parent;
+  let lit: FrameNode | null = null;
+  nets.forEach((net, i) => {
+    const c = frame(ctx, at, bound(kind, net), i ? 0 : x, i ? 0 : y, w, h, { fill: null });
+    lit = frame(ctx, c, "lit", 0, 0, w, h, { fill: null });
+    lit.visible = false;
+    at = lit;
+  });
+  if (!lit) throw new Error("gated: needs at least one net");
+  return lit;
+}
+
 /** A row of lamps for the bits of a probe, MSB on the left (nets[0] is the MSB). */
 export function lampRow(ctx: Ctx, parent: Parent, nets: string[], x: number, y: number, size: number, pitch: number, color: string, o: LampOpts = {}): FrameNode[] {
   return nets.map((n, i) => lamp(ctx, parent, n, x + i * pitch, y, size, color, o));

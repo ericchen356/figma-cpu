@@ -9,7 +9,7 @@ import { NAME, SiliconApp } from "../plugin/src/app";
 import type { ToUi } from "../plugin/src/messages";
 import { cpuNetlist, PROBES, ramBit } from "../src/cpu";
 import { resetFonts } from "../src/figma/style";
-import { OPCODES, PROGRAMS, SIGNALS } from "../src/isa";
+import { OPCODES, OUT_ADDR, PROGRAMS, RAM_BYTES, SIGNALS } from "../src/isa";
 import {
   bindDashboard,
   buildDashboard,
@@ -23,6 +23,7 @@ import {
   PAD_CELL_NAME,
   parseBound,
   programBlurb,
+  readSelect,
   transfers,
 } from "../src/live";
 import type { PrototypePlan } from "../src/prototype";
@@ -108,7 +109,9 @@ describe("Live dashboard (lane L1)", () => {
     await app.build({ gateLabels: true });
     const r = await app.compile(PROGRAMS.mul);
     plan = r.plan;
-    varByNet = new Map(plan.variables.map((v) => [v.net, fig.variableNamed(NAME, v.name) as unknown as Variable]));
+    // The CPU's variables span the collections CPU, CPU · 2, … (4,000 a collection).
+    const byName = new Map([...fig.variableById.values()].filter((v) => v.collection.name.startsWith(NAME)).map((v) => [v.name, v]));
+    varByNet = new Map(plan.variables.map((v) => [v.net, byName.get(v.name) as unknown as Variable]));
     ctl = new Map([...fig.variableById.values()].filter((v) => v.collection.name.startsWith(NAME) && v.name.startsWith("ctl/")).map((v) => [v.name, v as unknown as Variable]));
   });
 
@@ -147,9 +150,9 @@ describe("Live dashboard (lane L1)", () => {
 
   it("listing and disk blurbs come from the programs", () => {
     const l = listingText(PROGRAMS.mul).split("\n");
-    expect(l[0]).toBe("0  10 00  LDI R0, 0");
-    expect(l.find((x) => x.includes("loop:"))).toBe("8  51     loop: ADD R0, R1");
-    expect(l.find((x) => x.includes("JC"))).toBe("A  D0 08  JC loop");
+    expect(l[0]).toBe("00  10 00  LDI R0, 0");
+    expect(l.find((x) => x.includes("loop:"))).toBe("08  51     loop: ADD R0, R1");
+    expect(l.find((x) => x.includes("JC"))).toBe("0A  D0 08  JC loop");
     expect(programBlurb(PROGRAMS.mul)).toBe("6 × 7 = 42 by repeated addition");
     expect(listingText("LDI R9, 300")).toBe("LDI R9, 300");
   });
@@ -173,10 +176,9 @@ describe("Live dashboard (lane L1)", () => {
       expect(subtree(comp).includes(fk(n))).toBe(true);
     }
     expect([...dash.nodes.disks.keys()]).toEqual([...Object.keys(PROGRAMS), "custom"]);
-    // The pad: ~30 instances of one component, named ctl/pad/<i>.
+    // The pad: 6 × 3 instances of one component, named ctl/pad/<i>.
     const cells = dash.nodes.padCells.map(fk);
-    expect(cells.length).toBeGreaterThanOrEqual(24);
-    expect(cells.length).toBeLessThanOrEqual(32);
+    expect(cells.length).toBe(18);
     expect(cells.map((c) => c.name)).toEqual(cells.map((_, i) => `ctl/pad/${i}`));
     const padCell = fk(dash.nodes.padCell);
     expect([padCell.name, padCell.parent]).toEqual([PAD_CELL_NAME, page]);
@@ -194,14 +196,14 @@ describe("Live dashboard (lane L1)", () => {
     expect(page.children.filter((n) => !before.has(n.id)).map((n) => n.name).sort()).toEqual([DASHBOARD_NAME, PAD_CELL_NAME].sort());
     const s = dash.stats;
     expect(s.layers).toBe(comp.findAll().length);
-    expect(s.containers.arrow).toBe(transfers().length);
-    expect(s.containers.row).toBe(16 + 16); // 16 opcode rows + 16 RAM rows
+    expect(s.containers.arrow).toBe(transfers().length + 2); // + the pointer path: MAR_LOAD › reg_out
+    expect(s.containers.row).toBe(16 + RAM_BYTES); // 16 opcode rows + a row per RAM byte
     expect(s.containers.col).toBe(8);
     expect(s.containers.seg).toBe(14);
     console.log(
       `[live] dashboard: ${s.layers} layers (magnifiers ${s.magnifiers.map((m) => `${m.cell} ${m.layers}`).join(", ")}), containers ${JSON.stringify(s.containers)}, ${s.padCells} pad cells, ${s.disks} disks, ${ms} ms in the fake`,
     );
-  });
+  }, 120_000); // ~20 s alone: it snapshots every layer of the page (the 64-byte CPU's drawing) twice
 
   it("bindDashboard: every lamp, arrow, highlight and magnifier gate is bound to an existing variable", () => {
     const r = bindDashboard(comp as unknown as ComponentNode, NET, varByNet, { ctl });
@@ -214,7 +216,7 @@ describe("Live dashboard (lane L1)", () => {
     for (const c of containers) {
       const l = c.children.find((x) => x.name === "lit")!;
       const v = fig.variableById.get(l.boundVariables.visible?.id) as FakeVariable | undefined;
-      expect(v?.collection.name, c.name).toBe(NAME);
+      expect(v?.collection.name, c.name).toMatch(new RegExp(`^${NAME}( · \\d+)?$`));
       expect(v!.id, c.name).toBe((varByNet.get(idOf(parseBound(c.name)!.net)) as unknown as FakeVariable).id);
     }
     expect(r.bound).toBe(containers.length + r.byKind.gate + r.byKind.wire + 1); // + ctl/running
@@ -240,7 +242,7 @@ describe("Live dashboard (lane L1)", () => {
     expect(gateVar(1, ["men"])).toBe(varId("regs/r0/b0/men"));
     expect(gateVar(1, ["slave", "merge"])).toBe(varId("r0[0]"));
     expect(gateVar(1, ["master", "take"])).toBe(varId("regs/r0/b0/master/take"));
-    expect(gateVar(2, ["merge"])).toBe(varId(ramBit(15, 1)));
+    expect(gateVar(2, ["merge"])).toBe(varId(ramBit(OUT_ADDR, 1)));
     // The FULL_ADDER instance's port labels show the CPU's nets (A = a[3]).
     const fa = fk(dash.nodes.magnifiers[0].instance);
     const props = Object.fromEntries(Object.entries(fa.componentProperties).map(([k, v]) => [k.split("#")[0], v.value]));
@@ -256,13 +258,13 @@ describe("Live dashboard (lane L1)", () => {
   });
 
   it("the lights follow the CPU, tick by tick (plugin clock writing the changed variables)", async () => {
-    // Power-on: T0 of the first instruction; IR = 0 (NOP line); PC → bus → MAR.
+    // Power-on: T0 of the first instruction; IR = 0 (LDRI's line); PC → bus → MAR.
     expect(probes().T ?? 0).toBe(0);
     await app.clock.step(0);
     expect(isLit("col/ctrl/T0")).toBe(true);
     expect(isLit("arrow/PC_OUT")).toBe(true);
     expect(isLit("arrow/MAR_LOAD")).toBe(true);
-    expect(isLit("row/ctrl/op_NOP")).toBe(true);
+    expect(isLit("row/ctrl/op_LDRI")).toBe(true);
     expect(isLit("tag/PC_OUT")).toBe(true);
     for (const s of ["arrow/MDR_OUT", "arrow/Y_LOAD", "arrow/MEM_READ", "col/ctrl/T1", "row/ctrl/op_ADD"]) expect(isLit(s), s).toBe(false);
     // The RAM matrix shows mul, the addressed row is RAM[MAR] = 0.
@@ -304,6 +306,47 @@ describe("Live dashboard (lane L1)", () => {
     const latch = fk(dash.nodes.magnifiers[2].instance).children.find((c) => c.name === "merge")!.children.find((c) => c.name === "lit")!;
     expect(lit(latch)).toBe(true);
     await app.loadProgram(PROGRAMS.mul); // back to power-on for the next tests
+  });
+
+  it("pointer visuals follow LDRI on the gates: pointer → MAR with PTR on Rs, the +1, the read flash, one PC ▸", async () => {
+    await app.handle({ type: "load", source: PROGRAMS.perceptron });
+    /** Shown on the canvas: the layer and every `lit` around it (nested containers are an AND). */
+    const shown = (n: FakeNode): boolean => {
+      for (let at: FakeNode | null = n; at && at !== comp; at = at.parent) if (at.name === "lit" && !lit(at)) return false;
+      return true;
+    };
+    const inside = (outer: string, inner: string) =>
+      comp.findAll((n) => n.name === outer).map((c) => c.children.find((x) => x.name === "lit")!).flatMap((l) => l.findAll((n) => n.name === inner));
+    const pointer = inside("arrow/MAR_LOAD", "arrow/reg_out")[0];
+    expect(pointer).toBeDefined();
+    const ptrOn = (k: number) => shown(pointer.findOne((n) => n.name === `tag/${readSelect(k)}`)!.children.find((c) => c.name === "lit")!);
+    /** The address the PC ▸ that shows stands for, read off its tree path (pc[i] = 1, pc_n[i] = 0). */
+    const markerAt = (): number[] =>
+      comp
+        .findAll((n) => n.name === "pc" && n.type === "TEXT")
+        .filter(shown)
+        .map((m) => m.pathNames.filter((p) => /^tag\/pc(_n)?\[\d\]$/.test(p)).reduce((a, p) => (a << 1) | (p.startsWith("tag/pc[") ? 1 : 0), 0));
+    const flash = (net: "MEM_READ" | "MEM_WRITE") =>
+      comp.findAll((n) => n.name === `tag/${net}` && n.parent?.parent?.name === `row/ram/sel[${probes().MAR}]`).some((t) => shown(t.children.find((c) => c.name === "lit")!));
+    // Fetch and decode of the first LDRI R3, [R1+]: PC ▸ walks with the PC, nothing points yet.
+    for (let i = 0; i < 40 && !(probes().IR >> 4 === 0 && probes().T === 3); i++) {
+      await app.clock.step(1);
+      expect(markerAt(), `tick ${i}`).toEqual([probes().PC]);
+    }
+    expect([probes().IR >> 4, probes().T]).toEqual([0, 3]); // LDRI's T3: REG_OUT_S MAR_LOAD A_LOAD
+    expect(probes().IR & 3).toBe(1); // Rs = R1
+    expect(shown(pointer.children.find((c) => c.name === "lit")!)).toBe(true);
+    expect([0, 1, 2, 3].map(ptrOn)).toEqual([false, true, false, false]);
+    await app.clock.step(1); // T4: MEM_READ ONE_OUT Y_LOAD: the 1 on the bus, and RAM[MAR] read
+    expect(shown(pointer.children.find((c) => c.name === "lit")!)).toBe(false);
+    expect(isLit("arrow/ONE_OUT")).toBe(true);
+    expect(probes().BUS).toBe(1);
+    expect(flash("MEM_READ")).toBe(true);
+    expect(flash("MEM_WRITE")).toBe(false);
+    await app.clock.step(1); // T5: Y_OUT REG_LOAD_S: R1 ← R1 + 1
+    expect(isLit("arrow/REG_LOAD_S")).toBe(true);
+    expect(isLit("tag/regs/load[1]")).toBe(true);
+    expect(markerAt()).toEqual([probes().PC]);
   });
 
   it("rebuild is idempotent: one dashboard, same spot, same layers, nothing else touched", async () => {
@@ -357,8 +400,9 @@ describe("Live dashboard (lane L1)", () => {
     // Sweeping the pad clocks the CPU: one tick = `eventsPerTick` pad entries.
     const vals = fig.variableValues();
     const ticks = fig.variableNamed(NAME, "ctl/ticks").id;
+    const t0 = vals.get(ticks) as number;
     for (let e = 0; e < st.eventsPerTick!; e++) runFigmaActions(cell0.reactions[0].actions!, vals);
-    expect(vals.get(ticks)).toBe(1);
+    expect(vals.get(ticks)).toBe(t0 + 1);
     // A Live · Main instance shows the same bound lights as the component.
     const inst = main.children.find((n) => n.type === "INSTANCE")!;
     const a = inst.findOne((n) => n.name === "arrow/PC_OUT")!.children.find((c) => c.name === "lit")!;

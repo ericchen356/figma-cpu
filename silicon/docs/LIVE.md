@@ -171,3 +171,27 @@ binds it, calls `wireLive` with this session's `apply()` result (frames go 200 p
 `ctl/program`, `ctl/listing`, `ctl/loading`. Progress bar + a stats line (`LiveStats`). Without a Compile in this
 plugin session (e.g. reopened), it builds and binds the dashboard and says that the controls need a Compile first.
 Rebuild after Compile or Load program (the disks hold literals). Tested in `test/live.test.ts`.
+
+## 5. 64 bytes and the pointer visuals (2026-10-24)
+
+The CPU grew to 64 bytes and gained LDRI (POINTERS.md). What changed on the dashboard, all of it bindings except the
+6 display inverters:
+
+- **Memory:** 2 columns × 32 bytes (`drawRamMatrix`). Inside each MAR row's highlight (`ram/sel[k]`), a read flash
+  (`tag/MEM_READ`) and a write flash (`tag/MEM_WRITE`): a layer inside a bound layer shows only while both nets are 1,
+  so the nesting is an AND with no gate (`widgets.gated`; `bindDashboard` now walks into bound containers).
+- **PC ▸:** a tree of layers, one level per PC bit, each child bound to `pc[i]` or `pc_n[i]`, so exactly one of the 64
+  leaves shows, on the byte PC points to. `pc_n` are 6 NOT gates in the CPU, display only (like the 7-segment decoders),
+  since a latch has no inverted output; they are the only gates the visuals add.
+- **Pointer → MAR:** in the datapath, an arrow from the register file to MAR lit by `MAR_LOAD` › `reg_out` (a register
+  is the address: LDR, LDRI, STR), with a PTR badge on the register being read (`regs/rmux/sel_a…d`, the read mux's
+  decoded select). LDRI's step shows as `1→bus` (`ONE_OUT`, from a constant 1 block) and `REG_LOAD_S` (bus → Rs).
+- **Layout:** disks in 2 columns, the listing clipped to the room left (a long program shows its code), the clock pad
+  6 × 3 (18 cells; each holds the whole dispatcher, now 24 chunks).
+- **Loads:** a disk click now only sets ctl/disk and starts the load; the load hops write every net, the nets that
+  differ between disks first (a chunk per hop, one exclusive `if loadPhase == j·D + e` per disk), then the shared ones.
+  With 64 bytes the click alone would have been 600 actions.
+
+`test/live.test.ts` › "pointer visuals follow LDRI on the gates" steps perceptron.asm on the plugin clock: PC ▸ on PC's
+byte every tick, pointer → MAR with PTR on R1 at LDRI's T3, `1→bus` and the read flash at T4, R1's write-back at T5.
+Not checked in the real app yet.
