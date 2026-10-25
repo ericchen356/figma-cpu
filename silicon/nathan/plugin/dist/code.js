@@ -2331,6 +2331,225 @@
     return sim.v.slice();
   }
 
+  // nathan/src/model/reference.ts
+  var GRID_W = 14;
+  var GRID_H = 10;
+  var MAX_LAYERS = 8;
+  var PALETTE_SIZE = 16;
+  var INITIAL_FILL = 12;
+  var FRAME_FILL = 7;
+  var TOOLS = ["move", "frame", "rect", "ellipse", "pen"];
+  var KINDS = ["frame", "rect", "ellipse"];
+  function initialState2() {
+    return {
+      layers: [],
+      selected: null,
+      tool: "move",
+      fill: INITIAL_FILL,
+      nextId: 1,
+      drag: null,
+      penDown: false,
+      erase: false,
+      ink: blank()
+    };
+  }
+  var blank = () => new Array(GRID_W * GRID_H).fill(0);
+  var clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  var getSelected = (s) => s.layers.find((l) => l.id === s.selected);
+  function hitTest(s, x, y) {
+    for (let i = s.layers.length - 1; i >= 0; i--) {
+      const l = s.layers[i];
+      if (l.visible && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h)
+        return l;
+    }
+    return void 0;
+  }
+  var patch = (s, id2, p) => __spreadProps(__spreadValues({}, s), {
+    layers: s.layers.map((l) => l.id === id2 ? __spreadValues(__spreadValues({}, l), p) : l)
+  });
+  function span(ax, ay, bx, by) {
+    const x0 = clamp(Math.min(ax, bx), 0, GRID_W - 1);
+    const y0 = clamp(Math.min(ay, by), 0, GRID_H - 1);
+    const x1 = clamp(Math.max(ax, bx), x0, GRID_W - 1);
+    const y1 = clamp(Math.max(ay, by), y0, GRID_H - 1);
+    return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+  function addLayer(s, kind, x, y) {
+    const layer = {
+      id: s.nextId,
+      kind,
+      x: clamp(x, 0, GRID_W - 1),
+      y: clamp(y, 0, GRID_H - 1),
+      w: 1,
+      h: 1,
+      fill: kind === "frame" ? FRAME_FILL : s.fill,
+      visible: true
+    };
+    return __spreadProps(__spreadValues({}, s), {
+      layers: [...s.layers, layer],
+      selected: layer.id,
+      nextId: s.nextId + 1
+    });
+  }
+  function reorder(s, dir) {
+    const i = s.layers.findIndex((l) => l.id === s.selected);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= s.layers.length) return s;
+    const layers = [...s.layers];
+    [layers[i], layers[j]] = [layers[j], layers[i]];
+    return __spreadProps(__spreadValues({}, s), { layers });
+  }
+  function remove(s) {
+    if (s.selected === null) return s;
+    return __spreadProps(__spreadValues({}, s), {
+      layers: s.layers.filter((l) => l.id !== s.selected),
+      selected: null
+    });
+  }
+  function duplicate(s) {
+    const src = getSelected(s);
+    if (!src || s.layers.length >= MAX_LAYERS) return s;
+    const copy = __spreadProps(__spreadValues({}, src), {
+      id: s.nextId,
+      x: clamp(src.x + 1, 0, GRID_W - src.w),
+      y: clamp(src.y + 1, 0, GRID_H - src.h)
+    });
+    return __spreadProps(__spreadValues({}, s), {
+      layers: [...s.layers, copy],
+      selected: copy.id,
+      nextId: s.nextId + 1
+    });
+  }
+  function nudge(s, dx, dy) {
+    const l = getSelected(s);
+    if (!l) return s;
+    return patch(s, l.id, {
+      x: clamp(l.x + dx, 0, GRID_W - l.w),
+      y: clamp(l.y + dy, 0, GRID_H - l.h)
+    });
+  }
+  var setTool = (s, tool) => __spreadProps(__spreadValues({}, s), { tool, penDown: false });
+  function plot(s, x, y) {
+    if (x < 0 || y < 0 || x >= GRID_W || y >= GRID_H) return s;
+    const i = y * GRID_W + x;
+    const v = s.erase ? 0 : 1;
+    if (s.ink[i] === v) return s;
+    const ink = s.ink.slice();
+    ink[i] = v;
+    return __spreadProps(__spreadValues({}, s), { ink });
+  }
+  function onDown(s, a) {
+    const { x, y } = a;
+    const sel = getSelected(s);
+    if (a.handle && sel) {
+      const ax = a.handle.includes("w") ? sel.x + sel.w - 1 : sel.x;
+      const ay = a.handle.includes("n") ? sel.y + sel.h - 1 : sel.y;
+      return __spreadProps(__spreadValues({}, s), { drag: { mode: "resize", ax, ay } });
+    }
+    if (s.tool === "pen") return s;
+    if (s.tool !== "move") {
+      if (s.layers.length >= MAX_LAYERS) return __spreadProps(__spreadValues({}, s), { tool: "move" });
+      return __spreadProps(__spreadValues({}, addLayer(
+        s,
+        s.tool === "frame" ? "frame" : s.tool === "rect" ? "rect" : "ellipse",
+        x,
+        y
+      )), {
+        drag: { mode: "create", sx: x, sy: y }
+      });
+    }
+    const hit = hitTest(s, x, y);
+    if (!hit) return __spreadProps(__spreadValues({}, s), { selected: null });
+    return __spreadProps(__spreadValues({}, s), {
+      selected: hit.id,
+      drag: { mode: "move", ox: x - hit.x, oy: y - hit.y }
+    });
+  }
+  function onMove(s, x, y) {
+    const d = s.drag;
+    const l = getSelected(s);
+    if (!d || !l) return s;
+    if (d.mode === "create") return patch(s, l.id, span(d.sx, d.sy, x, y));
+    if (d.mode === "resize") return patch(s, l.id, span(d.ax, d.ay, x, y));
+    return patch(s, l.id, {
+      x: clamp(x - d.ox, 0, GRID_W - l.w),
+      y: clamp(y - d.oy, 0, GRID_H - l.h)
+    });
+  }
+  var TOOL_KEYS = {
+    v: "move",
+    f: "frame",
+    r: "rect",
+    o: "ellipse",
+    p: "pen"
+  };
+  function onKey(s, key, meta) {
+    if (meta) return key === "d" ? duplicate(s) : s;
+    if (key in TOOL_KEYS) return setTool(s, TOOL_KEYS[key]);
+    switch (key) {
+      case "e":
+        return reduce(s, { t: "erase" });
+      case "c":
+        return reduce(s, { t: "clear" });
+      case "Delete":
+      case "Backspace":
+        return remove(s);
+      case "]":
+        return reorder(s, 1);
+      case "[":
+        return reorder(s, -1);
+      case "ArrowLeft":
+        return nudge(s, -1, 0);
+      case "ArrowRight":
+        return nudge(s, 1, 0);
+      case "ArrowUp":
+        return nudge(s, 0, -1);
+      case "ArrowDown":
+        return nudge(s, 0, 1);
+      case "Escape":
+        return __spreadProps(__spreadValues({}, s), { selected: null, tool: "move", drag: null, penDown: false });
+      default:
+        return s;
+    }
+  }
+  function reduce(s, a) {
+    var _a, _b;
+    switch (a.t) {
+      case "down":
+        return onDown(s, a);
+      case "move":
+        return onMove(s, a.x, a.y);
+      case "up":
+        return ((_a = s.drag) == null ? void 0 : _a.mode) === "create" ? __spreadProps(__spreadValues({}, s), { drag: null, tool: "move" }) : __spreadProps(__spreadValues({}, s), { drag: null });
+      case "tool":
+        return setTool(s, a.tool);
+      case "fill": {
+        const l = getSelected(s);
+        const next = __spreadProps(__spreadValues({}, s), { fill: a.color });
+        return l ? patch(next, l.id, { fill: a.color }) : next;
+      }
+      case "select":
+        return __spreadProps(__spreadValues({}, s), { selected: a.id });
+      case "visible":
+        return patch(s, a.id, {
+          visible: !((_b = s.layers.find((l) => l.id === a.id)) == null ? void 0 : _b.visible)
+        });
+      case "paint":
+        return s.tool === "pen" && s.penDown && !s.drag ? plot(s, a.x, a.y) : s;
+      case "erase":
+        return __spreadProps(__spreadValues({}, s), { erase: !s.erase });
+      case "clear":
+        return __spreadProps(__spreadValues({}, s), { ink: blank() });
+      case "key":
+        return onKey(s, a.key, !!a.meta);
+    }
+  }
+  function click(s, x, y) {
+    if (s.drag) return reduce(reduce(s, { t: "move", x, y }), { t: "up" });
+    if (s.tool === "pen") return __spreadProps(__spreadValues({}, plot(s, x, y)), { penDown: !s.penDown });
+    return reduce(s, { t: "down", x, y });
+  }
+
   // nathan/src/hw/cells.ts
   function defineRegS(lib, n) {
     if (lib.has(`REGS${n}`)) return;
@@ -2359,6 +2578,25 @@
         }
       },
       `${n}-bit register, shared enable: master open while \xACCLK\xB7LOAD, slave open while CLK`
+    );
+  }
+  function defineRamWord(lib, n) {
+    if (lib.has(`RAMW${n}`)) return;
+    define(
+      lib,
+      `RAMW${n}`,
+      { in: { D: n, ROW: 1, COL: 1 }, out: { Q: n } },
+      (b) => {
+        const [D, Q] = [b.in("D"), b.out("Q")];
+        const men = place2(b, "AND", "men", [b.in1("ROW"), b.in1("COL")]);
+        const nmen = place2(b, "NOT", "nmen", [men]);
+        for (let i = 0; i < n; i++) {
+          const take = place2(b, "AND", `m${i}_take`, [D[i], men]);
+          const hold = place2(b, "AND", `m${i}_hold`, [Q[i], nmen]);
+          place2(b, "OR", `m${i}_merge`, [take, hold], Q[i]);
+        }
+      },
+      `${n}-bit RAM word: one latch per bit, open while ROW\xB7COL (ROW = \xACCLK \xB7 word line)`
     );
   }
   function defineGe4(lib) {
@@ -2450,7 +2688,7 @@
   var EV = {
     NOP: 0,
     TOOL: 1,
-    // ARG = tool (0 move, 1 frame, 2 rectangle, 3 ellipse)
+    // ARG = tool (0 move, 1 frame, 2 rectangle, 3 ellipse, 4 pen)
     FILL: 2,
     // ARG = palette index
     DOWN: 3,
@@ -2471,11 +2709,19 @@
     NUDGE: 13,
     // ARG = 0 left, 1 right, 2 up, 3 down
     ESC: 14,
-    CLICK: 15
-    // a canvas click: DOWN when nothing is pending, MOVE then UP while a drag is pending
+    CLICK: 15,
+    // a canvas click: DOWN when nothing is pending, MOVE then UP while a drag is pending;
+    //            with the pen and nothing pending: ink the cell and put the pen down / lift it
+    PAINT: 16,
+    // the pointer entered cell (PX, PY): inked while the pen is down
+    ERASE: 17,
+    // the Erase toggle: the pen inks 0 instead of 1
+    CLEAR: 18
+    // every pixel of the paint plane to 0, in one event
   };
+  var EVT_BITS = 5;
   var LAYERS = 8;
-  var PALETTE_SIZE = 16;
+  var PALETTE_SIZE2 = 16;
   var REC = {
     used: 0,
     vis: 1,
@@ -2489,6 +2735,7 @@
     geom: 4,
     geomBits: 16
   };
+  var TOOL_BITS = 3;
   var STATE_NETS = {
     used: (k) => `used${k}`,
     vis: (k) => `vis${k}`,
@@ -2504,7 +2751,13 @@
     cur: "cur",
     drag: "drag",
     r1: "r1",
-    r2: "r2"
+    r2: "r2",
+    pendown: "pendown",
+    // the pen is down: hovering a cell inks it
+    erase: "erase",
+    // the pen inks 0
+    pix: "pix"
+    // [140] the paint plane, pixel (x, y) = bit y·14 + x
   };
   var SCREEN_NETS = {
     nsel: "nsel",
@@ -2520,206 +2773,17 @@
     nell: "nell",
     // [8] ¬ell
     hot: "hot"
-    // [4] hotspot sets: idle+move tool, idle+creation tool, drag=move, drag=create/resize
+    // [6] hotspot sets: idle+move tool, idle+creation tool, drag=move, drag=create/resize, pen up, pen down
   };
   var HOT = [
     "idle-move",
     "idle-create",
     "drag-move",
-    "drag-span"
+    "drag-span",
+    "pen-up",
+    "pen-down"
   ];
-  var INITIAL_FILL = 12;
-
-  // nathan/src/model/reference.ts
-  var GRID_W = 14;
-  var GRID_H = 10;
-  var MAX_LAYERS = 8;
-  var PALETTE_SIZE2 = 16;
   var INITIAL_FILL2 = 12;
-  var FRAME_FILL = 7;
-  var TOOLS = ["move", "frame", "rect", "ellipse"];
-  var KINDS = ["frame", "rect", "ellipse"];
-  function initialState2() {
-    return {
-      layers: [],
-      selected: null,
-      tool: "move",
-      fill: INITIAL_FILL2,
-      nextId: 1,
-      drag: null
-    };
-  }
-  var clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  var getSelected = (s) => s.layers.find((l) => l.id === s.selected);
-  function hitTest(s, x, y) {
-    for (let i = s.layers.length - 1; i >= 0; i--) {
-      const l = s.layers[i];
-      if (l.visible && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h)
-        return l;
-    }
-    return void 0;
-  }
-  var patch = (s, id2, p) => __spreadProps(__spreadValues({}, s), {
-    layers: s.layers.map((l) => l.id === id2 ? __spreadValues(__spreadValues({}, l), p) : l)
-  });
-  function span(ax, ay, bx, by) {
-    const x0 = clamp(Math.min(ax, bx), 0, GRID_W - 1);
-    const y0 = clamp(Math.min(ay, by), 0, GRID_H - 1);
-    const x1 = clamp(Math.max(ax, bx), x0, GRID_W - 1);
-    const y1 = clamp(Math.max(ay, by), y0, GRID_H - 1);
-    return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
-  }
-  function addLayer(s, kind, x, y) {
-    const layer = {
-      id: s.nextId,
-      kind,
-      x: clamp(x, 0, GRID_W - 1),
-      y: clamp(y, 0, GRID_H - 1),
-      w: 1,
-      h: 1,
-      fill: kind === "frame" ? FRAME_FILL : s.fill,
-      visible: true
-    };
-    return __spreadProps(__spreadValues({}, s), {
-      layers: [...s.layers, layer],
-      selected: layer.id,
-      nextId: s.nextId + 1
-    });
-  }
-  function reorder(s, dir) {
-    const i = s.layers.findIndex((l) => l.id === s.selected);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= s.layers.length) return s;
-    const layers = [...s.layers];
-    [layers[i], layers[j]] = [layers[j], layers[i]];
-    return __spreadProps(__spreadValues({}, s), { layers });
-  }
-  function remove(s) {
-    if (s.selected === null) return s;
-    return __spreadProps(__spreadValues({}, s), {
-      layers: s.layers.filter((l) => l.id !== s.selected),
-      selected: null
-    });
-  }
-  function duplicate(s) {
-    const src = getSelected(s);
-    if (!src || s.layers.length >= MAX_LAYERS) return s;
-    const copy = __spreadProps(__spreadValues({}, src), {
-      id: s.nextId,
-      x: clamp(src.x + 1, 0, GRID_W - src.w),
-      y: clamp(src.y + 1, 0, GRID_H - src.h)
-    });
-    return __spreadProps(__spreadValues({}, s), {
-      layers: [...s.layers, copy],
-      selected: copy.id,
-      nextId: s.nextId + 1
-    });
-  }
-  function nudge(s, dx, dy) {
-    const l = getSelected(s);
-    if (!l) return s;
-    return patch(s, l.id, {
-      x: clamp(l.x + dx, 0, GRID_W - l.w),
-      y: clamp(l.y + dy, 0, GRID_H - l.h)
-    });
-  }
-  function onDown(s, a) {
-    const { x, y } = a;
-    const sel = getSelected(s);
-    if (a.handle && sel) {
-      const ax = a.handle.includes("w") ? sel.x + sel.w - 1 : sel.x;
-      const ay = a.handle.includes("n") ? sel.y + sel.h - 1 : sel.y;
-      return __spreadProps(__spreadValues({}, s), { drag: { mode: "resize", ax, ay } });
-    }
-    if (s.tool !== "move") {
-      if (s.layers.length >= MAX_LAYERS) return __spreadProps(__spreadValues({}, s), { tool: "move" });
-      return __spreadProps(__spreadValues({}, addLayer(
-        s,
-        s.tool === "frame" ? "frame" : s.tool === "rect" ? "rect" : "ellipse",
-        x,
-        y
-      )), {
-        drag: { mode: "create", sx: x, sy: y }
-      });
-    }
-    const hit = hitTest(s, x, y);
-    if (!hit) return __spreadProps(__spreadValues({}, s), { selected: null });
-    return __spreadProps(__spreadValues({}, s), {
-      selected: hit.id,
-      drag: { mode: "move", ox: x - hit.x, oy: y - hit.y }
-    });
-  }
-  function onMove(s, x, y) {
-    const d = s.drag;
-    const l = getSelected(s);
-    if (!d || !l) return s;
-    if (d.mode === "create") return patch(s, l.id, span(d.sx, d.sy, x, y));
-    if (d.mode === "resize") return patch(s, l.id, span(d.ax, d.ay, x, y));
-    return patch(s, l.id, {
-      x: clamp(x - d.ox, 0, GRID_W - l.w),
-      y: clamp(y - d.oy, 0, GRID_H - l.h)
-    });
-  }
-  var TOOL_KEYS = {
-    v: "move",
-    f: "frame",
-    r: "rect",
-    o: "ellipse"
-  };
-  function onKey(s, key, meta) {
-    if (meta) return key === "d" ? duplicate(s) : s;
-    if (key in TOOL_KEYS) return __spreadProps(__spreadValues({}, s), { tool: TOOL_KEYS[key] });
-    switch (key) {
-      case "Delete":
-      case "Backspace":
-        return remove(s);
-      case "]":
-        return reorder(s, 1);
-      case "[":
-        return reorder(s, -1);
-      case "ArrowLeft":
-        return nudge(s, -1, 0);
-      case "ArrowRight":
-        return nudge(s, 1, 0);
-      case "ArrowUp":
-        return nudge(s, 0, -1);
-      case "ArrowDown":
-        return nudge(s, 0, 1);
-      case "Escape":
-        return __spreadProps(__spreadValues({}, s), { selected: null, tool: "move", drag: null });
-      default:
-        return s;
-    }
-  }
-  function reduce(s, a) {
-    var _a, _b;
-    switch (a.t) {
-      case "down":
-        return onDown(s, a);
-      case "move":
-        return onMove(s, a.x, a.y);
-      case "up":
-        return ((_a = s.drag) == null ? void 0 : _a.mode) === "create" ? __spreadProps(__spreadValues({}, s), { drag: null, tool: "move" }) : __spreadProps(__spreadValues({}, s), { drag: null });
-      case "tool":
-        return __spreadProps(__spreadValues({}, s), { tool: a.tool });
-      case "fill": {
-        const l = getSelected(s);
-        const next = __spreadProps(__spreadValues({}, s), { fill: a.color });
-        return l ? patch(next, l.id, { fill: a.color }) : next;
-      }
-      case "select":
-        return __spreadProps(__spreadValues({}, s), { selected: a.id });
-      case "visible":
-        return patch(s, a.id, {
-          visible: !((_b = s.layers.find((l) => l.id === a.id)) == null ? void 0 : _b.visible)
-        });
-      case "key":
-        return onKey(s, a.key, !!a.meta);
-    }
-  }
-  function click(s, x, y) {
-    return s.drag ? reduce(reduce(s, { t: "move", x, y }), { t: "up" }) : reduce(s, { t: "down", x, y });
-  }
 
   // nathan/src/hw/units.ts
   function defineUnits(lib) {
@@ -2974,7 +3038,7 @@
       lib,
       "EVDEC",
       {
-        in: { EVT: 4, TOOL: 2, DRAG: 2 },
+        in: { EVT: EVT_BITS, TOOL: TOOL_BITS, DRAG: 2 },
         out: {
           EV_TOOL: 1,
           EV_FILL: 1,
@@ -2990,17 +3054,22 @@
           EV_BACK: 1,
           EV_NUDGE: 1,
           EV_ESC: 1,
+          EV_PAINT: 1,
+          EV_ERASE: 1,
+          EV_CLEAR: 1,
           IS_MOVE_TOOL: 1,
           CREATING: 1,
+          IS_PEN: 1,
+          PEN_CLICK: 1,
           DG: 4,
           DRAGGING: 1
         }
       },
       (b) => {
         const L = logic(b);
-        const [TOOL, DRAG] = [b.in("TOOL"), b.in("DRAG")];
+        const [EVT, TOOL, DRAG] = [b.in("EVT"), b.in("TOOL"), b.in("DRAG")];
         const pick2 = (name) => b.out1(name);
-        const evNets = Array.from({ length: 16 }, (_, i) => b.wire1(`ev${i}`));
+        const evNets = Array.from({ length: 20 }, (_, i) => b.wire1(`ev${i}`));
         const named = {
           1: "EV_TOOL",
           2: "EV_FILL",
@@ -3012,28 +3081,47 @@
           11: "EV_FWD",
           12: "EV_BACK",
           13: "EV_NUDGE",
-          14: "EV_ESC"
+          14: "EV_ESC",
+          16: "EV_PAINT",
+          17: "EV_ERASE",
+          18: "EV_CLEAR"
         };
         for (const [i, n] of Object.entries(named)) evNets[Number(i)] = pick2(n);
-        L.dec(b.in("EVT"), "evdec", evNets);
+        b.use(
+          "DEC4",
+          { A: EVT.slice(0, 4), EN: L.NOT(EVT[4]), Y: evNets.slice(0, 16) },
+          "evdec"
+        );
+        b.use(
+          "DEC2",
+          {
+            A: EVT.slice(0, 2),
+            EN: L.AND(EVT[4], L.g("NOR", [EVT[2], EVT[3]])),
+            Y: evNets.slice(16, 20)
+          },
+          "pendec"
+        );
         b.use("DEC2", { A: DRAG, EN: CONST1, Y: b.out("DG") }, "dragdec");
         const dg2 = b.out("DG");
+        place2(b, "OR", "creating", [TOOL[0], TOOL[1]], b.out1("CREATING"));
         place2(
           b,
           "NOR",
           "is_move_tool",
-          [TOOL[0], TOOL[1]],
+          [b.out1("CREATING"), TOOL[2]],
           b.out1("IS_MOVE_TOOL")
         );
-        place2(b, "NOT", "creating", [b.out1("IS_MOVE_TOOL")], b.out1("CREATING"));
+        place2(b, "BUF", "is_pen", [TOOL[2]], b.out1("IS_PEN"));
         L.orAll([dg2[1], dg2[2], dg2[3]], b.out1("DRAGGING"));
         const click2 = evNets[15];
         const dragging = b.out1("DRAGGING");
-        L.g("OR", [evNets[3], L.AND(click2, dg2[0])], b.out1("EV_DOWN"));
+        const idleClick = L.AND(click2, dg2[0]);
+        L.g("OR", [evNets[3], idleClick], b.out1("EV_DOWN"));
         L.g("OR", [evNets[4], L.AND(click2, dragging)], b.out1("EV_MOVE"));
         L.g("OR", [evNets[5], L.AND(click2, dragging)], b.out1("EV_UP"));
+        L.g("AND", [idleClick, b.out1("IS_PEN")], b.out1("PEN_CLICK"));
       },
-      "event and mode decode: one line per event, tool and drag mode; CLICK = DOWN, or MOVE + UP while a drag is pending"
+      "event and mode decode: one line per event, tool and drag mode; CLICK = DOWN, or MOVE + UP while a drag is pending, or the pen's"
     );
   }
   function defineFreeslot(lib) {
@@ -3416,7 +3504,7 @@
           OFFS: 8,
           ANCH: 8
         },
-        out: { SEL: 3, HASSEL: 1, TOOL: 2, CUR: 4, DRAG: 2, R1: 4, R2: 4 }
+        out: { SEL: 3, HASSEL: 1, TOOL: TOOL_BITS, CUR: 4, DRAG: 2, R1: 4, R2: 4 }
       },
       (b) => {
         const L = logic(b);
@@ -3501,7 +3589,7 @@
         );
         reg(
           "tool",
-          L.andOr([[i1("EV_TOOL"), ARG.slice(0, 2)]], 2),
+          L.andOr([[i1("EV_TOOL"), ARG.slice(0, TOOL_BITS)]], TOOL_BITS),
           L.orAll([
             i1("EV_TOOL"),
             noSlot,
@@ -3542,6 +3630,108 @@
         );
       },
       "selection, tool, current colour, pending drag and the grab offset / resize anchor"
+    );
+  }
+  function definePen(lib) {
+    define(
+      lib,
+      "PEN",
+      {
+        in: {
+          CLK: 1,
+          NCLK: 1,
+          PEN_CLICK: 1,
+          EV_PAINT: 1,
+          EV_ERASE: 1,
+          EV_TOOL: 1,
+          EV_ESC: 1,
+          IS_PEN: 1,
+          IDLE: 1
+        },
+        out: { PENDOWN: 1, ERASE: 1, PLOT: 1, DIN: 1 }
+      },
+      (b) => {
+        const L = logic(b);
+        const [CLK, NCLK] = [b.in1("CLK"), b.in1("NCLK")];
+        const reg = (name, D, LOAD, Q) => b.use(`REGS${Q.length}`, { D, LOAD, CLK, NCLK, Q }, name);
+        const i1 = (n) => b.in1(n);
+        const [down, erase] = [b.out1("PENDOWN"), b.out1("ERASE")];
+        reg(
+          "pendown",
+          [L.AND(i1("PEN_CLICK"), L.NOT(down))],
+          L.orAll([i1("PEN_CLICK"), i1("EV_TOOL"), i1("EV_ESC")]),
+          [down]
+        );
+        const nerase = L.NOT(erase);
+        reg("erase", [nerase], i1("EV_ERASE"), [erase]);
+        const hover2 = L.andAll([i1("EV_PAINT"), i1("IS_PEN"), down, i1("IDLE")]);
+        L.g("OR", [i1("PEN_CLICK"), hover2], b.out1("PLOT"));
+        L.g("AND", [b.out1("PLOT"), nerase], b.out1("DIN"));
+      },
+      "the pen: down or up, ink or erase, and whether this event plots the pixel under the pointer"
+    );
+  }
+  function definePaint(lib) {
+    define(
+      lib,
+      "PAINTROW",
+      { in: { ROW: 1, COL: GRID_W, D: 1 }, out: { Q: GRID_W } },
+      (b) => {
+        const [col, Q] = [b.in("COL"), b.out("Q")];
+        for (let x = 0; x < GRID_W; x++)
+          b.use(
+            "RAMW1",
+            { D: [b.in1("D")], ROW: b.in1("ROW"), COL: col[x], Q: [Q[x]] },
+            `p${x}`
+          );
+      },
+      `one row of the paint plane: ${GRID_W} one-bit RAM words on one word line`
+    );
+    define(
+      lib,
+      "PAINT",
+      {
+        in: { PX: 4, PY: 4, NCLK: 1, PLOT: 1, CLEAR: 1, DIN: 1 },
+        out: { PIX: GRID_W * GRID_H }
+      },
+      (b) => {
+        const L = logic(b);
+        const [nclk, clear] = [b.in1("NCLK"), b.in1("CLEAR")];
+        const lines = (A, n, en, forceHi, forceLo) => {
+          const nA = A.map((a) => L.NOT(a));
+          const h = en ? [L.AND(en, nA[3]), L.AND(en, A[3])] : [nA[3], A[3]];
+          const lo = [0, 1, 2, 3].map(
+            (v) => L.OR(L.AND(v & 2 ? A[1] : nA[1], v & 1 ? A[0] : nA[0]), forceLo)
+          );
+          const hi = Array.from(
+            { length: Math.ceil(n / 4) },
+            (_, v) => L.OR(L.AND(h[v >> 1], v & 1 ? A[2] : nA[2]), forceHi)
+          );
+          return Array.from({ length: n }, (_, v) => L.AND(hi[v >> 2], lo[v & 3]));
+        };
+        const rows = lines(
+          b.in("PY"),
+          GRID_H,
+          L.AND(b.in1("PLOT"), nclk),
+          L.AND(clear, nclk),
+          clear
+        );
+        const cols = lines(b.in("PX"), GRID_W, null, clear, clear);
+        const pix = b.out("PIX");
+        rows.forEach(
+          (row, y) => b.use(
+            "PAINTROW",
+            {
+              ROW: row,
+              COL: cols,
+              D: b.in1("DIN"),
+              Q: pix.slice(y * GRID_W, (y + 1) * GRID_W)
+            },
+            `r${y}`
+          )
+        );
+      },
+      `the paint plane: a ${GRID_W} \xD7 ${GRID_H} bitmap of one-bit RAM words, word line PY, bit line PX; Clear selects them all`
     );
   }
   function defineLayer(lib) {
@@ -3669,11 +3859,12 @@
         in: {
           REC: LAYERS * REC.bits,
           SEL: 3,
-          TOOL: 2,
+          TOOL: TOOL_BITS,
           DRAG: 2,
-          CUR: 4
+          CUR: 4,
+          PENDOWN: 1
         },
-        out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 4 }
+        out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 6 }
       },
       (b) => {
         const L = logic(b);
@@ -3689,15 +3880,20 @@
           inv(f(k, REC.fill, 4), b.out("NFILL").slice(4 * k, 4 * k + 4));
         }
         inv(b.in("CUR"), b.out("NCUR"));
-        const [t0, t1] = b.in("TOOL");
+        const [t0, t1, t2] = b.in("TOOL");
         const [d0, d1] = b.in("DRAG");
         const idle = L.g("NOR", [d0, d1]);
-        const moveTool = L.g("NOR", [t0, t1]);
+        const creating = L.g("OR", [t0, t1]);
+        const moveTool = L.g("NOR", [creating, t2]);
         const hot = b.out("HOT");
         L.g("AND", [idle, moveTool], hot[0]);
-        L.g("AND", [idle, L.NOT(moveTool)], hot[1]);
+        L.g("AND", [idle, creating], hot[1]);
         L.g("AND", [d0, L.NOT(d1)], hot[2]);
         L.buf(d1, hot[3]);
+        const pen = L.AND(idle, t2);
+        const down = b.in1("PENDOWN");
+        L.g("AND", [pen, L.NOT(down)], hot[4]);
+        L.g("AND", [pen, down], hot[5]);
       },
       "the screen: the few lines the UI layers need besides the registers (inverted bits pick a colour, a kind, the selected layer; hot picks the click layer)"
     );
@@ -3705,6 +3901,7 @@
   function defineEngine(lib) {
     defineUnits(lib);
     for (const n of [1, 2, 3, 4, 16]) defineRegS(lib, n);
+    defineRamWord(lib, 1);
     if (lib.has("ENGINE")) return;
     defineEvdec(lib);
     defineFreeslot(lib);
@@ -3714,12 +3911,14 @@
     defineLayerctl(lib);
     defineNewrec(lib);
     defineState(lib);
+    definePen(lib);
+    definePaint(lib);
     defineLayer(lib);
     defineDisplay(lib);
     define(
       lib,
       "ENGINE",
-      { in: { CLK: 1, PX: 4, PY: 4, EVT: 4, ARG: 4 }, out: { HIT: 1 } },
+      { in: { CLK: 1, PX: 4, PY: 4, EVT: EVT_BITS, ARG: 4 }, out: { HIT: 1 } },
       (b) => {
         const L = logic(b);
         const [CLK, PX, PY, EVT, ARG] = [
@@ -3752,7 +3951,7 @@
         ];
         const sel = b.wire("sel", 3);
         const hassel = b.wire1("hassel");
-        const tool = b.wire("tool", 2);
+        const tool = b.wire("tool", TOOL_BITS);
         const cur = b.wire("cur", 4);
         const drag = b.wire("drag", 2);
         const r1 = b.wire("r1", 4);
@@ -3774,11 +3973,16 @@
             "FWD",
             "BACK",
             "NUDGE",
-            "ESC"
+            "ESC",
+            "PAINT",
+            "ERASE",
+            "CLEAR"
           ].map((n) => [n, b.wire1(`ev_${n.toLowerCase()}`)])
         );
         const isMoveTool = b.wire1("is_move_tool");
         const creating = b.wire1("creating");
+        const isPen = b.wire1("is_pen");
+        const penClick = b.wire1("pen_click");
         const dg2 = b.wire("dg", 4);
         const dragging = b.wire1("dragging");
         b.use(
@@ -3789,6 +3993,8 @@
             DRAG: drag,
             IS_MOVE_TOOL: isMoveTool,
             CREATING: creating,
+            IS_PEN: isPen,
+            PEN_CLICK: penClick,
             DG: dg2,
             DRAGGING: dragging
           }, Object.fromEntries(
@@ -3937,7 +4143,7 @@
         b.use(
           "NEWREC",
           {
-            TOOL: tool,
+            TOOL: tool.slice(0, 2),
             CUR: cur,
             EV_DUP: ev.DUP,
             EV_FILL: ev.FILL,
@@ -4012,6 +4218,41 @@
           },
           "state"
         );
+        const pendown = b.wire1("pendown");
+        const plot2 = b.wire1("plot");
+        const din = b.wire1("din");
+        b.use(
+          "PEN",
+          {
+            CLK,
+            NCLK,
+            PEN_CLICK: penClick,
+            EV_PAINT: ev.PAINT,
+            EV_ERASE: ev.ERASE,
+            EV_TOOL: ev.TOOL,
+            EV_ESC: ev.ESC,
+            IS_PEN: isPen,
+            IDLE: dg2[0],
+            PENDOWN: pendown,
+            ERASE: b.wire1("erase"),
+            PLOT: plot2,
+            DIN: din
+          },
+          "pen"
+        );
+        b.use(
+          "PAINT",
+          {
+            PX,
+            PY,
+            NCLK,
+            PLOT: plot2,
+            CLEAR: ev.CLEAR,
+            DIN: din,
+            PIX: b.wire("pix", GRID_W * GRID_H)
+          },
+          "paint"
+        );
         b.use(
           "DISPLAY",
           {
@@ -4020,13 +4261,14 @@
             TOOL: tool,
             DRAG: drag,
             CUR: cur,
+            PENDOWN: pendown,
             NSEL: b.wire("nsel", 3),
             NKIND: b.wire("nkind", 16),
             NFILL: b.wire("nfill", 32),
             NCUR: b.wire("ncur", 4),
             ELL: b.wire("ell", 8),
             NELL: b.wire("nell", 8),
-            HOT: b.wire("hot", 4)
+            HOT: b.wire("hot", 6)
           },
           "disp"
         );
@@ -4050,7 +4292,7 @@
     const pokes = {};
     const name = STATE_NETS.cur;
     for (let i = 0; i < 4; i++) {
-      const bit3 = INITIAL_FILL >> i & 1;
+      const bit3 = INITIAL_FILL2 >> i & 1;
       pokes[`${name}[${i}]`] = bit3;
       pokes[`state/${name}/m${i}`] = bit3;
     }
@@ -4110,6 +4352,7 @@
         return (_a2 = givenNet.get(n)) != null ? _a2 : n;
       }) })
     ) : net.gates;
+    const slaved = slaveGroups(net);
     const Kv = new Int8Array(nNets).fill(2);
     Kv[NET0] = 0;
     Kv[NET1] = 1;
@@ -4238,13 +4481,13 @@
       }
     }
     const groupOfQ = /* @__PURE__ */ new Map();
-    gates.forEach((g, i) => {
-      if (info[i].c === "S" && g.path.endsWith("_merge"))
-        groupOfQ.set(g.out, info[i].group);
-    });
     for (const g of net.gates) {
       const c = classify(g);
-      if (c.c === "S" && g.path.endsWith("_merge") && !groupOfQ.has(g.out))
+      if (c.c === "S" && g.path.endsWith("_merge")) groupOfQ.set(g.out, c.group);
+    }
+    for (const g of net.gates) {
+      const c = classify(g);
+      if (c.c === "M" && g.path.endsWith("_merge") && !slaved.has(c.group))
         groupOfQ.set(g.out, c.group);
     }
     const support = /* @__PURE__ */ new Map();
@@ -4470,7 +4713,8 @@
               )
             ]
           });
-          high.push({ if: isOn(men), then: e.s.map((gi) => set(gates[gi])) });
+          if (e.s.length)
+            high.push({ if: isOn(men), then: e.s.map((gi) => set(gates[gi])) });
           continue;
         }
         const bits2 = latchBits(grp, e);
@@ -4481,10 +4725,11 @@
             ...bits2.map((b) => ({ set: b.m, to: litExpr(b.d) }))
           ]
         });
-        high.push({
-          if: isOn(men),
-          then: bits2.map((b) => ({ set: b.q, to: var_(b.m) }))
-        });
+        if (slaved.has(grp))
+          high.push({
+            if: isOn(men),
+            then: bits2.map((b) => ({ set: b.q, to: var_(b.m) }))
+          });
       }
       return {
         actions: [...low, ...high, ...screen],
@@ -4497,7 +4742,7 @@
       return [...e.bits.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => ({
         d: b.take >= 0 ? res(gates[b.take].in[0]) : NET0,
         m: gates[b.mmerge].out,
-        q: gates[b.smerge].out
+        q: gates[b.smerge >= 0 ? b.smerge : b.mmerge].out
       }));
     };
     const directCommit = () => {
@@ -4590,9 +4835,7 @@
           ...post2.reverse().map(
             (i) => block(i, (b) => ({ set: b.q, to: litExpr(b.d) }), !early[i])
           ),
-          ...cyc.map(
-            (i) => block(i, (b) => ({ set: b.q, to: var_(b.m) }), false)
-          )
+          ...cyc.filter((i) => list[i].bits.some((b) => b.q !== b.m)).map((i) => block(i, (b) => ({ set: b.q, to: var_(b.m) }), false))
         ]
       };
     };
@@ -4623,6 +4866,18 @@
       }
     };
   }
+  var slavedOf = /* @__PURE__ */ new WeakMap();
+  function slaveGroups(net) {
+    let out = slavedOf.get(net);
+    if (out) return out;
+    out = /* @__PURE__ */ new Set();
+    for (const g of net.gates) {
+      const c = classify(g);
+      if (c.c === "S") out.add(c.group);
+    }
+    slavedOf.set(net, out);
+    return out;
+  }
   function masterToQ(net) {
     const q = /* @__PURE__ */ new Map();
     for (const g of net.gates) {
@@ -4651,6 +4906,12 @@
     "dg[0]": v0,
     "dg[1]": v1
   }, v2 === void 0 ? {} : { "dg[2]": v2 }), v3 === void 0 ? {} : { "dg[3]": v3 });
+  var PEN_TIES = __spreadProps(__spreadValues({}, dg(1, 0, 0, 0)), {
+    dragging: 0,
+    is_move_tool: 0,
+    creating: 0,
+    is_pen: 1
+  });
   var HOTSPOT_SETS = [
     {
       name: "click/idle-move",
@@ -4659,7 +4920,8 @@
       }, dg(1, 0, 0, 0)), {
         dragging: 0,
         is_move_tool: 1,
-        creating: 0
+        creating: 0,
+        is_pen: 0
       }),
       valid: (s) => !s.drag && s.tool === "move"
     },
@@ -4670,9 +4932,10 @@
       }, dg(1, 0, 0, 0)), {
         dragging: 0,
         is_move_tool: 0,
-        creating: 1
+        creating: 1,
+        is_pen: 0
       }),
-      valid: (s) => !s.drag && s.tool !== "move"
+      valid: (s) => !s.drag && s.tool !== "move" && s.tool !== "pen"
     },
     {
       name: "click/drag-move",
@@ -4689,33 +4952,72 @@
         var _a, _b;
         return ((_a = s.drag) == null ? void 0 : _a.mode) === "create" || ((_b = s.drag) == null ? void 0 : _b.mode) === "resize";
       }
-    }
+    },
+    ...[0, 1].map(() => ({
+      name: "click/pen",
+      ties: __spreadValues({ EVT: EV.CLICK }, PEN_TIES),
+      valid: (s) => !s.drag && s.tool === "pen"
+    }))
   ];
   var HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
-  var clickRun = (set, row) => `${HOTSPOT_REACTIONS[set]}/${row}`;
+  var PAINT_SET = HOT.indexOf("pen-down");
+  var HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row", "cell", "cell"];
+  var clickRun = (set, row, col = 0, sel = 0) => `${HOTSPOT_REACTIONS[set]}/${row}` + (HOTSPOT_GRAIN[set] === "cell" ? `/${col}` : "") + (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
+  var hoverRun = (set, row, col) => set === PAINT_SET ? `paint/${row}/${col}` : `pointer/${col}`;
   var CLICK_SPECS = HOTSPOT_SETS.flatMap(
-    (h) => Array.from({ length: GRID_H }, (_, y) => __spreadProps(__spreadValues({}, h), {
-      name: `${h.name}/${y}`,
-      ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
-      event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+    (h, set) => Array.from({ length: GRID_H }, (_, y) => {
+      const grain = HOTSPOT_GRAIN[set];
+      if (grain === "cell")
+        return Array.from({ length: GRID_W }, (_2, x) => __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y, x),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y, PX: x }),
+          event: () => ({ k: "click", x, y })
+        }));
+      if (grain === "row@sel")
+        return Array.from({ length: LAYERS }, (_2, sel) => __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y, 0, sel),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
+          given: { sel },
+          event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+        }));
+      return [
+        __spreadProps(__spreadValues({}, h), {
+          name: clickRun(set, y),
+          ties: __spreadProps(__spreadValues({}, h.ties), { PY: y }),
+          event: (rnd) => ({ k: "click", x: rnd(GRID_W), y })
+        })
+      ];
+    }).flat()
+    // two sets that run the same reactions (the pen's) make them once
+  ).filter((spec, i, all) => all.findIndex((o) => o.name === spec.name) === i);
+  var PAINT_SPECS = Array.from(
+    { length: GRID_H },
+    (_, y) => Array.from({ length: GRID_W }, (_2, x) => ({
+      name: `paint/${y}/${x}`,
+      ties: __spreadValues({ EVT: EV.PAINT, PX: x, PY: y }, PEN_TIES),
+      given: { pendown: 1 },
+      valid: (s) => !s.drag && s.tool === "pen" && s.penDown,
+      event: () => ({ k: "paint", x, y })
     }))
-  );
+  ).flat();
   function reactionSpecs() {
-    const out = [...CLICK_SPECS];
-    for (let t = 0; t < 4; t++)
+    const out = [...CLICK_SPECS, ...PAINT_SPECS];
+    for (let t = 0; t < TOOLS.length; t++)
       out.push({
         name: `tool/${t}`,
         ties: { EVT: EV.TOOL, ARG: t },
         valid: always,
         event: () => ({ k: "tool", t })
       });
-    for (let c = 0; c < PALETTE_SIZE; c++)
-      out.push({
-        name: `fill/${c}`,
-        ties: { EVT: EV.FILL, ARG: c },
-        valid: always,
-        event: () => ({ k: "fill", c })
-      });
+    for (let c = 0; c < PALETTE_SIZE2; c++)
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `fill/${c}@${sel}`,
+          ties: { EVT: EV.FILL, ARG: c },
+          given: { sel },
+          valid: always,
+          event: () => ({ k: "fill", c })
+        });
     for (let k = 0; k < LAYERS; k++) {
       out.push({
         name: `select/${k}`,
@@ -4731,19 +5033,23 @@
       });
     }
     for (let c = 0; c < 4; c++)
-      out.push({
-        name: `handle/${c}`,
-        ties: { EVT: EV.HANDLE, ARG: c },
-        valid: (s) => s.selected !== null,
-        event: () => ({ k: "handle", corner: c })
-      });
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `handle/${c}@${sel}`,
+          ties: { EVT: EV.HANDLE, ARG: c },
+          given: { sel },
+          valid: (s) => s.selected !== null,
+          event: () => ({ k: "handle", corner: c })
+        });
     for (let d = 0; d < 4; d++)
-      out.push({
-        name: `nudge/${d}`,
-        ties: { EVT: EV.NUDGE, ARG: d },
-        valid: always,
-        event: () => ({ k: "nudge", dir: d })
-      });
+      for (let sel = 0; sel < LAYERS; sel++)
+        out.push({
+          name: `nudge/${d}@${sel}`,
+          ties: { EVT: EV.NUDGE, ARG: d },
+          given: { sel },
+          valid: always,
+          event: () => ({ k: "nudge", dir: d })
+        });
     out.push({
       name: "delete",
       ties: { EVT: EV.DELETE },
@@ -4769,6 +5075,18 @@
       ties: { EVT: EV.ESC },
       valid: always,
       event: () => ({ k: "esc" })
+    });
+    out.push({
+      name: "erase",
+      ties: { EVT: EV.ERASE },
+      valid: always,
+      event: () => ({ k: "erase" })
+    });
+    out.push({
+      name: "clear",
+      ties: { EVT: EV.CLEAR },
+      valid: always,
+      event: () => ({ k: "clear" })
     });
     return out;
   }
@@ -4926,7 +5244,9 @@
     faint: "#808080",
     line: "#444444",
     grid: "#262626",
-    frame: "#141414"
+    frame: "#141414",
+    /** The pen's ink. */
+    ink: "#F5F5F5"
   };
   var CELL = 48;
   var CANVAS_W = GRID_W * CELL;
@@ -5081,7 +5401,7 @@
       fill: COLOR.text,
       stroke: COLOR.accent,
       strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}` }]
+      reactions: [{ trigger: { on: "click" }, run: `handle/${code}@${k}` }]
     });
     const handleRow = (a, b) => frame("handles", {
       sizeH: "FILL",
@@ -5112,34 +5432,61 @@
     });
   }
   function hotspotSet(i) {
-    const rows = [];
-    for (let r = 0; r < GRID_H; r++)
-      rows.push(
-        frame(`row/${r}`, {
-          x: 0,
-          y: r * CELL,
-          w: CANVAS_W,
-          h: CELL,
-          reactions: [{ trigger: { on: "click" }, run: clickRun(i, r) }],
-          children: Array.from(
-            { length: GRID_W },
-            (_, c) => frame(`cell/${c}`, {
-              x: c * CELL,
-              y: 0,
-              w: CELL,
-              h: CELL,
-              reactions: [{ trigger: { on: "enter" }, run: `pointer/${c}` }]
-            })
-          )
-        })
-      );
+    const grain = HOTSPOT_GRAIN[i];
+    const cellReactions = (r, c) => {
+      const hover2 = hoverRun(i, r, c);
+      return [
+        ...grain === "cell" ? [{ trigger: { on: "click" }, run: clickRun(i, r, c) }] : [],
+        __spreadValues({ trigger: { on: "enter" }, run: hover2 }, hover2.startsWith("pointer/") ? {} : { pointer: c })
+      ];
+    };
+    const rows = (sel) => Array.from(
+      { length: GRID_H },
+      (_, r) => frame(`row/${r}`, __spreadProps(__spreadValues({
+        x: 0,
+        y: r * CELL,
+        w: CANVAS_W,
+        h: CELL
+      }, grain === "cell" ? {} : { reactions: [{ trigger: { on: "click" }, run: clickRun(i, r, 0, sel) }] }), {
+        children: Array.from(
+          { length: GRID_W },
+          (_2, c) => frame(`cell/${c}`, {
+            x: c * CELL,
+            y: 0,
+            w: CELL,
+            h: CELL,
+            reactions: cellReactions(r, c)
+          })
+        )
+      }))
+    );
+    const level = (name, children) => frame(name, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, children });
     return frame(`hot/${HOT[i]}`, {
       x: 0,
       y: 0,
       w: CANVAS_W,
       h: CANVAS_H,
       visibleNet: bit(SCREEN_NETS.hot, i),
-      children: rows
+      children: grain === "row@sel" ? [__spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => level(`sel/${k}`, rows(k)))), { name: "slots" })] : rows(0)
+    });
+  }
+  function inkLayer() {
+    return frame("ink", {
+      x: 0,
+      y: 0,
+      w: CANVAS_W,
+      h: CANVAS_H,
+      children: Array.from(
+        { length: GRID_W * GRID_H },
+        (_, i) => rect(`ink/${i}`, {
+          x: i % GRID_W * CELL,
+          y: Math.floor(i / GRID_W) * CELL,
+          w: CELL,
+          h: CELL,
+          fill: COLOR.ink,
+          visibleNet: bit(STATE_NETS.pix, i)
+        })
+      )
     });
   }
   function canvas() {
@@ -5176,6 +5523,7 @@
       children: [
         ...grid,
         ...Array.from({ length: LAYERS }, (_, k) => layerBox(k)),
+        inkLayer(),
         ...HOT.map((_, i) => hotspotSet(i)),
         selection()
       ]
@@ -5294,20 +5642,23 @@
   function rightPanel() {
     const sw = 40;
     const gap = 8;
-    const swatches = Array.from(
-      { length: PALETTE_SIZE },
-      (_, c) => frame(`color/${c}`, {
-        x: 16 + c % 4 * (sw + gap),
-        y: 112 + Math.floor(c / 4) * (sw + gap),
-        w: sw,
-        h: sw,
-        radius: 4,
-        fill: PALETTE_HEX[c],
-        stroke: COLOR.line,
-        strokeWeight: 1,
-        reactions: [{ trigger: { on: "click" }, run: `fill/${c}` }]
-      })
-    );
+    const swatch = (c, k) => frame(`sel/${k}`, {
+      x: 0,
+      y: 0,
+      w: sw,
+      h: sw,
+      radius: 4,
+      fill: PALETTE_HEX[c],
+      stroke: COLOR.line,
+      strokeWeight: 1,
+      reactions: [{ trigger: { on: "click" }, run: `fill/${c}@${k}` }]
+    });
+    const level = (n, children) => frame(n, { x: 0, y: 0, w: sw, h: sw, children });
+    const swatches = Array.from({ length: PALETTE_SIZE2 }, (_, c) => __spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => swatch(c, k))), {
+      name: `color/${c}`,
+      x: 16 + c % 4 * (sw + gap),
+      y: 112 + Math.floor(c / 4) * (sw + gap)
+    }));
     return frame("design", {
       x: UI_W - RIGHT_W,
       y: TOP_H,
@@ -5360,7 +5711,7 @@
         ...arrangeButtons(),
         label(
           "keys",
-          "Shortcuts\nV F R O  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge",
+          "Shortcuts\nV F R O P  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge\nE  erase     C  clear the ink",
           { x: 16, y: 520, size: 11, color: COLOR.faint }
         )
       ]
@@ -5428,23 +5779,28 @@
       })
     );
     arrows.forEach(
-      ([n, t, run], i) => out.push(pushButton(n, t, 16 + i * 56, 446, 52, run))
+      ([n, t, run], i) => out.push(slotButton(n, t, 16 + i * 56, 446, 52, run))
     );
     return out;
   }
+  var TOOL_W = 100;
+  var TOOLS_W = 5 * TOOL_W + 4 * 8;
+  var OPTION_W = 72;
+  var OPTIONS_W = 2 * OPTION_W + 8;
+  var BAR_X = LEFT_W + (MID_W - (TOOLS_W + 12 + OPTIONS_W)) / 2;
   function toolbar() {
     const tools = [
       { name: "Move", key: "V" },
       { name: "Frame", key: "F" },
       { name: "Rectangle", key: "R" },
-      { name: "Ellipse", key: "O" }
+      { name: "Ellipse", key: "O" },
+      { name: "Pen", key: "P" }
     ];
-    const w = 104;
-    const total = tools.length * w + (tools.length - 1) * 8;
+    const w = TOOL_W;
     return frame("toolbar", {
-      x: LEFT_W + (MID_W - total) / 2,
+      x: BAR_X,
       y: CANVAS_Y + CANVAS_H + 24,
-      w: total,
+      w: TOOLS_W,
       h: 44,
       radius: 8,
       fill: COLOR.panel,
@@ -5458,7 +5814,7 @@
           sizeH: "HUG",
           sizeV: "HUG",
           children: [
-            ...spacer("t/", "H", w + 8, 2, bits(STATE_NETS.tool)),
+            ...spacer("t/", "H", w + 8, TOOL_BITS, bits(STATE_NETS.tool)),
             rect("active", { w, h: 44, radius: 8, fill: COLOR.accent })
           ]
         }),
@@ -5472,16 +5828,70 @@
             reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
             children: [
               label("label", t.name, {
-                x: 12,
+                x: 10,
                 y: 15,
                 size: 12,
                 bold: true,
                 color: COLOR.text
               }),
-              label("key", t.key, { x: w - 22, y: 15, size: 11, color: COLOR.dim })
+              label("key", t.key, { x: w - 18, y: 15, size: 11, color: COLOR.dim })
             ]
           })
         )
+      ]
+    });
+  }
+  function penOptions() {
+    const option = (name, text2, key, x, on) => frame(`button/${name}`, {
+      x,
+      y: 0,
+      w: OPTION_W,
+      h: 44,
+      radius: 8,
+      reactions: [{ trigger: { on: "click" }, run: name }],
+      children: [
+        ...on ? [on] : [],
+        label("label", text2, {
+          x: 10,
+          y: 15,
+          size: 12,
+          bold: true,
+          color: COLOR.text
+        }),
+        label("key", key, {
+          x: OPTION_W - 18,
+          y: 15,
+          size: 11,
+          color: COLOR.dim
+        })
+      ]
+    });
+    return frame("pen", {
+      x: BAR_X + TOOLS_W + 12,
+      y: CANVAS_Y + CANVAS_H + 24,
+      w: OPTIONS_W,
+      h: 44,
+      radius: 8,
+      fill: COLOR.panel,
+      stroke: COLOR.line,
+      strokeWeight: 1,
+      children: [
+        option(
+          "erase",
+          "Erase",
+          "E",
+          0,
+          rect("on", {
+            x: 0,
+            y: 0,
+            w: OPTION_W,
+            h: 44,
+            radius: 8,
+            fill: COLOR.accent,
+            visibleNet: STATE_NETS.erase
+          })
+        ),
+        option("clear", "Clear", "C", OPTION_W + 8)
       ]
     });
   }
@@ -5490,7 +5900,9 @@
       "Click a layer to pick it up, or click empty canvas to deselect",
       "Click a cell to start the shape",
       "Click the cell to drop it on (Esc cancels)",
-      "Click the opposite corner (Esc cancels)"
+      "Click the opposite corner (Esc cancels)",
+      "Pen: click a cell to put the pen down (E erases, C clears)",
+      "Drawing: move over cells to ink them, click to lift the pen"
     ];
     return frame("status", {
       x: LEFT_W,
@@ -5538,19 +5950,22 @@
     { codes: [70], run: "tool/1" },
     { codes: [82], run: "tool/2" },
     { codes: [79], run: "tool/3" },
+    { codes: [80], run: "tool/4" },
+    { codes: [69], run: "erase" },
+    { codes: [67], run: "clear" },
     // one key per reaction: Figma reads a keyCodes list as a chord (all held at once)
     { codes: [46], run: "delete" },
     { codes: [8], run: "delete" },
-    { codes: [37], run: "nudge/0" },
-    { codes: [39], run: "nudge/1" },
-    { codes: [38], run: "nudge/2" },
-    { codes: [40], run: "nudge/3" },
     { codes: [27], run: "esc" }
   ];
   var SLOT_KEYS = [
     { code: 68, run: "dup" },
     { code: 219, run: "back" },
-    { code: 221, run: "fwd" }
+    { code: 221, run: "fwd" },
+    { code: 37, run: "nudge/0" },
+    { code: 39, run: "nudge/1" },
+    { code: 38, run: "nudge/2" },
+    { code: 40, run: "nudge/3" }
   ];
   function slotKeys(fill) {
     const level = (name, children) => frame(name, { x: 0, y: 0, w: 8, h: 8, children });
@@ -5589,6 +6004,7 @@
         leftPanel(),
         canvas(),
         toolbar(),
+        penOptions(),
         status(),
         rightPanel(),
         slotKeys(COLOR.panel)
@@ -6270,6 +6686,8 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     "geom",
     "layerctl",
     "newrec",
+    "pen",
+    "paint",
     "l0",
     "l1",
     "l2",
@@ -6423,6 +6841,12 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         return reduce(s, { t: "key", key: "Escape" });
       case "click":
         return click(s, ev.x, ev.y);
+      case "paint":
+        return reduce(s, { t: "paint", x: ev.x, y: ev.y });
+      case "erase":
+        return reduce(s, { t: "erase" });
+      case "clear":
+        return reduce(s, { t: "clear" });
     }
   }
   var DRAGS = [null, "move", "create", "resize"];
@@ -6461,13 +6885,22 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     const selGot = p.peek(STATE_NETS.hassel) ? p.peek(STATE_NETS.sel, 3) : -1;
     if (selGot !== selWant)
       return `selection: machine ${selGot}, spec ${selWant}`;
-    if (p.peek(STATE_NETS.tool, 2) !== TOOLS.indexOf(ref2.tool))
-      return `tool: machine ${p.peek(STATE_NETS.tool, 2)}, spec ${ref2.tool}`;
+    if (p.peek(STATE_NETS.tool, TOOL_BITS) !== TOOLS.indexOf(ref2.tool))
+      return `tool: machine ${p.peek(STATE_NETS.tool, TOOL_BITS)}, spec ${ref2.tool}`;
     if (p.peek(STATE_NETS.cur, 4) !== ref2.fill)
       return `current colour: machine ${p.peek(STATE_NETS.cur, 4)}, spec ${ref2.fill}`;
     const dm = (_b = (_a = ref2.drag) == null ? void 0 : _a.mode) != null ? _b : null;
     const dg2 = DRAGS[p.peek(STATE_NETS.drag, 2)];
     if (dg2 !== dm) return `pending drag: machine ${dg2}, spec ${dm}`;
+    if (p.peek(STATE_NETS.pendown) !== +ref2.penDown)
+      return `pen down: machine ${p.peek(STATE_NETS.pendown)}, spec ${ref2.penDown}`;
+    if (p.peek(STATE_NETS.erase) !== +ref2.erase)
+      return `erase: machine ${p.peek(STATE_NETS.erase)}, spec ${ref2.erase}`;
+    for (let i = 0; i < ref2.ink.length; i++) {
+      const got = p.peek(`${STATE_NETS.pix}[${i}]`);
+      if (got !== ref2.ink[i])
+        return `pixel (${i % GRID_W}, ${Math.floor(i / GRID_W)}): machine ${got}, spec ${ref2.ink[i]}`;
+    }
     return null;
   }
   function prng(seed) {
@@ -6520,10 +6953,18 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     }
     return {
       layers,
-      tool: p.peek(STATE_NETS.tool, 2),
+      tool: p.peek(STATE_NETS.tool, TOOL_BITS),
       color: picked(p, STATE_NETS.cur, SCREEN_NETS.ncur, 0, 4),
-      hot: onehot(p, SCREEN_NETS.hot, 0, 4)
+      hot: onehot(p, SCREEN_NETS.hot, 0, HOT.length),
+      ink: Array.from({ length: GRID_W * GRID_H }, (_, i) => bit2(p, STATE_NETS.pix, i)),
+      erase: p.peek(STATE_NETS.erase) === 1
     };
+  }
+  function hotOf(s) {
+    if (s.drag) return s.drag.mode === "move" ? 2 : 3;
+    if (s.tool === "move") return 0;
+    if (s.tool === "pen") return s.penDown ? 5 : 4;
+    return 1;
   }
   function expectedScreen(s) {
     var _a, _b, _c, _d, _e, _f;
@@ -6544,8 +6985,14 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         row: !!l
       });
     }
-    const hot = s.drag ? s.drag.mode === "move" ? 2 : 3 : s.tool === "move" ? 0 : 1;
-    return { layers, tool: TOOLS.indexOf(s.tool), color: s.fill, hot };
+    return {
+      layers,
+      tool: TOOLS.indexOf(s.tool),
+      color: s.fill,
+      hot: hotOf(s),
+      ink: s.ink,
+      erase: s.erase
+    };
   }
   function compareScreen(s, p) {
     const got = readScreen(p);
@@ -6574,6 +7021,13 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     if (got.color !== want.color)
       return `current colour lamp ${got.color}, spec ${want.color}`;
     if (got.hot !== want.hot) return `hotspot set ${got.hot}, spec ${want.hot}`;
+    return compareInk(got, want);
+  }
+  function compareInk(got, want) {
+    const i = want.ink.findIndex((v, k) => got.ink[k] !== v);
+    if (i >= 0)
+      return `ink at (${i % GRID_W}, ${Math.floor(i / GRID_W)}): shown ${got.ink[i]}, spec ${want.ink[i]}`;
+    if (got.erase !== want.erase) return `Erase shows ${got.erase}, spec ${want.erase}`;
     return null;
   }
 
@@ -6683,13 +7137,35 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
   };
 
   // nathan/plugin/src/selftest.ts
-  var TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse"];
-  var TOOL_CODES = [86, 70, 82, 79];
+  var TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse", "Pen"];
+  var TOOL_CODES = [86, 70, 82, 79, 80];
   var ARROW_CODES = [37, 39, 38, 40];
   var ARROW_BUTTONS = ["left", "right", "up", "down"];
   var CORNER = ["se", "sw", "ne", "nw"];
+  var PEN_SCRIPT = [
+    { k: "tool", t: 4 },
+    { k: "click", x: 2, y: 2 },
+    { k: "paint", x: 3, y: 2 },
+    { k: "paint", x: 4, y: 3 },
+    { k: "paint", x: 5, y: 3 },
+    { k: "paint", x: 6, y: 4 },
+    { k: "click", x: 6, y: 4 },
+    { k: "erase" },
+    { k: "click", x: 4, y: 3 },
+    { k: "paint", x: 5, y: 3 },
+    { k: "click", x: 5, y: 3 },
+    { k: "erase" },
+    { k: "tool", t: 2 },
+    { k: "click", x: 1, y: 1 },
+    { k: "click", x: 5, y: 4 },
+    { k: "tool", t: 4 },
+    { k: "click", x: 9, y: 6 },
+    { k: "paint", x: 10, y: 6 },
+    { k: "esc" },
+    { k: "clear" }
+  ];
   async function selfTest(api, o) {
-    var _a, _b;
+    var _a, _b, _c;
     const page = await findPage(api);
     if (!page)
       throw new Error(
@@ -6863,11 +7339,17 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         });
       }
       const sets = canvas2.children.filter((c) => c.name.startsWith("hot/"));
+      const ink = find(canvas2, "ink");
       return {
         layers,
         tool: spacers2(find(editor, "toolbar", "highlight"), "t/"),
         color: leafIndex(pickedLeaf(find(editor, "design", "current"))),
-        hot: sets.filter((s) => shown(s)).length === 1 ? sets.findIndex((s) => shown(s)) : -1
+        hot: sets.filter((s) => shown(s)).length === 1 ? sets.findIndex((s) => shown(s)) : -1,
+        ink: Array.from(
+          { length: GRID_W * GRID_H },
+          (_, i) => shown(find(ink, `ink/${i}`)) ? 1 : 0
+        ),
+        erase: shown(find(editor, "pen", "button/erase", "on"))
       };
     };
     const keyed = (n, code) => reactionsOf(n).some(
@@ -6884,13 +7366,28 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     };
     let viaKeys = 0;
     const act = (ev, spec2, preferKey) => {
-      var _a2;
+      var _a2, _b2;
       const keyOr = (code, button3) => {
         if (!preferKey) return button3();
         const holder = holderOf(code);
         if (!holder) throw new Error(`no layer that shows takes key ${code}`);
         viaKeys++;
         return fire(holder, "ON_KEY_DOWN", code);
+      };
+      const hotspots = () => {
+        const sets = canvas2.children.filter(
+          (c) => c.name.startsWith("hot/") && shown(c)
+        );
+        if (sets.length !== 1)
+          throw new Error(
+            `${sets.length} click layers are visible, expected exactly 1`
+          );
+        const name = `hot/${HOT[hotOf(spec2)]}`;
+        if (sets[0].name !== name)
+          throw new Error(
+            `the visible click layer is ${sets[0].name}, expected ${name}`
+          );
+        return sets[0];
       };
       const button2 = (name) => () => {
         var _a3;
@@ -6907,8 +7404,12 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
               find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)
             )
           );
-        case "fill":
-          return press(find(present, "editor", "design", `color/${ev.c}`));
+        case "fill": {
+          const s = find(present, "editor", "design", `color/${ev.c}`);
+          const leaf = ((_a2 = s.children) == null ? void 0 : _a2.some((c) => c.name.startsWith("pick/"))) ? pickedLeaf(s) : s;
+          if (!leaf) throw new Error(`color/${ev.c}: no single swatch shows`);
+          return press(leaf);
+        }
         case "select":
           return press(find(present, "editor", "layers", `row/${ev.slot}`));
         case "vis":
@@ -6916,34 +7417,39 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
             find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit")
           );
         case "click": {
-          const sets = canvas2.children.filter(
-            (c) => c.name.startsWith("hot/") && shown(c)
-          );
-          if (sets.length !== 1)
-            throw new Error(
-              `${sets.length} click layers are visible, expected exactly 1`
-            );
-          const want = spec2.drag ? spec2.drag.mode === "move" ? 2 : 3 : spec2.tool === "move" ? 0 : 1;
-          const name = `hot/${["idle-move", "idle-create", "drag-move", "drag-span"][want]}`;
-          if (sets[0].name !== name)
-            throw new Error(
-              `the visible click layer is ${sets[0].name}, expected ${name}`
-            );
-          const row = find(sets[0], `row/${ev.y}`);
+          const set = hotspots();
+          const slots = find(set, "slots");
+          const holder = slots ? pickedLeaf(slots) : set;
+          if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
+          const row = find(holder, `row/${ev.y}`);
           const cell = find(row, `cell/${ev.x}`);
-          return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
+          const own = reactionsOf(cell).some((x) => {
+            var _a3;
+            return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === "ON_CLICK";
+          });
+          return Math.max(fire(cell, "MOUSE_ENTER"), press(own ? cell : row));
         }
+        case "paint": {
+          const set = hotspots();
+          if (set.name !== `hot/pen-down`)
+            throw new Error(`a stroke over ${set.name}, which does not paint`);
+          return fire(find(set, `row/${ev.y}`, `cell/${ev.x}`), "MOUSE_ENTER");
+        }
+        case "erase":
+          return keyOr(69, () => press(find(present, "editor", "pen", "button/erase")));
+        case "clear":
+          return keyOr(67, () => press(find(present, "editor", "pen", "button/clear")));
         case "handle": {
           const k = spec2.layers.findIndex((l) => l.id === spec2.selected);
           const selection2 = find(canvas2, "selection");
           const overlay = shown(selection2) ? pickedLeaf(selection2) : null;
           if ((overlay == null ? void 0 : overlay.name) !== `overlay/${k}`)
             throw new Error(
-              `the visible selection outline is ${(_a2 = overlay == null ? void 0 : overlay.name) != null ? _a2 : "none"}, expected overlay/${k}`
+              `the visible selection outline is ${(_b2 = overlay == null ? void 0 : overlay.name) != null ? _b2 : "none"}, expected overlay/${k}`
             );
           const walk = (n) => {
-            var _a3, _b2;
-            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b2 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b2 : null;
+            var _a3, _b3;
+            return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b3 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b3 : null;
           };
           return press(walk(overlay));
         }
@@ -6968,8 +7474,11 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     let spec = initialState2();
     let worst = 0;
     const cov = /* @__PURE__ */ new Set();
-    for (let i = 0; i < o.events; i++) {
-      const ev = uiEvent(rnd, spec);
+    const pointer = { x: 0, y: 0 };
+    const script = (_a = o.script) != null ? _a : PEN_SCRIPT;
+    const total = script.length + o.events;
+    for (let i = 0; i < total; i++) {
+      const ev = i < script.length ? script[i] : uiEvent(rnd, spec, pointer);
       const next = applyRef(spec, ev);
       try {
         worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
@@ -6982,7 +7491,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       }
       spec = next;
       cov.add(ev.k);
-      const err = (_b = (_a = compare(spec, probe)) != null ? _a : compareScreen(spec, probe)) != null ? _b : uiDiff(spec, readUi());
+      const err = (_c = (_b = compare(spec, probe)) != null ? _b : compareScreen(spec, probe)) != null ? _c : uiDiff(spec, readUi());
       if (err)
         return {
           ok: false,
@@ -6992,8 +7501,8 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     }
     return {
       ok: true,
-      events: o.events,
-      text: `\u2713 ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`
+      events: total,
+      text: `\u2713 ${script.length ? `a pen session (${script.length}) and ` : ""}${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`
     };
   }
   function uiDiff(spec, ui) {
@@ -7023,17 +7532,31 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
     if (ui.color !== want.color)
       return `UI: current colour ${ui.color}, spec ${want.color}`;
     if (ui.hot !== want.hot) return `UI: click layer ${ui.hot}, spec ${want.hot}`;
-    return null;
+    const ink = compareInk(ui, want);
+    return ink ? `UI: ${ink}` : null;
   }
-  function uiEvent(rnd, s) {
+  function uiEvent(rnd, s, at) {
     const n = s.layers.length;
+    const move = (ev) => {
+      if ("x" in ev) [at.x, at.y] = [ev.x, ev.y];
+      return ev;
+    };
+    if (s.tool === "pen" && !s.drag && rnd(100) < 80) {
+      const step = (v, d, n2) => Math.max(0, Math.min(n2 - 1, v + d - 1));
+      const near = () => ({ x: step(at.x, rnd(3), GRID_W), y: step(at.y, rnd(3), GRID_H) });
+      const r = rnd(100);
+      if (s.penDown && r < 80) return move(__spreadValues({ k: "paint" }, near()));
+      if (r < 92) return move(__spreadValues({ k: "click" }, s.penDown ? near() : { x: rnd(GRID_W), y: rnd(GRID_H) }));
+      if (r < 97) return { k: "erase" };
+      return { k: "clear" };
+    }
     const x = rnd(GRID_W);
     const y = rnd(GRID_H);
     for (; ; ) {
       const q = rnd(100);
-      if (q < 45) return { k: "click", x, y };
-      if (q < 52) return { k: "tool", t: rnd(4) };
-      if (q < 58) return { k: "fill", c: rnd(PALETTE_SIZE2) };
+      if (q < 45) return move({ k: "click", x, y });
+      if (q < 52) return { k: "tool", t: rnd(TOOLS.length) };
+      if (q < 58) return { k: "fill", c: rnd(PALETTE_SIZE) };
       if (q < 63 && n) return { k: "select", slot: rnd(n) };
       if (q < 67 && n) return { k: "vis", slot: rnd(n) };
       if (q < 71) return { k: "delete" };
@@ -7043,6 +7566,8 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       if (q < 90) return { k: "nudge", dir: rnd(4) };
       if (q < 92) return { k: "esc" };
       if (s.selected !== null && q < 97) return { k: "handle", corner: rnd(4) };
+      if (q === 98) return { k: "erase" };
+      if (q === 99) return { k: "clear" };
     }
   }
 
@@ -7426,7 +7951,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         return out;
       };
       for (const [run, entry] of catalog) {
-        const lead = run.startsWith("click/") ? copyPointer : [];
+        const lead = run.startsWith("click/") && !("PX" in entry.spec.ties) ? copyPointer : [];
         const eventsOf = (r) => {
           const acts = r.actions;
           if (lead.length + staticSize(acts) <= o.budget) return [acts];
@@ -7493,19 +8018,16 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         ]);
         await this.breathe();
       }
+      const store = (c) => pxh.map((v, i) => setVariable(v.id, boolData((c >> i & 1) === 1)));
       const reactionsFor = (ref2) => {
         const t = ref2.trigger;
-        if (ref2.run.startsWith("pointer/")) {
-          const c = Number(ref2.run.slice("pointer/".length));
+        if (ref2.run.startsWith("pointer/"))
           return [
             {
               trigger: mouseEnter(0),
-              actions: pxh.map(
-                (v, i) => setVariable(v.id, boolData((c >> i & 1) === 1))
-              )
+              actions: store(Number(ref2.run.slice("pointer/".length)))
             }
           ];
-        }
         const actions = triggered.get(ref2.run);
         if (!actions)
           throw new Error(
@@ -7513,8 +8035,8 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           );
         return [
           {
-            trigger: t.on === "key" ? keyDown(t.codes) : onClick(),
-            actions
+            trigger: t.on === "key" ? keyDown(t.codes) : t.on === "enter" ? mouseEnter(0) : onClick(),
+            actions: ref2.pointer === void 0 ? actions : [...store(ref2.pointer), ...actions]
           }
         ];
       };
@@ -7670,7 +8192,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         present,
         text(
           this.api,
-          'Click in the editor: every layer, colour and lamp on it is a gate-level register bit; "see the machine" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels.',
+          'Click in the editor: every layer, colour, pixel of ink and lamp on it is a gate-level register bit; "see the machine" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels. Pen (P): click to put it down, move to draw, click to lift.',
           { size: 12, color: COLORS.dim }
         ),
         PAD3,

@@ -5,6 +5,11 @@
 // fixed target while the full TypeScript editor keeps growing (unbounded canvas, more tools).
 // `tools/conformance` reports where the live os-ui model has drifted from this subset.
 //
+// Plus the Pen, CPU NATHAN's own: a freehand 1-bit bitmap of the 14×10 cells, drawn above the
+// layers and independent of them. A pen click inks a cell and puts the pen down (or lifts it);
+// while it is down, every cell the pointer enters is inked. Erase makes the pen ink 0; Clear
+// blanks the bitmap. Any other tool, or Esc, leaves the pen (and lifts it).
+//
 // Pure functions, no DOM. Colours are palette indices (0–15).
 
 export const GRID_W = 14;
@@ -15,9 +20,9 @@ export const PALETTE_SIZE = 16;
 export const INITIAL_FILL = 12;
 export const FRAME_FILL = 7;
 
-export type Tool = "move" | "frame" | "rect" | "ellipse";
+export type Tool = "move" | "frame" | "rect" | "ellipse" | "pen";
 export type Kind = "frame" | "rect" | "ellipse";
-export const TOOLS: Tool[] = ["move", "frame", "rect", "ellipse"];
+export const TOOLS: Tool[] = ["move", "frame", "rect", "ellipse", "pen"];
 export const KINDS: Kind[] = ["frame", "rect", "ellipse"];
 export type Corner = "nw" | "ne" | "sw" | "se";
 
@@ -45,6 +50,12 @@ export interface State {
   fill: number;
   nextId: number;
   drag: Drag;
+  /** The pen is down: every cell the pointer enters is inked (only with the pen tool). */
+  penDown: boolean;
+  /** The pen inks 0 (erases) instead of 1. */
+  erase: boolean;
+  /** The paint plane, GRID_W × GRID_H pixels, row by row: 1 = inked. */
+  ink: number[];
 }
 
 export type Action =
@@ -55,6 +66,10 @@ export type Action =
   | { t: "fill"; color: number }
   | { t: "select"; id: number }
   | { t: "visible"; id: number }
+  /** The pointer entered cell (x, y). */
+  | { t: "paint"; x: number; y: number }
+  | { t: "erase" }
+  | { t: "clear" }
   | { t: "key"; key: string; meta?: boolean };
 
 export function initialState(): State {
@@ -65,8 +80,14 @@ export function initialState(): State {
     fill: INITIAL_FILL,
     nextId: 1,
     drag: null,
+    penDown: false,
+    erase: false,
+    ink: blank(),
   };
 }
+
+/** A paint plane with no ink. */
+const blank = () => new Array<number>(GRID_W * GRID_H).fill(0);
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, v));
@@ -161,6 +182,20 @@ function nudge(s: State, dx: number, dy: number): State {
   });
 }
 
+/** Pick a tool: the pen starts up. */
+const setTool = (s: State, tool: Tool): State => ({ ...s, tool, penDown: false });
+
+/** Ink cell (x, y) with the pen's ink (0 when erasing). */
+function plot(s: State, x: number, y: number): State {
+  if (x < 0 || y < 0 || x >= GRID_W || y >= GRID_H) return s;
+  const i = y * GRID_W + x;
+  const v = s.erase ? 0 : 1;
+  if (s.ink[i] === v) return s;
+  const ink = s.ink.slice();
+  ink[i] = v;
+  return { ...s, ink };
+}
+
 function onDown(s: State, a: Extract<Action, { t: "down" }>): State {
   const { x, y } = a;
   const sel = getSelected(s);
@@ -170,6 +205,7 @@ function onDown(s: State, a: Extract<Action, { t: "down" }>): State {
     const ay = a.handle.includes("n") ? sel.y + sel.h - 1 : sel.y;
     return { ...s, drag: { mode: "resize", ax, ay } };
   }
+  if (s.tool === "pen") return s; // the pen draws by clicks (`click`), not by presses
   if (s.tool !== "move") {
     if (s.layers.length >= MAX_LAYERS) return { ...s, tool: "move" };
     return {
@@ -208,12 +244,17 @@ const TOOL_KEYS: Record<string, Tool> = {
   f: "frame",
   r: "rect",
   o: "ellipse",
+  p: "pen",
 };
 
 function onKey(s: State, key: string, meta: boolean): State {
   if (meta) return key === "d" ? duplicate(s) : s;
-  if (key in TOOL_KEYS) return { ...s, tool: TOOL_KEYS[key] };
+  if (key in TOOL_KEYS) return setTool(s, TOOL_KEYS[key]);
   switch (key) {
+    case "e":
+      return reduce(s, { t: "erase" });
+    case "c":
+      return reduce(s, { t: "clear" });
     case "Delete":
     case "Backspace":
       return remove(s);
@@ -230,7 +271,7 @@ function onKey(s: State, key: string, meta: boolean): State {
     case "ArrowDown":
       return nudge(s, 0, 1);
     case "Escape":
-      return { ...s, selected: null, tool: "move", drag: null };
+      return { ...s, selected: null, tool: "move", drag: null, penDown: false };
     default:
       return s;
   }
@@ -247,7 +288,7 @@ export function reduce(s: State, a: Action): State {
         ? { ...s, drag: null, tool: "move" }
         : { ...s, drag: null };
     case "tool":
-      return { ...s, tool: a.tool };
+      return setTool(s, a.tool);
     case "fill": {
       const l = getSelected(s);
       const next = { ...s, fill: a.color };
@@ -259,19 +300,30 @@ export function reduce(s: State, a: Action): State {
       return patch(s, a.id, {
         visible: !s.layers.find((l) => l.id === a.id)?.visible,
       });
+    case "paint":
+      return s.tool === "pen" && s.penDown && !s.drag ? plot(s, a.x, a.y) : s;
+    case "erase":
+      return { ...s, erase: !s.erase };
+    case "clear":
+      return { ...s, ink: blank() };
     case "key":
       return onKey(s, a.key, !!a.meta);
   }
 }
 
-/** A canvas click: starts a drag when nothing is pending, finishes it (move, then up) when one is. */
+/** A canvas click: starts a drag when nothing is pending, finishes it (move, then up) when one is.
+ * With the pen (nothing pending) it inks the cell and puts the pen down, or lifts it. */
 export function click(s: State, x: number, y: number): State {
-  return s.drag
-    ? reduce(reduce(s, { t: "move", x, y }), { t: "up" })
-    : reduce(s, { t: "down", x, y });
+  if (s.drag) return reduce(reduce(s, { t: "move", x, y }), { t: "up" });
+  if (s.tool === "pen") return { ...plot(s, x, y), penDown: !s.penDown };
+  return reduce(s, { t: "down", x, y });
 }
 
-/** The 14×10 picture of the document: the topmost visible layer's palette index per cell, -1 = empty. */
+/** An inked pixel in `raster` (the pen's colour, not a palette index). */
+export const INK = PALETTE_SIZE;
+
+/** The 14×10 picture of the document: the topmost visible layer's palette index per cell, -1 =
+ * empty, INK where the pen inked (drawn above the layers). */
 export function raster(s: State): number[] {
   const out = new Array<number>(GRID_W * GRID_H).fill(-1);
   for (const l of s.layers) {
@@ -279,5 +331,6 @@ export function raster(s: State): number[] {
     for (let y = l.y; y < l.y + l.h; y++)
       for (let x = l.x; x < l.x + l.w; x++) out[y * GRID_W + x] = l.fill;
   }
+  s.ink.forEach((v, i) => v && (out[i] = INK));
   return out;
 }

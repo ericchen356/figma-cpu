@@ -19,6 +19,8 @@
 // Every conditional is one level deep (`if (enable) { gates }`), which is what the editor itself
 // can author. Every register group sits behind its own enable, so an idle register costs one
 // action, or nothing when the event cannot load it.
+// A RAM word (cells.ts, RAMW) is a group with a master and no slave: its master latch is its
+// output, written in LOW and left alone in HIGH.
 //
 // The result is a PlanAction list (src/prototype/types.ts), convertible to Figma actions with
 // `figmaActions`. Executing it on the machine's variables gives the same registers and the same
@@ -65,7 +67,8 @@ export const DISPLAY_PREFIX = "disp/";
 /** The global inverted clock gate at the top of ENGINE. */
 export const NCLK_PATH = "nclk";
 
-/** M master latch gate, S slave latch gate, C register enable gate, D screen decode, X plain logic. */
+/** M master latch gate (a RAM word's only latch), S slave latch gate, C register enable gate,
+ * D screen decode, X plain logic. */
 export type Cls = "M" | "S" | "C" | "D" | "X";
 export interface Info {
   c: Cls;
@@ -171,6 +174,9 @@ export function synthesize(
           : { ...g, in: g.in.map((n) => givenNet.get(n) ?? n) },
       )
     : net.gates;
+
+  // the register groups with a slave latch (the others are RAM words: the master is the output)
+  const slaved = slaveGroups(net);
 
   // 1. constants
   const Kv = new Int8Array(nNets).fill(2);
@@ -310,15 +316,16 @@ export function synthesize(
     }
   }
   // screen gates: which register groups does each read (through other screen gates)?
-  const groupOfQ = new Map<number, string>(); // net id of a slave output -> its group
-  gates.forEach((g, i) => {
-    if (info[i].c === "S" && g.path.endsWith("_merge"))
-      groupOfQ.set(g.out, info[i].group);
-  });
-  // the slave outputs of groups that were dropped as inert are not in `gates`; recover them from the full netlist
+  // A register's output is its slave's; a RAM word (no slave) shows its master. Read from the full
+  // netlist: the groups dropped as inert are not in `gates`.
+  const groupOfQ = new Map<number, string>(); // net id of a register output -> its group
   for (const g of net.gates) {
     const c = classify(g);
-    if (c.c === "S" && g.path.endsWith("_merge") && !groupOfQ.has(g.out))
+    if (c.c === "S" && g.path.endsWith("_merge")) groupOfQ.set(g.out, c.group);
+  }
+  for (const g of net.gates) {
+    const c = classify(g);
+    if (c.c === "M" && g.path.endsWith("_merge") && !slaved.has(c.group))
       groupOfQ.set(g.out, c.group);
   }
   const support = new Map<number, Set<string>>();
@@ -594,10 +601,12 @@ export function synthesize(
             ),
           ],
         });
-        high.push({ if: isOn(men), then: e.s.map((gi) => set(gates[gi])) });
+        if (e.s.length)
+          high.push({ if: isOn(men), then: e.s.map((gi) => set(gates[gi])) });
         continue;
       }
-      // with the enable on: master m = D (take = D·1, hold = m·0), slave Q = m (take = m·1, hold = Q·0)
+      // with the enable on: master m = D (take = D·1, hold = m·0), slave Q = m (take = m·1, hold = Q·0);
+      // a RAM word's master is its output, done in LOW
       const bits = latchBits(grp, e);
       low.push({
         if: isOn(men),
@@ -606,10 +615,11 @@ export function synthesize(
           ...bits.map((b): PlanAction => ({ set: b.m, to: litExpr(b.d) })),
         ],
       });
-      high.push({
-        if: isOn(men),
-        then: bits.map((b): PlanAction => ({ set: b.q, to: var_(b.m) })),
-      });
+      if (slaved.has(grp))
+        high.push({
+          if: isOn(men),
+          then: bits.map((b): PlanAction => ({ set: b.q, to: var_(b.m) })),
+        });
     }
     return {
       actions: [...low, ...high, ...screen],
@@ -619,7 +629,7 @@ export function synthesize(
   };
 
   /** A group's bits: D as its block reads it (a net, or a constant when it folded away), master
-   * and slave nets. */
+   * and output nets (the slave's; a RAM word's master is its output). */
   const latchBits = (grp: string, e: { bits: Map<number, Bit> }) => {
     const { res } = blockOf(grp);
     return [...e.bits.entries()]
@@ -627,7 +637,7 @@ export function synthesize(
       .map(([, b]) => ({
         d: b.take >= 0 ? res(gates[b.take].in[0]) : NET0,
         m: gates[b.mmerge].out,
-        q: gates[b.smerge].out,
+        q: gates[b.smerge >= 0 ? b.smerge : b.mmerge].out,
       }));
   };
 
@@ -738,9 +748,9 @@ export function synthesize(
           .map((i) =>
             block(i, (b) => ({ set: b.q, to: litExpr(b.d) }), !early[i]),
           ),
-        ...cyc.map((i) =>
-          block(i, (b) => ({ set: b.q, to: var_(b.m) }), false),
-        ),
+        ...cyc
+          .filter((i) => list[i].bits.some((b) => b.q !== b.m))
+          .map((i) => block(i, (b) => ({ set: b.q, to: var_(b.m) }), false)),
       ],
     };
   };
@@ -773,6 +783,20 @@ export function synthesize(
       latch: commit,
     },
   };
+}
+
+/** The register groups that have a slave latch (the rest are RAM words), once per netlist. */
+const slavedOf = new WeakMap<FlatNetlist, Set<string>>();
+function slaveGroups(net: FlatNetlist): Set<string> {
+  let out = slavedOf.get(net);
+  if (out) return out;
+  out = new Set<string>();
+  for (const g of net.gates) {
+    const c = classify(g);
+    if (c.c === "S") out.add(c.group);
+  }
+  slavedOf.set(net, out);
+  return out;
 }
 
 /** Every register bit's master latch net → its slave (Q) net. Between events the two are equal, so

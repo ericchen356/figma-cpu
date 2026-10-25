@@ -4,7 +4,9 @@
 //   EVT ─► evdec ──► conds ──► layerctl ──► l0 … l7 (layer file: 8 × 24-bit records, stack order = slot)
 //          (decode)   │  ▲  hit (HIT8)        ▲
 //   PX PY ────────────┤  └─ free (FREESLOT)   │ next/prev record: delete and reorder shift whole records
-//                     └──► state (sel hassel tool cur drag r1 r2)
+//          │          ├──► state (sel hassel tool cur drag r1 r2)
+//          │          └──► pen (pendown erase) ──► paint (PAINT: 14 × 10 one-bit RAM words, the bitmap)
+//          └───────────────────────────────────────▲ word line PY, bit line PX
 //   plane (READPLANE) reads one record; geom (MOVE SPAN NUDGE) computes the new rectangle
 //   newrec builds the data for a new / duplicated / refilled record
 //   disp  decodes the registers into the lines the screen layers are bound to
@@ -15,9 +17,10 @@
 import { place } from "../../../src/cells/util";
 import { define } from "../../../src/hdl/builder";
 import { CONST0, CONST1, type Library } from "../../../src/netlist/types";
-import { defineRegS } from "./cells";
+import { GRID_H, GRID_W } from "../model/reference";
+import { defineRamWord, defineRegS } from "./cells";
 import { type Bus, logic, slice, zeros } from "./dsl";
-import { LAYERS, REC } from "./layout";
+import { EVT_BITS, LAYERS, REC, TOOL_BITS } from "./layout";
 import { defineUnits } from "./units";
 
 // ---------- event / mode decode ----------
@@ -27,7 +30,7 @@ function defineEvdec(lib: Library): void {
     lib,
     "EVDEC",
     {
-      in: { EVT: 4, TOOL: 2, DRAG: 2 },
+      in: { EVT: EVT_BITS, TOOL: TOOL_BITS, DRAG: 2 },
       out: {
         EV_TOOL: 1,
         EV_FILL: 1,
@@ -43,18 +46,23 @@ function defineEvdec(lib: Library): void {
         EV_BACK: 1,
         EV_NUDGE: 1,
         EV_ESC: 1,
+        EV_PAINT: 1,
+        EV_ERASE: 1,
+        EV_CLEAR: 1,
         IS_MOVE_TOOL: 1,
         CREATING: 1,
+        IS_PEN: 1,
+        PEN_CLICK: 1,
         DG: 4,
         DRAGGING: 1,
       },
     },
     (b) => {
       const L = logic(b);
-      const [TOOL, DRAG] = [b.in("TOOL"), b.in("DRAG")];
+      const [EVT, TOOL, DRAG] = [b.in("EVT"), b.in("TOOL"), b.in("DRAG")];
       // one-hot event lines; the plain DOWN / MOVE / UP lines are ORed with CLICK below
       const pick = (name: string) => b.out1(name);
-      const evNets = Array.from({ length: 16 }, (_, i) => b.wire1(`ev${i}`));
+      const evNets = Array.from({ length: 20 }, (_, i) => b.wire1(`ev${i}`));
       const named: Record<number, string> = {
         1: "EV_TOOL",
         2: "EV_FILL",
@@ -67,28 +75,50 @@ function defineEvdec(lib: Library): void {
         12: "EV_BACK",
         13: "EV_NUDGE",
         14: "EV_ESC",
+        16: "EV_PAINT",
+        17: "EV_ERASE",
+        18: "EV_CLEAR",
       };
       for (const [i, n] of Object.entries(named)) evNets[Number(i)] = pick(n);
-      L.dec(b.in("EVT"), "evdec", evNets);
+      // codes 0–15 have EVT[4] = 0; the pen's 16–18 have EVT[4] = 1 and EVT[3] = EVT[2] = 0
+      b.use(
+        "DEC4",
+        { A: EVT.slice(0, 4), EN: L.NOT(EVT[4]), Y: evNets.slice(0, 16) },
+        "evdec",
+      );
+      b.use(
+        "DEC2",
+        {
+          A: EVT.slice(0, 2),
+          EN: L.AND(EVT[4], L.g("NOR", [EVT[2], EVT[3]])),
+          Y: evNets.slice(16, 20),
+        },
+        "pendec",
+      );
       b.use("DEC2", { A: DRAG, EN: CONST1, Y: b.out("DG") }, "dragdec");
       const dg = b.out("DG");
+      // a creation tool (1–3) has a low bit set, the pen (4) only the high one
+      place(b, "OR", "creating", [TOOL[0], TOOL[1]], b.out1("CREATING"));
       place(
         b,
         "NOR",
         "is_move_tool",
-        [TOOL[0], TOOL[1]],
+        [b.out1("CREATING"), TOOL[2]],
         b.out1("IS_MOVE_TOOL"),
       );
-      place(b, "NOT", "creating", [b.out1("IS_MOVE_TOOL")], b.out1("CREATING"));
+      place(b, "BUF", "is_pen", [TOOL[2]], b.out1("IS_PEN"));
       L.orAll([dg[1], dg[2], dg[3]], b.out1("DRAGGING"));
       const click = evNets[15];
       const dragging = b.out1("DRAGGING");
-      // a click starts a drag when nothing is pending, and finishes it (MOVE then UP) when one is
-      L.g("OR", [evNets[3], L.AND(click, dg[0])], b.out1("EV_DOWN"));
+      // a click starts a drag when nothing is pending, and finishes it (MOVE then UP) when one is;
+      // with the pen and nothing pending it is the pen's (EV_DOWN then finds nothing to do)
+      const idleClick = L.AND(click, dg[0]);
+      L.g("OR", [evNets[3], idleClick], b.out1("EV_DOWN"));
       L.g("OR", [evNets[4], L.AND(click, dragging)], b.out1("EV_MOVE"));
       L.g("OR", [evNets[5], L.AND(click, dragging)], b.out1("EV_UP"));
+      L.g("AND", [idleClick, b.out1("IS_PEN")], b.out1("PEN_CLICK"));
     },
-    "event and mode decode: one line per event, tool and drag mode; CLICK = DOWN, or MOVE + UP while a drag is pending",
+    "event and mode decode: one line per event, tool and drag mode; CLICK = DOWN, or MOVE + UP while a drag is pending, or the pen's",
   );
 }
 
@@ -499,7 +529,7 @@ function defineState(lib: Library): void {
         OFFS: 8,
         ANCH: 8,
       },
-      out: { SEL: 3, HASSEL: 1, TOOL: 2, CUR: 4, DRAG: 2, R1: 4, R2: 4 },
+      out: { SEL: 3, HASSEL: 1, TOOL: TOOL_BITS, CUR: 4, DRAG: 2, R1: 4, R2: 4 },
     },
     (b) => {
       const L = logic(b);
@@ -587,7 +617,7 @@ function defineState(lib: Library): void {
       );
       reg(
         "tool",
-        L.andOr([[i1("EV_TOOL"), ARG.slice(0, 2)]], 2),
+        L.andOr([[i1("EV_TOOL"), ARG.slice(0, TOOL_BITS)]], TOOL_BITS),
         L.orAll([
           i1("EV_TOOL"),
           noSlot,
@@ -628,6 +658,130 @@ function defineState(lib: Library): void {
       );
     },
     "selection, tool, current colour, pending drag and the grab offset / resize anchor",
+  );
+}
+
+// ---------- the pen ----------
+
+function definePen(lib: Library): void {
+  define(
+    lib,
+    "PEN",
+    {
+      in: {
+        CLK: 1,
+        NCLK: 1,
+        PEN_CLICK: 1,
+        EV_PAINT: 1,
+        EV_ERASE: 1,
+        EV_TOOL: 1,
+        EV_ESC: 1,
+        IS_PEN: 1,
+        IDLE: 1,
+      },
+      out: { PENDOWN: 1, ERASE: 1, PLOT: 1, DIN: 1 },
+    },
+    (b) => {
+      const L = logic(b);
+      const [CLK, NCLK] = [b.in1("CLK"), b.in1("NCLK")];
+      const reg = (name: string, D: Bus, LOAD: string, Q: Bus) =>
+        b.use(`REGS${Q.length}`, { D, LOAD, CLK, NCLK, Q }, name);
+      const i1 = (n: string) => b.in1(n);
+      const [down, erase] = [b.out1("PENDOWN"), b.out1("ERASE")];
+      // a pen click puts the pen down or lifts it; choosing a tool (the pen too) or Esc lifts it
+      reg(
+        "pendown",
+        [L.AND(i1("PEN_CLICK"), L.NOT(down))],
+        L.orAll([i1("PEN_CLICK"), i1("EV_TOOL"), i1("EV_ESC")]),
+        [down],
+      );
+      const nerase = L.NOT(erase);
+      reg("erase", [nerase], i1("EV_ERASE"), [erase]);
+      // a pixel is plotted by a pen click, or by the pointer entering a cell while the pen is down
+      const hover = L.andAll([i1("EV_PAINT"), i1("IS_PEN"), down, i1("IDLE")]);
+      L.g("OR", [i1("PEN_CLICK"), hover], b.out1("PLOT"));
+      L.g("AND", [b.out1("PLOT"), nerase], b.out1("DIN"));
+    },
+    "the pen: down or up, ink or erase, and whether this event plots the pixel under the pointer",
+  );
+}
+
+// ---------- the paint plane ----------
+
+function definePaint(lib: Library): void {
+  define(
+    lib,
+    "PAINTROW",
+    { in: { ROW: 1, COL: GRID_W, D: 1 }, out: { Q: GRID_W } },
+    (b) => {
+      const [col, Q] = [b.in("COL"), b.out("Q")];
+      for (let x = 0; x < GRID_W; x++)
+        b.use(
+          "RAMW1",
+          { D: [b.in1("D")], ROW: b.in1("ROW"), COL: col[x], Q: [Q[x]] },
+          `p${x}`,
+        );
+    },
+    `one row of the paint plane: ${GRID_W} one-bit RAM words on one word line`,
+  );
+  define(
+    lib,
+    "PAINT",
+    {
+      in: { PX: 4, PY: 4, NCLK: 1, PLOT: 1, CLEAR: 1, DIN: 1 },
+      out: { PIX: GRID_W * GRID_H },
+    },
+    (b) => {
+      const L = logic(b);
+      const [nclk, clear] = [b.in1("NCLK"), b.in1("CLEAR")];
+      // The select lines of a 4-bit address, two bits predecoded at a time: line v is
+      // hi[v >> 2] · lo[v & 3]. `en` gates the high pair (no line selects without it); `forceHi` and
+      // `forceLo` raise every predecoded line, so every line selects.
+      const lines = (
+        A: Bus,
+        n: number,
+        en: string | null,
+        forceHi: string,
+        forceLo: string,
+      ): Bus => {
+        const nA = A.map((a) => L.NOT(a));
+        const h = en
+          ? [L.AND(en, nA[3]), L.AND(en, A[3])]
+          : [nA[3], A[3]];
+        const lo = [0, 1, 2, 3].map((v) =>
+          L.OR(L.AND(v & 2 ? A[1] : nA[1], v & 1 ? A[0] : nA[0]), forceLo),
+        );
+        const hi = Array.from({ length: Math.ceil(n / 4) }, (_, v) =>
+          L.OR(L.AND(h[v >> 1], v & 1 ? A[2] : nA[2]), forceHi),
+        );
+        return Array.from({ length: n }, (_, v) => L.AND(hi[v >> 2], lo[v & 3]));
+      };
+      // Word lines (rows) carry ¬CLK: a word is written in the LOW pass only, by a plot at
+      // (PX, PY) with the pen's ink, or by Clear, which selects every word line and every bit
+      // line with ink 0 (DIN is 0 when nothing plots).
+      const rows = lines(
+        b.in("PY"),
+        GRID_H,
+        L.AND(b.in1("PLOT"), nclk),
+        L.AND(clear, nclk),
+        clear,
+      );
+      const cols = lines(b.in("PX"), GRID_W, null, clear, clear);
+      const pix = b.out("PIX");
+      rows.forEach((row, y) =>
+        b.use(
+          "PAINTROW",
+          {
+            ROW: row,
+            COL: cols,
+            D: b.in1("DIN"),
+            Q: pix.slice(y * GRID_W, (y + 1) * GRID_W),
+          },
+          `r${y}`,
+        ),
+      );
+    },
+    `the paint plane: a ${GRID_W} × ${GRID_H} bitmap of one-bit RAM words, word line PY, bit line PX; Clear selects them all`,
   );
 }
 
@@ -776,11 +930,12 @@ function defineDisplay(lib: Library): void {
       in: {
         REC: LAYERS * REC.bits,
         SEL: 3,
-        TOOL: 2,
+        TOOL: TOOL_BITS,
         DRAG: 2,
         CUR: 4,
+        PENDOWN: 1,
       },
-      out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 4 },
+      out: { NSEL: 3, NKIND: 16, NFILL: 32, NCUR: 4, ELL: 8, NELL: 8, HOT: 6 },
     },
     (b) => {
       const L = logic(b);
@@ -800,15 +955,20 @@ function defineDisplay(lib: Library): void {
         inv(f(k, REC.fill, 4), b.out("NFILL").slice(4 * k, 4 * k + 4));
       }
       inv(b.in("CUR"), b.out("NCUR"));
-      const [t0, t1] = b.in("TOOL");
+      const [t0, t1, t2] = b.in("TOOL");
       const [d0, d1] = b.in("DRAG");
       const idle = L.g("NOR", [d0, d1]);
-      const moveTool = L.g("NOR", [t0, t1]);
+      const creating = L.g("OR", [t0, t1]);
+      const moveTool = L.g("NOR", [creating, t2]);
       const hot = b.out("HOT");
       L.g("AND", [idle, moveTool], hot[0]); // nothing pending, move tool
-      L.g("AND", [idle, L.NOT(moveTool)], hot[1]); // nothing pending, a creation tool
+      L.g("AND", [idle, creating], hot[1]); // nothing pending, a creation tool
       L.g("AND", [d0, L.NOT(d1)], hot[2]); // a move is pending
       L.buf(d1, hot[3]); // a create / resize is pending
+      const pen = L.AND(idle, t2);
+      const down = b.in1("PENDOWN");
+      L.g("AND", [pen, L.NOT(down)], hot[4]); // the pen, up: a click puts it down
+      L.g("AND", [pen, down], hot[5]); // the pen, down: entering a cell inks it
     },
     "the screen: the few lines the UI layers need besides the registers (inverted bits pick a colour, a kind, the selected layer; hot picks the click layer)",
   );
@@ -819,6 +979,7 @@ function defineDisplay(lib: Library): void {
 export function defineEngine(lib: Library): void {
   defineUnits(lib);
   for (const n of [1, 2, 3, 4, 16]) defineRegS(lib, n);
+  defineRamWord(lib, 1);
   if (lib.has("ENGINE")) return;
   defineEvdec(lib);
   defineFreeslot(lib);
@@ -828,13 +989,15 @@ export function defineEngine(lib: Library): void {
   defineLayerctl(lib);
   defineNewrec(lib);
   defineState(lib);
+  definePen(lib);
+  definePaint(lib);
   defineLayer(lib);
   defineDisplay(lib);
 
   define(
     lib,
     "ENGINE",
-    { in: { CLK: 1, PX: 4, PY: 4, EVT: 4, ARG: 4 }, out: { HIT: 1 } },
+    { in: { CLK: 1, PX: 4, PY: 4, EVT: EVT_BITS, ARG: 4 }, out: { HIT: 1 } },
     (b) => {
       const L = logic(b);
       const [CLK, PX, PY, EVT, ARG] = [
@@ -870,7 +1033,7 @@ export function defineEngine(lib: Library): void {
       ];
       const sel = b.wire("sel", 3);
       const hassel = b.wire1("hassel");
-      const tool = b.wire("tool", 2);
+      const tool = b.wire("tool", TOOL_BITS);
       const cur = b.wire("cur", 4);
       const drag = b.wire("drag", 2);
       const r1 = b.wire("r1", 4);
@@ -895,10 +1058,15 @@ export function defineEngine(lib: Library): void {
           "BACK",
           "NUDGE",
           "ESC",
+          "PAINT",
+          "ERASE",
+          "CLEAR",
         ].map((n) => [n, b.wire1(`ev_${n.toLowerCase()}`)]),
       );
       const isMoveTool = b.wire1("is_move_tool");
       const creating = b.wire1("creating");
+      const isPen = b.wire1("is_pen");
+      const penClick = b.wire1("pen_click");
       const dg = b.wire("dg", 4);
       const dragging = b.wire1("dragging");
       b.use(
@@ -909,6 +1077,8 @@ export function defineEngine(lib: Library): void {
           DRAG: drag,
           IS_MOVE_TOOL: isMoveTool,
           CREATING: creating,
+          IS_PEN: isPen,
+          PEN_CLICK: penClick,
           DG: dg,
           DRAGGING: dragging,
           ...Object.fromEntries(
@@ -1068,7 +1238,7 @@ export function defineEngine(lib: Library): void {
       b.use(
         "NEWREC",
         {
-          TOOL: tool,
+          TOOL: tool.slice(0, 2),
           CUR: cur,
           EV_DUP: ev.DUP,
           EV_FILL: ev.FILL,
@@ -1148,6 +1318,43 @@ export function defineEngine(lib: Library): void {
         "state",
       );
 
+      // the pen, and the bitmap it draws on (independent of the layer stack)
+      const pendown = b.wire1("pendown");
+      const plot = b.wire1("plot");
+      const din = b.wire1("din");
+      b.use(
+        "PEN",
+        {
+          CLK,
+          NCLK,
+          PEN_CLICK: penClick,
+          EV_PAINT: ev.PAINT,
+          EV_ERASE: ev.ERASE,
+          EV_TOOL: ev.TOOL,
+          EV_ESC: ev.ESC,
+          IS_PEN: isPen,
+          IDLE: dg[0],
+          PENDOWN: pendown,
+          ERASE: b.wire1("erase"),
+          PLOT: plot,
+          DIN: din,
+        },
+        "pen",
+      );
+      b.use(
+        "PAINT",
+        {
+          PX,
+          PY,
+          NCLK,
+          PLOT: plot,
+          CLEAR: ev.CLEAR,
+          DIN: din,
+          PIX: b.wire("pix", GRID_W * GRID_H),
+        },
+        "paint",
+      );
+
       // the screen
       b.use(
         "DISPLAY",
@@ -1157,13 +1364,14 @@ export function defineEngine(lib: Library): void {
           TOOL: tool,
           DRAG: drag,
           CUR: cur,
+          PENDOWN: pendown,
           NSEL: b.wire("nsel", 3),
           NKIND: b.wire("nkind", 16),
           NFILL: b.wire("nfill", 32),
           NCUR: b.wire("ncur", 4),
           ELL: b.wire("ell", 8),
           NELL: b.wire("nell", 8),
-          HOT: b.wire("hot", 4),
+          HOT: b.wire("hot", 6),
         },
         "disp",
       );

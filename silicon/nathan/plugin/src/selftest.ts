@@ -4,11 +4,14 @@
 // after every action compares
 //   · the machine's registers with the editor spec,
 //   · the screen lines with the spec's picture,
-//   · the UI layers themselves (which spacers / swatches / outlines are visible through their
+//   · the UI layers themselves (which spacers / swatches / outlines / ink are visible through their
 //     bindings) with the spec's picture, and which click layer is on top,
 // so it proves the build is wired right: reactions on the right layers, bindings on the right
 // nets, the dispatch sets matching the machine's state. What it cannot prove is how Figma's own
 // viewer behaves (that is what the platform tests are for).
+// The session draws with the pen too: strokes are the pointer entering cell after cell of the
+// pen-down click layer, each through that cell's stored hover reaction. It starts with a fixed pen
+// session (PEN_SCRIPT), so every run draws, erases and clears whatever the seed.
 import { varName } from "../../../src/prototype";
 import {
   type FigmaValue,
@@ -16,7 +19,7 @@ import {
 } from "../../../src/prototype/emulate";
 import type { FlatNetlist } from "../../../src/netlist/types";
 import { nathanNetlist } from "../../src/hw";
-import { LAYERS } from "../../src/hw/layout";
+import { HOT, LAYERS } from "../../src/hw/layout";
 import {
   type Ev,
   type Probe,
@@ -26,8 +29,10 @@ import {
 } from "../../src/model/oracle";
 import * as R from "../../src/model/reference";
 import {
+  compareInk,
   compareScreen,
   expectedScreen,
+  hotOf,
   type Screen,
   type ScreenLayer,
 } from "../../src/model/screen";
@@ -47,15 +52,40 @@ interface UiNode {
   reactions?: ReadonlyArray<Reaction>;
 }
 
-const TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse"];
-const TOOL_CODES = [86, 70, 82, 79];
+const TOOL_NAMES = ["Move", "Frame", "Rectangle", "Ellipse", "Pen"];
+const TOOL_CODES = [86, 70, 82, 79, 80];
 const ARROW_CODES = [37, 39, 38, 40];
 const ARROW_BUTTONS = ["left", "right", "up", "down"];
 const CORNER = ["se", "sw", "ne", "nw"]; // by code: bit0 = west, bit1 = north
 
+/** What every self-test does first: P, a stroke, lift, Erase and a stroke that erases, a rectangle
+ * under the ink with the pen left by a tool, the pen left by Esc, and Clear. */
+export const PEN_SCRIPT: Ev[] = [
+  { k: "tool", t: 4 },
+  { k: "click", x: 2, y: 2 },
+  { k: "paint", x: 3, y: 2 },
+  { k: "paint", x: 4, y: 3 },
+  { k: "paint", x: 5, y: 3 },
+  { k: "paint", x: 6, y: 4 },
+  { k: "click", x: 6, y: 4 },
+  { k: "erase" },
+  { k: "click", x: 4, y: 3 },
+  { k: "paint", x: 5, y: 3 },
+  { k: "click", x: 5, y: 3 },
+  { k: "erase" },
+  { k: "tool", t: 2 },
+  { k: "click", x: 1, y: 1 },
+  { k: "click", x: 5, y: 4 },
+  { k: "tool", t: 4 },
+  { k: "click", x: 9, y: 6 },
+  { k: "paint", x: 10, y: 6 },
+  { k: "esc" },
+  { k: "clear" },
+];
+
 export async function selfTest(
   api: PluginAPI,
-  o: { events: number; seed: number },
+  o: { events: number; seed: number; script?: Ev[] },
 ): Promise<SelfTestResult> {
   const page = await findPage(api);
   if (!page)
@@ -246,6 +276,7 @@ export async function selfTest(
       });
     }
     const sets = canvas.children!.filter((c) => c.name.startsWith("hot/"));
+    const ink = find(canvas, "ink")!;
     return {
       layers,
       tool: spacers(find(editor, "toolbar", "highlight")!, "t/"),
@@ -254,6 +285,10 @@ export async function selfTest(
         sets.filter((s) => shown(s)).length === 1
           ? sets.findIndex((s) => shown(s))
           : -1,
+      ink: Array.from({ length: R.GRID_W * R.GRID_H }, (_, i) =>
+        shown(find(ink, `ink/${i}`)!) ? 1 : 0,
+      ),
+      erase: shown(find(editor, "pen", "button/erase", "on")!),
     };
   };
 
@@ -280,6 +315,22 @@ export async function selfTest(
       viaKeys++;
       return fire(holder, "ON_KEY_DOWN", code);
     };
+    /** The one click layer that shows, checked against the one the spec's state needs. */
+    const hotspots = (): UiNode => {
+      const sets = canvas.children!.filter(
+        (c) => c.name.startsWith("hot/") && shown(c),
+      );
+      if (sets.length !== 1)
+        throw new Error(
+          `${sets.length} click layers are visible, expected exactly 1`,
+        );
+      const name = `hot/${HOT[hotOf(spec)]}`;
+      if (sets[0].name !== name)
+        throw new Error(
+          `the visible click layer is ${sets[0].name}, expected ${name}`,
+        );
+      return sets[0];
+    };
     // a per-slot button is a pick tree of them: the one showing
     const button = (name: string) => () => {
       const b = find(present, "editor", "design", `button/${name}`)!;
@@ -296,8 +347,12 @@ export async function selfTest(
             find(present, "editor", "toolbar", `tool/${TOOL_NAMES[ev.t]}`)!,
           ),
         );
-      case "fill":
-        return press(find(present, "editor", "design", `color/${ev.c}`)!);
+      case "fill": {
+        const s = find(present, "editor", "design", `color/${ev.c}`)!;
+        const leaf = s.children?.some((c) => c.name.startsWith("pick/")) ? pickedLeaf(s) : s;
+        if (!leaf) throw new Error(`color/${ev.c}: no single swatch shows`);
+        return press(leaf);
+      }
       case "select":
         return press(find(present, "editor", "layers", `row/${ev.slot}`)!);
       case "vis":
@@ -305,29 +360,29 @@ export async function selfTest(
           find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit")!,
         );
       case "click": {
-        const sets = canvas.children!.filter(
-          (c) => c.name.startsWith("hot/") && shown(c),
-        );
-        if (sets.length !== 1)
-          throw new Error(
-            `${sets.length} click layers are visible, expected exactly 1`,
-          );
-        const want = spec.drag
-          ? spec.drag.mode === "move"
-            ? 2
-            : 3
-          : spec.tool === "move"
-            ? 0
-            : 1;
-        const name = `hot/${["idle-move", "idle-create", "drag-move", "drag-span"][want]}`;
-        if (sets[0].name !== name)
-          throw new Error(
-            `the visible click layer is ${sets[0].name}, expected ${name}`,
-          );
-        const row = find(sets[0], `row/${ev.y}`)!;
+        const set = hotspots();
+        // a per-slot set is a pick tree of copies: use the one showing
+        const slots = find(set, "slots");
+        const holder = slots ? pickedLeaf(slots) : set;
+        if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
+        const row = find(holder, `row/${ev.y}`)!;
         const cell = find(row, `cell/${ev.x}`)!;
-        return Math.max(fire(cell, "MOUSE_ENTER"), press(row));
+        // the pointer enters the cell (storing its column; on the pen-down set it inks the cell,
+        // as the click does), then a per-cell set's cell takes the click, a per-row set's row
+        const own = reactionsOf(cell).some((x) => x.trigger?.type === "ON_CLICK");
+        return Math.max(fire(cell, "MOUSE_ENTER"), press(own ? cell : row));
       }
+      case "paint": {
+        // the pointer enters the cell: only the pen-down set has a hover that paints
+        const set = hotspots();
+        if (set.name !== `hot/pen-down`)
+          throw new Error(`a stroke over ${set.name}, which does not paint`);
+        return fire(find(set, `row/${ev.y}`, `cell/${ev.x}`)!, "MOUSE_ENTER");
+      }
+      case "erase":
+        return keyOr(69, () => press(find(present, "editor", "pen", "button/erase")!));
+      case "clear":
+        return keyOr(67, () => press(find(present, "editor", "pen", "button/clear")!));
       case "handle": {
         const k = spec.layers.findIndex((l) => l.id === spec.selected);
         const selection = find(canvas, "selection")!;
@@ -364,8 +419,11 @@ export async function selfTest(
   let spec = R.initialState();
   let worst = 0;
   const cov = new Set<string>();
-  for (let i = 0; i < o.events; i++) {
-    const ev = uiEvent(rnd, spec);
+  const pointer = { x: 0, y: 0 };
+  const script = o.script ?? PEN_SCRIPT;
+  const total = script.length + o.events;
+  for (let i = 0; i < total; i++) {
+    const ev = i < script.length ? script[i] : uiEvent(rnd, spec, pointer);
     const next = applyRef(spec, ev);
     try {
       worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
@@ -391,8 +449,8 @@ export async function selfTest(
   }
   return {
     ok: true,
-    events: o.events,
-    text: `✓ ${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`,
+    events: total,
+    text: `✓ ${script.length ? `a pen session (${script.length}) and ` : ""}${o.events} random user actions through the stored reactions: registers, screen lines and UI layers all match the editor spec (heaviest single event: ${worst} actions executed; used: ${[...cov].sort().join(", ")}; ${viaKeys} by shortcut key)`,
   };
 }
 
@@ -424,18 +482,39 @@ function uiDiff(spec: R.State, ui: Screen): string | null {
   if (ui.color !== want.color)
     return `UI: current colour ${ui.color}, spec ${want.color}`;
   if (ui.hot !== want.hot) return `UI: click layer ${ui.hot}, spec ${want.hot}`;
-  return null;
+  const ink = compareInk(ui, want);
+  return ink ? `UI: ${ink}` : null;
 }
 
-/** A random action a user can do with the screen (no raw DOWN / MOVE / UP: the canvas has CLICK). */
-function uiEvent(rnd: (n: number) => number, s: R.State): Ev {
+/** A random action a user can do with the screen (no raw DOWN / MOVE / UP: the canvas has CLICK).
+ * With the pen, mostly strokes: the pointer moves to a neighbouring cell (`at`, the cell it is
+ * over) while the pen is down, and clicks put the pen down and lift it. */
+function uiEvent(
+  rnd: (n: number) => number,
+  s: R.State,
+  at: { x: number; y: number },
+): Ev {
   const n = s.layers.length;
+  const move = (ev: Ev): Ev => {
+    if ("x" in ev) [at.x, at.y] = [ev.x, ev.y];
+    return ev;
+  };
+  if (s.tool === "pen" && !s.drag && rnd(100) < 80) {
+    const step = (v: number, d: number, n: number) =>
+      Math.max(0, Math.min(n - 1, v + d - 1));
+    const near = () => ({ x: step(at.x, rnd(3), R.GRID_W), y: step(at.y, rnd(3), R.GRID_H) });
+    const r = rnd(100);
+    if (s.penDown && r < 80) return move({ k: "paint", ...near() });
+    if (r < 92) return move({ k: "click", ...(s.penDown ? near() : { x: rnd(R.GRID_W), y: rnd(R.GRID_H) }) });
+    if (r < 97) return { k: "erase" };
+    return { k: "clear" };
+  }
   const x = rnd(R.GRID_W);
   const y = rnd(R.GRID_H);
   for (;;) {
     const q = rnd(100);
-    if (q < 45) return { k: "click", x, y };
-    if (q < 52) return { k: "tool", t: rnd(4) };
+    if (q < 45) return move({ k: "click", x, y });
+    if (q < 52) return { k: "tool", t: rnd(R.TOOLS.length) };
     if (q < 58) return { k: "fill", c: rnd(R.PALETTE_SIZE) };
     if (q < 63 && n) return { k: "select", slot: rnd(n) };
     if (q < 67 && n) return { k: "vis", slot: rnd(n) };
@@ -446,6 +525,8 @@ function uiEvent(rnd: (n: number) => number, s: R.State): Ev {
     if (q < 90) return { k: "nudge", dir: rnd(4) };
     if (q < 92) return { k: "esc" };
     if (s.selected !== null && q < 97) return { k: "handle", corner: rnd(4) };
+    if (q === 98) return { k: "erase" };
+    if (q === 99) return { k: "clear" };
   }
 }
 
