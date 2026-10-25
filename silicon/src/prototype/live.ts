@@ -73,7 +73,7 @@ export interface LiveOptions {
   gap?: number;
   /** Most actions one event may execute (default: the plan's cap, else 400). */
   maxActionsPerEvent?: number;
-  /** AFTER_TIMEOUT delay of the Run and Load hops, ms (default 1; the viewer does ~0.9 hops/s anyway). */
+  /** AFTER_TIMEOUT delay of the Run and Load hops, in milliseconds (default 1; written to Figma in seconds). */
   runDelayMs?: number;
   /** Triggers on ctl/step, one chunk each (default ["ON_CLICK"]). ["MOUSE_DOWN", "MOUSE_UP", "ON_CLICK"] runs
    * three chunks per physical click if the viewer fires them as separate events (unverified in the real app). */
@@ -353,7 +353,7 @@ export async function wireLive(
     for (const n of ns) await setR(n, `disk/${name}`, e === undefined ? [] : [{ trigger: onClick(), actions: diskClick(e) }]);
   }
   for (const d of disks) if (!diskNodes.has(d.name) && d.name !== disks[boot].name) log(`program ${d.name} has no disk/${d.name} button on the dashboard`);
-  const delay = opts.runDelayMs ?? 1;
+  const delay = (opts.runDelayMs ?? 1) / 1000; // afterTimeout counts seconds
   await setR(frames.main as Reacting, frameNames.main, keys);
   await setR(frames.runA as Reacting, frameNames.runA, [{ trigger: afterTimeout(delay), actions: runHop(frames.runB) }, ...keys]);
   await setR(frames.runB as Reacting, frameNames.runB, [{ trigger: afterTimeout(delay), actions: runHop(frames.runA) }, ...keys]);

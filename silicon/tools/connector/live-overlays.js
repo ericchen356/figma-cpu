@@ -56,7 +56,7 @@ for (let k = 0; k < K; k++) {
   const blk = runFrames[k].reactions[0].actions[0].conditionalBlocks[0];
   const acts = blk.actions.filter((a) => a.type !== "NODE");
   if (acts.length !== blk.actions.length - 1) throw new Error("unexpected Run frame shape at " + k);
-  await runOv[k].f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 1 }, actions: [{ type: "CONDITIONAL", conditionalBlocks: [
+  await runOv[k].f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 0.001 }, actions: [{ type: "CONDITIONAL", conditionalBlocks: [
     { condition: blk.condition, actions: [...acts, go(runOv[(k + 1) % K].f.id, "SWAP")] },
     { actions: [setRun(false), { type: "CLOSE" }] },
   ] }] }]);
@@ -68,7 +68,7 @@ const resetOv = resetFrames.map((_, i) => pill(`${NAME} · Live Reset ${i + 1}`,
 for (const [i, rf] of resetFrames.entries()) {
   const acts = rf.reactions[0].actions.filter((a) => a.type !== "NODE");
   const tail = i + 1 < resetOv.length ? [go(resetOv[i + 1].f.id, "SWAP")] : [{ type: "CLOSE" }];
-  await resetOv[i].f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 1 }, actions: [...acts, ...tail] }]);
+  await resetOv[i].f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 0.001 }, actions: [...acts, ...tail] }]);
 }
 
 const runBtns = live.findAll((n) => n.name === "button/Run");

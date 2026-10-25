@@ -63,7 +63,7 @@ export interface ApplyOptions {
   at?: { x: number; y: number };
   /** Variables per collection before spilling into `<name> · 2` (default 4000). */
   maxPerCollection?: number;
-  /** Delay of the Run loop's AFTER_TIMEOUT trigger, in milliseconds (default 1). */
+  /** Delay of the Run loop's AFTER_TIMEOUT trigger, in milliseconds (default 1; written to Figma in seconds). */
   runDelayMs?: number;
   /** Encoding choices for the gate actions. */
   actions?: FigmaActionOptions;
@@ -348,7 +348,7 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   for (const [g, label] of [[controlFrame, "Control"], [runA, "Run A frame"], [runB, "Run B frame"], [run, "Run button"], [reset, "Reset button"], [stopA, "Stop A"], [stopB, "Stop B"], [stepMulti, "Step x3"], [resetA, "Reset A frame"], [resetB, "Reset B frame"]] as const) guardReactions(g, label, log);
 
   // 5. Reactions.
-  const delay = opts.runDelayMs ?? 1;
+  const delay = (opts.runDelayMs ?? 1) / 1000; // afterTimeout counts seconds
   const keys = (opts.keys ?? []).length ? [{ trigger: keyDown(opts.keys!), actions: event }] : [];
   // Unchunked: the whole tick sits in the keep-going conditional's block. Chunked: that would nest one dispatch conditional inside
   // another (rejected by Figma), so the hop is flat: snapshot the keep-going decision into ctl/go, run the one matching chunk

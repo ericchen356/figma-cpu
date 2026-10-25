@@ -43,7 +43,7 @@ const cond = k === 0 ? X("AND", [A(running), X("NOT", [A(id(HALT))])]) : X("EQUA
 const step = control.findAll((n) => n.name === "button/Step")[k];
 const t0 = Date.now();
 await step.setReactionsAsync([{ trigger: { type: "ON_CLICK" }, actions: acts }]);
-await runs[k].setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 1 }, actions: [{ type: "CONDITIONAL", conditionalBlocks: [
+await runs[k].setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 0.001 }, actions: [{ type: "CONDITIONAL", conditionalBlocks: [
   { condition: cond, actions: [...acts, nav(runs[(k + 1) % K].id)] },
   { actions: [set(running, B(false)), nav(control.id)] },
 ] }] }]);

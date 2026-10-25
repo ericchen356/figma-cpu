@@ -56,7 +56,7 @@ export interface PerChunkOptions {
   at?: { x: number; y: number };
   /** Variables per collection before spilling into `<name> · 2` (default 4000). */
   maxPerCollection?: number;
-  /** Delay of the Run loop's AFTER_TIMEOUT trigger, in milliseconds (default 1). */
+  /** Delay of the Run loop's AFTER_TIMEOUT trigger, in milliseconds (default 1; written to Figma in seconds). */
   runDelayMs?: number;
   /** Encoding choices for the gate actions. */
   actions?: FigmaActionOptions;
@@ -277,7 +277,7 @@ export async function applyPerChunk(api: PluginAPI, plan: PrototypePlan, opts: P
   const stops = runs.map((r) => put(r, button(api, "Stop", COLORS.stop), 24, 84));
 
   // 5. Reactions.
-  const delay = opts.runDelayMs ?? 1;
+  const delay = (opts.runDelayMs ?? 1) / 1000; // afterTimeout counts seconds
   if (chunking && opts.keys?.length) log("keys are not wired for a chunked tick (one reaction per chunk)");
   const keys = !chunking && (opts.keys ?? []).length ? [{ trigger: keyDown(opts.keys!), actions: events[0] }] : [];
   const loop = (i: number): Reaction[] => {

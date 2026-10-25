@@ -11,12 +11,19 @@ same variables the gates compute. Added next to the existing work. Nothing exist
 - **No CONDITIONAL inside another conditional's block**: Figma rejects it ("Unrecognized key conditionalBlocks").
   `nestedConditional()` / `guardReactions()` in `src/prototype` enforce it.
 - **Holding a key does not auto-repeat** in the viewer: one key press = one event.
-- **AFTER_TIMEOUT hops run at ~0.9/s** regardless of size.
+- **AFTER_TIMEOUT hops:** the timeout is in seconds; 0.001 hops as soon as the viewer can (the ~0.9 hops/s first
+  measured here was a 1-second timeout; see the correction below).
 - **A FLOAT can't bind to text** `characters`; use STRING variables (`concatText`).
 - **Starter plan: max 3 pages per file.** Never require a new page; put new content in new regions/frames of the
   current page (default: the page that holds `cell/CPU`).
 - **Visuals cost nothing per tick when they are pure bindings** (`setBoundVariable('visible', v)` on a layer). Every
   visual below must be a binding to an EXISTING net variable. No new gates, no new actions per tick.
+
+> **Correction (2026-10-24):** the ~0.9 hops/s came from a 1-second hop. Figma reads `AFTER_TIMEOUT.timeout` in
+> seconds (its docs say milliseconds), and the spike and the Run loops wrote 1. With 0.001 (now the default, see
+> `afterTimeout` in `src/prototype/figma-actions.ts`) a hop costs ~10–20 ms plus ~0.2 ms per executed action, so a
+> ~400-action chunk runs at roughly 10 hops/s **(estimate from measured costs)**, and the specialized deploy of this CPU
+> (`osflow/deploy/cpu.ts`) runs ~92 ticks/s on count **(measured)**.
 
 ## 1. What already exists (reuse, don't rebuild)
 
@@ -98,7 +105,7 @@ bindDashboard(dash.component, net, varByNet, { ctl: ctlAgain, varsOnly: true });
   chunks per physical click, but only if it stays flat and capped.
 - **Clock pad** (`ctl/pad/<i>`): each cell runs one chunk on MOUSE_ENTER (and MOUSE_DOWN), so sweeping the mouse across
   the pad clocks the CPU at mouse speed, as FIGMA-OS's FAST CORE does.
-- **Run / Stop:** the existing flattened AFTER_TIMEOUT loop (the ~0.9 hops/s fallback).
+- **Run / Stop:** the existing flattened AFTER_TIMEOUT loop.
 - **Reset:** the existing chunked Reset (power-on state).
 - **Disks** (`disk/<program>`): load a program **inside Present mode**. Write the program's RAM bits (literal booleans)
   plus the power-on state, chunked ≤ 400 per event over Load A/B hops, then return to Main.
@@ -149,7 +156,7 @@ const live = await wireLive(api, p, res, dashboard /* ComponentNode or { compone
 - **To verify in the real app:** the instances inherit the component's reactions, including NAVIGATE to top-level
   frames; how many MOUSE_ENTER events per second the viewer runs at ~394 actions each, and whether it drops entries
   while one is still running; whether MOUSE_DOWN / MOUSE_UP / ON_CLICK on one layer are three events; the
-  `phase + busy` FLOAT addition; the hop rate on Load A/B (a load ≈ 7 s at 0.9 hops/s); file weight with the pad.
+  `phase + busy` FLOAT addition; the hop rate on Load A/B (7 hops a load); file weight with the pad.
 
 ## 4. Plugin
 

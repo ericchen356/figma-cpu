@@ -170,7 +170,8 @@ export const keyDown = (keyCodes: number[]): Trigger => ({
   device: "KEYBOARD",
   keyCodes,
 });
-/** `timeout` in milliseconds (developers.figma.com: "stored in milliseconds"). */
+/** `timeout` in SECONDS. developers.figma.com says milliseconds, but the viewer waits `timeout`
+ * seconds (1 = one second, measured in Present 2026-10-24); 0.001 hops as soon as it can. */
 export const afterTimeout = (timeout: number): Trigger => ({
   type: "AFTER_TIMEOUT",
   timeout,

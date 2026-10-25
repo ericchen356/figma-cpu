@@ -387,7 +387,7 @@ describe("plugin on a Starter-plan file (one page; createPage throws)", () => {
     const r = await app.compile(PROGRAMS.mul, { runDelayMs: 7, maxActionsPerEvent: 600, plan: { flat: true }, apply: { maxPerCollection: 1500 } });
     expect(r.stats.actionsPerTick).toBeGreaterThan(plain);
     expect(fig.collections.map((c) => c.name)).toEqual([NAME, `${NAME} · 2`]);
-    expect(kid(page, `${NAME} · Run A`)!.reactions[0].trigger).toEqual({ type: "AFTER_TIMEOUT", timeout: 7 });
+    expect(kid(page, `${NAME} · Run A`)!.reactions[0].trigger).toEqual({ type: "AFTER_TIMEOUT", timeout: 0.007 }); // 7 ms, in seconds
     for (const n of [STEP_FRAME, `${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, PANEL_NAME]) expect(page.children.filter((c) => c.name === n).length, n).toBe(1);
     expect(page.flowStartingPoints.length).toBe(2);
 

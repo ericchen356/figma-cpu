@@ -1,5 +1,11 @@
 # What is left to make a fully functioning system inside Figma
 
+> **Correction (2026-10-24):** the ~0.9 hops/s came from a 1-second hop. Figma reads `AFTER_TIMEOUT.timeout` in
+> seconds (its docs say milliseconds), and the spike and the Run loops wrote 1. With 0.001 (now the default, see
+> `afterTimeout` in `src/prototype/figma-actions.ts`) a hop costs ~10–20 ms plus ~0.2 ms per executed action, so a
+> ~400-action chunk runs at roughly 10 hops/s **(estimate from measured costs)**, and the specialized deploy of this CPU
+> (`osflow/deploy/cpu.ts`) runs ~92 ticks/s on count **(measured)**.
+
 Written 2026-10-24 for the three people working in parallel: **CPU design**, **"Figma OS"** (the app that runs on the CPU), and
 **plugin/toolchain** (us). Every number below comes from the repo or from a test run; guesses are marked **(guess)**.
 

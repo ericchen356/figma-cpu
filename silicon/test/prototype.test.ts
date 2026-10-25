@@ -613,7 +613,7 @@ describe("spike plugin (fake Figma API)", () => {
     const run = f.root.findAll((n) => n.name === "button/Run" && n.parent === control)[0];
     runFigmaActions(onClick(run), vals, hooks);
     expect(at).toBe(a.id);
-    expect(afterTimeout(a).trigger).toEqual({ type: "AFTER_TIMEOUT", timeout: 1 });
+    expect(afterTimeout(a).trigger).toEqual({ type: "AFTER_TIMEOUT", timeout: 0.001 }); // 1 ms, in seconds
     for (let i = 0; i < 7; i++) runFigmaActions(afterTimeout(f.nodes.get(at)!).actions!, vals, hooks);
     expect(at).toBe(b.id);
     expect(vals.get(f.varNamed("Spike", "ctl/ticks").id)).toBe(7);

@@ -45,7 +45,7 @@ const frames = groups.map((g, i) => {
 });
 for (const [i, f] of frames.entries()) {
   const tail = i + 1 < frames.length ? [nav(frames[i + 1].id)] : [nav(control.id)];
-  await f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 1 }, actions: [...groups[i].map((v) => set(v.id, value(v))), ...tail] }]);
+  await f.setReactionsAsync([{ trigger: { type: "AFTER_TIMEOUT", timeout: 0.001 }, actions: [...groups[i].map((v) => set(v.id, value(v))), ...tail] }]);
 }
 const reset = control.findAll((x) => x.name === "button/Reset")[0];
 await reset.setReactionsAsync([{ trigger: { type: "ON_CLICK" }, actions: [set(running.id, B(false)), nav(frames[0].id)] }]);

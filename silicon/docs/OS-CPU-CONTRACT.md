@@ -1,5 +1,11 @@
 # OS ↔ CPU contract (DRAFT v0, 2026-10-24)
 
+> **Correction (2026-10-24):** the ~0.9 hops/s came from a 1-second hop. Figma reads `AFTER_TIMEOUT.timeout` in
+> seconds (its docs say milliseconds), and the spike and the Run loops wrote 1. With 0.001 (now the default, see
+> `afterTimeout` in `src/prototype/figma-actions.ts`) a hop costs ~10–20 ms plus ~0.2 ms per executed action, so a
+> ~400-action chunk runs at roughly 10 hops/s **(estimate from measured costs)**, and the specialized deploy of this CPU
+> (`osflow/deploy/cpu.ts`) runs ~92 ticks/s on count **(measured)**.
+
 Status: draft for Nathan (Figma OS). Facts marked **(measured)** come from the repo; **(planned)** items are being built
 right now by other agents on `ours/silicon`; **(open)** items need a decision. Nathan's OS is not in the repo yet, so
 this contract is what the OS is built *against*, not a description of it.
