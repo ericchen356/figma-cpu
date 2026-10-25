@@ -50,7 +50,9 @@ import {
   afterTimeout,
   conditional,
   keyDown,
+  mouseDown,
   mouseEnter,
+  mouseUp,
   navigate,
   navigateWith,
   onClick,
@@ -569,18 +571,22 @@ export class NathanApp {
       // a canvas click takes the hovered column, unless its reaction has the column built in
       const lead =
         run.startsWith("click/") && !("PX" in entry.spec.ties) ? copyPointer : [];
+      // the first event also runs what the layer puts before the reaction: the copy of the hover
+      // column, and on a canvas cell the store of the pointer's column (reactionsFor)
+      const first =
+        lead.length + (run.startsWith("click/") || run.startsWith("paint/") ? pxh.length : 0);
       // a reaction as events: the logic (everything before its first register write) cut anywhere,
       // the writes and the screen lines all in the last event; null if those do not fit one
       const eventsOf = (r: Synthesized): PlanAction[][] | null => {
         const acts = r.actions;
-        if (lead.length + staticSize(acts) <= o.budget) return [acts];
+        if (first + staticSize(acts) <= o.budget) return [acts];
         const [head, tail] = [acts.slice(0, r.commitAt), acts.slice(r.commitAt)];
         const tailSize = staticSize(tail);
         if (tailSize + 1 > o.budget) return null;
-        const parts = greedy(head, lead.length);
+        const parts = greedy(head, first);
         const last = parts[parts.length - 1];
         const lastSize =
-          staticSize(last) + (parts.length === 1 ? lead.length : 0) + 1;
+          staticSize(last) + (parts.length === 1 ? first : 0) + 1;
         if (lastSize + tailSize <= o.budget)
           parts[parts.length - 1] = [...last, ...tail];
         else parts.push(tail);
@@ -607,12 +613,12 @@ export class NathanApp {
         }
       if (!parts) {
         torn.push(run); // cannot keep the writes together: cut anywhere
-        parts = greedy(entry.reaction.actions, lead.length);
+        parts = greedy(entry.reaction.actions, first);
       }
       const chained = parts.length > 1;
       eventSizes.set(
         run,
-        parts.map((p, k) => staticSize(p) + (k ? 0 : lead.length) + (chained ? 1 : 0)),
+        parts.map((p, k) => staticSize(p) + (k ? 0 : first) + (chained ? 1 : 0)),
       );
       if (!chained) {
         triggered.set(run, [...lead, ...convert(parts[0])]);
@@ -646,15 +652,32 @@ export class NathanApp {
     // a hover stores the pointer's column (column c)
     const store = (c: number): Action[] =>
       pxh.map((v, i) => setVariable(v.id, boolData(((c >> i) & 1) === 1)));
+    // the frames a "go/<name>" control jumps to (made before the editor is drawn)
+    const goTo = new Map<string, string>();
+    const triggerOf = (t: ReactionRef["trigger"]) =>
+      t.on === "key"
+        ? keyDown(t.codes)
+        : t.on === "enter"
+          ? mouseEnter(0)
+          : t.on === "down"
+            ? mouseDown(0)
+            : t.on === "up"
+              ? mouseUp(0)
+              : onClick();
     const reactionsFor = (ref: ReactionRef): Reaction[] => {
       const t = ref.trigger;
       if (ref.run.startsWith("pointer/"))
         return [
           {
-            trigger: mouseEnter(0),
+            trigger: triggerOf(t),
             actions: store(Number(ref.run.slice("pointer/".length))),
           },
         ];
+      if (ref.run.startsWith("go/")) {
+        const to = goTo.get(ref.run.slice("go/".length));
+        if (!to) throw new Error(`the screen jumps to a frame that does not exist: ${ref.run}`);
+        return [{ trigger: triggerOf(t), actions: [navigate(to)] }];
+      }
       const actions = triggered.get(ref.run);
       if (!actions)
         throw new Error(
@@ -662,12 +685,7 @@ export class NathanApp {
         );
       return [
         {
-          trigger:
-            t.on === "key"
-              ? keyDown(t.codes)
-              : t.on === "enter"
-                ? mouseEnter(0)
-                : onClick(),
+          trigger: triggerOf(t),
           actions:
             ref.pointer === undefined
               ? actions
@@ -695,9 +713,13 @@ export class NathanApp {
       f.clipsContent = true;
       return f;
     };
-    const present = frame(PRESENT);
+    // the editor fills the frame Present opens: 16:9, so it shows whole without scrolling (a
+    // taller frame scrolls, and the viewer then turns a drag into a scroll of the whole screen)
+    const present = box(this.api, PRESENT, UI_W, UI_H, COLORS.bg);
+    present.clipsContent = true;
     const machine = frame(MACHINE);
     const circuit = frame(CIRCUIT);
+    goTo.set("machine", machine.id);
     // the drawing stays where it is on the page: the circuit window opens on its top-left corner
     put(page, circuit, engineNow.x - PAD, engineNow.y - HEADER);
     put(page, present, circuit.x, circuit.y - GAP - present.height);
@@ -715,11 +737,11 @@ export class NathanApp {
       render(
         ctx,
         present,
-        uiSpec("every pixel of this screen is a gate-level machine — see the machine ▸"),
+        uiSpec(),
       ),
     );
-    result.root.x = PAD;
-    result.root.y = HEADER;
+    result.root.x = 0;
+    result.root.y = 0;
     const blocks = new Map(lib.get(TOP)!.instances.map((i) => [i.name, i.cell]));
     const map = await this.phase("gate map", () =>
       render(
@@ -752,7 +774,6 @@ export class NathanApp {
       const b = put(from, button(this.api, label, COLORS.step, 200, 40), from.width - PAD - 200 - slot * 216, 32);
       await b.setReactionsAsync([{ trigger: onClick(), actions: [navigate(to.id)] }]);
     };
-    await go(present, machine, "see the machine ▸");
     await go(machine, present, "◂ back to the editor");
     await go(machine, circuit, "the circuit ▸", 1);
     await go(circuit, machine, "◂ back to the machine");
@@ -816,36 +837,6 @@ export class NathanApp {
     const worst = [...eventSizes.entries()]
       .map(([name, sizes]) => ({ name, actions: Math.max(...sizes) }))
       .sort((a, b) => b.actions - a.actions)[0] ?? { name: "-", actions: 0 };
-    put(
-      present,
-      text(
-        this.api,
-        "CPU NATHAN — the Figma OS editor as a gate-level machine",
-        { size: 24, bold: true },
-      ),
-      PAD,
-      28,
-    );
-    put(
-      present,
-      text(
-        this.api,
-        `${net.gates.length} gates · ${ids.length} wires (variables) · ${catalog.size} reactions, longest ${worst.actions} actions in one event (${worst.name})`,
-        { size: 13, color: COLORS.dim },
-      ),
-      PAD,
-      64,
-    );
-    put(
-      present,
-      text(
-        this.api,
-        "Click in the editor: every layer, colour, pixel of ink and lamp on it is a gate-level register bit; \"see the machine\" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels. Pen (P): click to put it down, move to draw, click to lift.",
-        { size: 12, color: COLORS.dim },
-      ),
-      PAD,
-      88,
-    );
     const heading = (f: FrameNode, title: string, sub: string) => {
       put(f, text(this.api, title, { size: 24, bold: true }), PAD, 28);
       put(f, text(this.api, sub, { size: 13, color: COLORS.dim }), PAD, 64);
@@ -853,7 +844,7 @@ export class NathanApp {
     heading(
       machine,
       "CPU NATHAN — the machine",
-      `All ${net.gates.length} gates, one lamp each, by module. Use the editor (or press its shortcut keys here) and watch them compute.`,
+      `All ${net.gates.length} gates, one lamp each, by module · ${ids.length} wires (variables) · ${catalog.size} reactions, longest ${worst.actions} actions in one event (${worst.name}). Press the editor's shortcut keys here and watch them compute.`,
     );
     heading(
       circuit,

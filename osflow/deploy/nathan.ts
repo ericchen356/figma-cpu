@@ -45,6 +45,8 @@ export interface GenOptions {
   maxChunk?: number;
   /** Most actions one event may run; a longer reaction continues through timed overlays. */
   part?: number;
+  /** Where the Present frame goes on the page (the gate map's frame and the overlays follow it). */
+  at?: { x: number; y: number };
 }
 
 export interface Chunk {
@@ -73,11 +75,13 @@ export interface Generated {
   /** Wire number of every net id (tests read the machine through it). */
   wireOf: Map<number, number>;
   prefix: string;
-  names: { frame: string; editor: string; chart: string };
+  names: { frame: string; editor: string; chart: string; machine: string };
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FRAME = "CPU NATHAN · Figma OS (gate level)";
+const FRAME = "CPU NATHAN · Figma OS";
+/** The gate map's own frame, a button away from the editor (the editor fills the screen). */
+const MACHINE = "CPU NATHAN · the machine";
 const CHART = "gate map";
 const PREFIX = "w/";
 const PAD = 48;
@@ -209,11 +213,16 @@ export function generate(o: GenOptions = {}): Generated {
     .map((n, i) => `${w(n)}:=${b36(hover.x[i])},T`)
     .join(";");
   const LEAD = hover.x.length;
+  /** A canvas reaction that reads the column the hover stored (its PX is not built in). */
+  const needsLead = (run: string) =>
+    run.startsWith("click/") && catalog.get(run)?.spec.ties.PX === undefined;
   // a hover stores the pointer's column: "pointer/<c>" alone, or before a run (the pen's stroke)
   const store = (c: number) =>
     hover.x.map((k, i) => `${b36(k)}:${(c >> i) & 1 ? "T" : "F"}`).join(";");
   for (let c = 0; c < 1 << hover.x.length; c++)
     runs.set(`pointer/${c}`, store(c));
+  // the editor's way to the gate map
+  runs.set("go/machine", `@go:${MACHINE}`);
   const continued = new Map<string, number>(); // run → its number of events
   const overlays: Array<{ t: string; n: string; w: number; h: number }> = [];
   const then = (run: string, k: number) => `then ${run} ${k}`;
@@ -257,7 +266,11 @@ export function generate(o: GenOptions = {}): Generated {
       throw new Error(
         `${name}: a click reaction needs its row (PY) built in, the hover holds only the column`,
       );
-    const first = click ? LEAD : 0;
+    // the first event also runs the copy of the hover column into PX (where PX is not built in)
+    // and, on a canvas cell, the store of the pointer's column
+    const first =
+      (needsLead(name) ? LEAD : 0) +
+      (click || name.startsWith("paint/") ? hover.x.length : 0);
     let parts = eventsOf(e.reaction, first);
     // more than one event: a direct commit (Q = D) is much shorter, and logic kept out of the
     // register blocks can go in the early events; take whichever needs the fewest
@@ -313,6 +326,7 @@ export function generate(o: GenOptions = {}): Generated {
     rect: "r",
     ellipse: "e",
     text: "x",
+    svg: "s",
   };
   const isCell = (s: NodeSpec) =>
     !s.children?.length &&
@@ -330,6 +344,7 @@ export function generate(o: GenOptions = {}): Generated {
       return [c, r, s.x, s.y, s.w, s.h];
     }
     const out: Record<string, unknown> = { t: TYPE[s.type], n: s.name };
+    if (s.svg) out.svg = s.svg;
     for (const k of ["x", "y", "w", "h"] as const)
       if (s[k] !== undefined) out[k] = s[k];
     if (s.fill) out.f = s.fill;
@@ -372,7 +387,13 @@ export function generate(o: GenOptions = {}): Generated {
     Array<[string, number[] | null, string, string | null]>,
   ];
   const assigns: Assign[] = [];
-  const TRIG: Record<string, string> = { click: "c", enter: "e", key: "k" };
+  const TRIG: Record<string, string> = {
+    click: "c",
+    enter: "e",
+    down: "d",
+    up: "u",
+    key: "k",
+  };
   const walk = (s: NodeSpec, path: string) => {
     if (s.reactions?.length && !isCell(s)) {
       const list = s.reactions.map(
@@ -385,11 +406,12 @@ export function generate(o: GenOptions = {}): Generated {
             TRIG[r.trigger.on],
             r.trigger.on === "key" ? r.trigger.codes : null,
             r.run,
-            r.run.startsWith("click/")
-              ? lead
-              : r.pointer !== undefined
-                ? store(r.pointer)
-                : null,
+            [
+              r.pointer !== undefined ? store(r.pointer) : "",
+              needsLead(r.run) ? lead : "",
+            ]
+              .filter(Boolean)
+              .join(";") || null,
           ];
         },
       );
@@ -515,8 +537,6 @@ export function generate(o: GenOptions = {}): Generated {
     `${units.length} wire variables`,
   );
 
-  const frameW = Math.max(UI_W, chartW) + 2 * PAD;
-  const frameH = HEADER + UI_H + GAP + chartH + PAD;
   const rootShell = compact({ ...root, children: [] });
   uiNodes = 0;
   add(
@@ -526,46 +546,58 @@ export function generate(o: GenOptions = {}): Generated {
       flow: "CPU NATHAN · Figma OS",
       prefix: PREFIX,
       hover,
-      w: frameW,
-      h: frameH,
-      x: 0,
-      y: 0,
-      bg: "#16181D",
-      rootX: PAD,
-      rootY: HEADER,
-      texts: [
-        [
-          "CPU NATHAN — the Figma OS editor as a gate-level machine, computed by Figma itself",
-          PAD,
-          28,
-          24,
-          "#FFFFFF",
-          1,
-        ],
-        [
-          `${net.gates.length} gates · ${ids.length} wires (one boolean variable each) · ${catalog.size} reactions, the longest ${longest.actions} gate evaluations (at most ${longestPart} per event) · no plugin`,
-          PAD,
-          64,
-          13,
-          "#8A8F98",
-          0,
-        ],
-        [
-          "Click in the editor: every layer, colour and highlight is a register bit of the machine. A canvas click is two clicks to move or draw\n(pick up / put down, first corner / opposite corner). Esc cancels. Below, every gate of the machine is a lamp that lights when its output is 1.",
-          PAD,
-          88,
-          12,
-          "#8A8F98",
-          0,
-        ],
-      ],
+      // the editor fills the Present frame: 16:9, so it shows whole without scrolling
+      w: UI_W,
+      h: UI_H,
+      x: o.at?.x ?? 0,
+      y: o.at?.y ?? 0,
+      bg: "#1E1E1E",
+      rootX: 0,
+      rootY: 0,
+      texts: [],
       root: rootShell,
-      overlays,
+      // the overlays go in chunks of their own below (a small part makes hundreds)
+      overlays: [],
       clear: ["then ", WARM_UP],
+      machine: {
+        name: MACHINE,
+        w: Math.max(UI_W, chartW + 2 * PAD),
+        h: HEADER + chartH + PAD,
+        x: 0,
+        y: UI_H + 160,
+        bg: "#16181D",
+        back: ["◂ back to the editor", 220, 40],
+        texts: [
+          [
+            "CPU NATHAN — the Figma OS editor as a gate-level machine, computed by Figma itself",
+            PAD,
+            28,
+            24,
+            "#FFFFFF",
+            1,
+          ],
+          [
+            `${net.gates.length} gates · ${ids.length} wires (one boolean variable each) · ${catalog.size} reactions, the longest ${longest.actions} gate evaluations (at most ${longestPart} per event) · no plugin`,
+            PAD,
+            64,
+            13,
+            "#8A8F98",
+            0,
+          ],
+          [
+            "Every gate of the machine is a lamp that lights when its output is 1. Everything the editor shows, every layer, colour, highlight and pixel of ink,\nis a register bit of this machine; every click and key runs the gates its event needs.",
+            PAD,
+            88,
+            12,
+            "#8A8F98",
+            0,
+          ],
+        ],
+      },
       chart: {
         name: CHART,
         x: PAD,
-        y: HEADER + UI_H + GAP,
+        y: HEADER,
         w: chartW,
         h: chartH,
         bg: "#101216",
@@ -573,6 +605,26 @@ export function generate(o: GenOptions = {}): Generated {
     },
     "the Present frame, its header, the empty editor and the chart area",
   );
+
+  for (let i = 0; i < overlays.length; ) {
+    let size = 0;
+    let j = i;
+    while (j < overlays.length && size < room) size += JSON.stringify(overlays[j++]).length + 1;
+    add(
+      "overlays",
+      {
+        prefix: PREFIX,
+        hover,
+        x: o.at?.x ?? 0,
+        y: o.at?.y ?? 0,
+        w: UI_W,
+        first: i,
+        overlays: overlays.slice(i, j),
+      },
+      `${j - i} overlay frame(s)`,
+    );
+    i = j;
+  }
 
   // the editor's subtrees, packed in order; a subtree too big for one chunk goes in as an empty
   // shell and its children are packed below it the same way
@@ -674,7 +726,7 @@ export function generate(o: GenOptions = {}): Generated {
     add(
       "chart",
       {
-        name: FRAME,
+        name: MACHINE,
         chart: CHART,
         prefix: PREFIX,
         colors: COLORS,
@@ -715,7 +767,7 @@ export function generate(o: GenOptions = {}): Generated {
     },
     wireOf,
     prefix: PREFIX,
-    names: { frame: FRAME, editor: root.name, chart: CHART },
+    names: { frame: FRAME, editor: root.name, chart: CHART, machine: MACHINE },
   };
 }
 

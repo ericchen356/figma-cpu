@@ -7,7 +7,9 @@ import { generate } from "./nathan";
 const out = join(process.cwd(), "deploy", "out");
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-const g = generate();
+// NATHAN_AT="x,y" places the Present frame (default: the page's origin)
+const at = process.env.NATHAN_AT?.split(",").map(Number);
+const g = generate(at ? { at: { x: at[0], y: at[1] } } : {});
 const manifest = g.chunks.map((c, i) => {
   const file = `${String(i + 1).padStart(2, "0")}-${c.step}.js`;
   writeFileSync(join(out, file), c.code);

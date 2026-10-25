@@ -40,9 +40,10 @@ export interface Built {
   fake: FakeFigma;
   /** The most actions one event may run (the generator's default is 700). */
   part: number;
-  /** The frame Present opens, and the editor in it. */
+  /** The frame Present opens, and the editor in it; the gate map's frame. */
   present: FakeNode;
   editor: FakeNode;
+  machine: FakeNode;
   /** The variable of a net (by id), of a wire (by number). */
   varOfNet(id: number): string | undefined;
   varOfWire(n: number): string | undefined;
@@ -71,6 +72,9 @@ export async function build(o: GenOptions = {}): Promise<Built> {
     part: o.part ?? 700,
     present,
     editor: present.children.find((n) => n.name === gen.names.editor)!,
+    machine: fake.currentPage.children.find(
+      (n) => n.name === gen.names.machine,
+    )!,
     varOfNet: (id) => wire.get(gen.wireOf.get(id) ?? -1),
     varOfWire: (n) => wire.get(n),
   };
@@ -92,7 +96,13 @@ const triggerOf = (t: Trigger | null): string => {
   const keys = (t as { keyCodes?: readonly number[] } | null)?.keyCodes;
   return keys ? `${t?.type} [${keys}]` : `${t?.type}`;
 };
-const ON = { click: "ON_CLICK", enter: "MOUSE_ENTER", key: "ON_KEY_DOWN" };
+const ON = {
+  click: "ON_CLICK",
+  enter: "MOUSE_ENTER",
+  down: "MOUSE_DOWN",
+  up: "MOUSE_UP",
+  key: "ON_KEY_DOWN",
+};
 const specTrigger = (r: ReactionRef) =>
   r.trigger.on === "key"
     ? `ON_KEY_DOWN [${r.trigger.codes}]`
@@ -102,6 +112,7 @@ const TYPE = {
   rect: "RECTANGLE",
   ellipse: "ELLIPSE",
   text: "TEXT",
+  svg: "FRAME",
 };
 /** Every action of a list, inside its CONDITIONALs too. */
 function* every(acts: readonly Action[]): Generator<Action> {
@@ -143,6 +154,16 @@ export function structureErrors(b: Built): string[] {
         `${at}: built ${n.type} ${n.name}, spec ${s.type} ${s.name}`,
       );
     const inLayout = !!parent?.layout;
+    // an icon is the frame of vectors Figma makes of its SVG: its place and visibility are ours
+    if (s.type === "svg") {
+      if (parent && !inLayout) {
+        same("x", n.x, s.x ?? 0);
+        same("y", n.y, s.y ?? 0);
+      }
+      if (n.children.length === 0 && /<path/.test(s.svg ?? ""))
+        errors.push(`${at}: the icon has no vectors`);
+      return;
+    }
     // placed by x/y outside an auto layout (the editor itself is placed in the Present frame)
     if (parent && !inLayout) {
       same("x", n.x, s.x ?? 0);
@@ -258,7 +279,7 @@ export function lampErrors(b: Built): string[] {
     if (!outs.has(unit)) outs.set(unit, []);
     outs.get(unit)!.push(g.out);
   }
-  const chart = b.present.children.find((n) => n.name === b.gen.names.chart)!;
+  const chart = b.machine.children.find((n) => n.name === b.gen.names.chart)!;
   const blocks = chart.children.map((c) => c.name).sort();
   if (blocks.join() !== [...outs.keys()].sort().join())
     errors.push(
@@ -517,7 +538,9 @@ export function session(
     return {
       layers,
       tool: spacers(find(editor, "toolbar", "highlight")!, "t/"),
-      color: leafIndex(pickedLeaf(find(editor, "design", "current"))),
+      color: leafIndex(
+        pickedLeaf(find(editor, "design", "fill-field", "current")),
+      ),
       hot: sets.filter(shown).length === 1 ? sets.findIndex(shown) : -1,
       // rows are listed from slot 7 down
       highlight: shown(highlight)
@@ -562,8 +585,22 @@ export function session(
 
   let repeats = 0;
   let deletes = 0;
-  /** Does `ev`; returns how, when there is more than one way ("key", "button", "8"). */
-  const act = (ev: Ev, spec: R.State, byKey: boolean): string => {
+  /** The mouse button is down on the canvas: a press started a drag, and the next canvas click is
+   * where it is released. Before anything else, it is let go away from the canvas (no release
+   * reaches the click layers), and the drag stays pending. */
+  let held = false;
+  /** Does `ev` (taking the editor from `spec` to `next`); returns how, when there is more than one
+   * way ("key", "button", "8"). */
+  const act = (
+    ev: Ev,
+    spec: R.State,
+    next: R.State,
+    byKey: boolean,
+  ): string => {
+    if (held && ev.k !== "click") {
+      held = false;
+      at = null;
+    }
     const keyOr = (code: number, button: () => void) => {
       if (byKey) press(code);
       else button();
@@ -588,37 +625,56 @@ export function session(
         click(find(editor, "layers", `row/${ev.slot}`, "eye-hit"));
         return "";
       case "click": {
-        const sets = canvas.children.filter(
-          (c) => c.name.startsWith("hot/") && shown(c),
-        );
-        const want = `hot/${HOT[expectedScreen(spec).hot]}`;
-        if (sets.length !== 1 || sets[0].name !== want)
-          throw new Error(
-            `the click layers showing are ${sets.map((s) => s.name).join(", ") || "none"}, expected ${want}`,
+        /** The cell (x, y) of the click layers showing, which must be the set `state` shows. */
+        const cellOf = (state: R.State) => {
+          const sets = canvas.children.filter(
+            (c) => c.name.startsWith("hot/") && shown(c),
           );
-        // a per-slot set (the drop) is a pick tree of copies: the one showing
-        const slots = find(sets[0], "slots");
-        const holder = slots ? pickedLeaf(slots) : sets[0];
-        if (!holder) throw new Error(`${want}: no single slot copy shows`);
-        const row = find(holder, `row/${ev.y}`)!;
-        const cell = find(row, `cell/${ev.x}`)!;
-        // a per-cell set (the pick-up) has the cell take the click, its column built in; in a
-        // per-row set a cell holds only its hover, so a click on it goes to its row
-        const own = cell.reactions.some(
-          (r) => triggerOf(r.trigger) === "ON_CLICK",
-        );
-        if (
-          !own &&
-          cell.reactions.map((r) => triggerOf(r.trigger)).join() !==
-            "MOUSE_ENTER"
-        )
-          throw new Error(`${cell.name} holds more than a MOUSE_ENTER`);
-        // the pointer enters a cell only when it moves to another one: the hover column stays
+          const want = `hot/${HOT[expectedScreen(state).hot]}`;
+          if (sets.length !== 1 || sets[0].name !== want)
+            throw new Error(
+              `the click layers showing are ${sets.map((s) => s.name).join(", ") || "none"}, expected ${want}`,
+            );
+          // a per-slot set is a pick tree of copies: the one showing
+          const slots = find(sets[0], "slots");
+          const holder = slots ? pickedLeaf(slots) : sets[0];
+          if (!holder) throw new Error(`${want}: no single slot copy shows`);
+          const row = find(holder, `row/${ev.y}`)!;
+          return { row, cell: find(row, `cell/${ev.x}`)! };
+        };
+        const has = (n: FakeNode, t: string) =>
+          n.reactions.some((r) => triggerOf(r.trigger) === t);
+        /** The layer a press or release at the cell goes to: the cell's own, else its row's. */
+        const taker = (at: { row: FakeNode; cell: FakeNode }, t: string) =>
+          has(at.cell, t) ? at.cell : has(at.row, t) ? at.row : null;
+        const release = (state: R.State) => {
+          const on = taker(cellOf(state), "MOUSE_UP");
+          if (on) fire(one(on, "MOUSE_UP"));
+        };
+        // the button is still down from the press that started this drag: the pointer moves here
+        // (no hover fires while it is held) and the release lands on the set showing
+        if (held) {
+          held = false;
+          release(spec);
+          at = { x: ev.x, y: ev.y };
+          return "drag";
+        }
+        // the pointer enters a cell only when it moves to another one: the stored column stays
         // (also across a change of the set showing, as after a pick-up)
+        const here = cellOf(spec);
         if (at?.x === ev.x && at.y === ev.y) repeats++;
-        else fire(one(cell, "MOUSE_ENTER"));
+        else fire(one(here.cell, "MOUSE_ENTER"));
         at = { x: ev.x, y: ev.y };
-        fire(one(own ? cell : row, "ON_CLICK"));
+        const down = taker(here, "MOUSE_DOWN");
+        if (down) fire(one(down, "MOUSE_DOWN"));
+        // a press that started a drag holds the button until the next canvas click; any other
+        // click releases on the same cell, on the set showing now (a pending drag's set when the
+        // press found nothing to do: the button was let go elsewhere after the drag began)
+        if (down && next.drag) {
+          held = true;
+          return "press";
+        }
+        release(down ? next : spec);
         return "";
       }
       case "handle": {
@@ -629,11 +685,16 @@ export function session(
           throw new Error(
             `selection outline ${outline?.name}, expected overlay/${k}`,
           );
-        click(
+        // the press on the handle starts the resize; the release at the next canvas click ends it
+        const handle =
           under(outline).find(
             (n) => n.name === `handle/${CORNER[ev.corner]}`,
-          ) ?? null,
-        );
+          ) ?? null;
+        if (!handle || !showing(handle))
+          throw new Error(`handle/${CORNER[ev.corner]} does not show`);
+        at = null;
+        fire(one(handle, "MOUSE_DOWN"));
+        held = !!next.drag;
         return "";
       }
       case "delete": {
@@ -674,7 +735,7 @@ export function session(
     const next = applyRef(spec, ev);
     let way: string;
     try {
-      way = act(ev, spec, byKey(2) === 1);
+      way = act(ev, spec, next, byKey(2) === 1);
     } catch (e) {
       throw new Error(
         `event ${i} ${JSON.stringify(ev)}: ${(e as Error).message}`,

@@ -118,6 +118,17 @@ const RT = (() => {
         };
       }
       if (op === "close") return { type: "CLOSE" };
+      // another top-level frame of the page, in place of this one
+      if (op === "go") {
+        const f = topFrame(a);
+        if (!f) throw new Error(`no frame ${a}`);
+        return {
+          type: "NODE",
+          destinationId: f.id,
+          navigation: "NAVIGATE",
+          transition: null,
+        };
+      }
       throw new Error(`unknown special ${op}`);
     };
     return (s) => {
@@ -287,11 +298,66 @@ const RT = (() => {
     const root = build(d.root, f, null, byIdx, d.hover, await named());
     root.x = d.rootX;
     root.y = d.rootY;
+    // the gate map: in this frame, or in a frame of its own with a way back (d.machine)
+    let home = f;
+    if (d.machine) {
+      const m = d.machine;
+      const prev = topFrame(m.name);
+      if (prev) prev.remove();
+      home = figma.createFrame();
+      home.name = m.name;
+      home.resize(m.w, m.h);
+      home.fills = solid(m.bg);
+      home.clipsContent = true;
+      page().appendChild(home);
+      home.x = d.x + m.x;
+      home.y = d.y + m.y;
+      for (const [s, x, y, size, color, bold] of m.texts) {
+        const t = figma.createText();
+        t.fontName = bold ? BOLD : REG;
+        t.fontSize = size;
+        t.characters = s;
+        t.fills = solid(color);
+        home.appendChild(t);
+        t.x = x;
+        t.y = y;
+      }
+      const [label, bw, bh] = m.back;
+      const b = figma.createFrame();
+      b.name = "button/back";
+      b.resize(bw, bh);
+      b.cornerRadius = 8;
+      b.fills = solid("#0C8CE9");
+      home.appendChild(b);
+      b.x = m.w - 48 - bw;
+      b.y = 28;
+      const t = figma.createText();
+      t.fontName = BOLD;
+      t.fontSize = 13;
+      t.characters = label;
+      t.fills = solid("#FFFFFF");
+      b.appendChild(t);
+      t.x = 16;
+      t.y = (bh - 16) / 2;
+      await b.setReactionsAsync([
+        {
+          trigger: { type: "ON_CLICK" },
+          actions: [
+            {
+              type: "NODE",
+              destinationId: f.id,
+              navigation: "NAVIGATE",
+              transition: null,
+            },
+          ],
+        },
+      ]);
+    }
     const chart = figma.createFrame();
     chart.name = d.chart.name;
     chart.resize(d.chart.w, d.chart.h);
     chart.fills = solid(d.chart.bg);
-    f.appendChild(chart);
+    home.appendChild(chart);
     chart.x = d.chart.x;
     chart.y = d.chart.y;
     // overlays: top-level frames beside this one, opened by the reactions. A previous build's
@@ -302,22 +368,35 @@ const RT = (() => {
         (d.clear || []).some((p) => n.name.startsWith(p))
       )
         n.remove();
-    const overlays = [];
+    const overlays = await placeOverlays(d, byIdx);
+    page().flowStartingPoints = [{ nodeId: f.id, name: d.flow }];
+    return { frame: f.id, editor: root.id, chart: chart.id, overlays };
+  }
+
+  /** Overlay frames beside the Present frame (d.x, d.w), the `first`-th onwards. */
+  async function placeOverlays(d, byIdx) {
+    const out = [];
+    const first = d.first || 0;
     for (const [i, o] of (d.overlays || []).entries()) {
       const old = topFrame(o.n);
       if (old) old.remove();
       const node = build(o, page(), null, byIdx, d.hover, await named());
       node.x = d.x + d.w + 200;
-      node.y = d.y + i * (o.h + 40);
-      overlays.push(node.id);
+      node.y = d.y + (first + i) * (o.h + 40);
+      out.push(node.id);
     }
-    page().flowStartingPoints = [{ nodeId: f.id, name: d.flow }];
-    return { frame: f.id, editor: root.id, chart: chart.id, overlays };
+    return out;
+  }
+
+  /** More overlays, when the frame's chunk had no room for them all. */
+  async function overlays(d) {
+    return { overlays: await placeOverlays(d, await wires(d.prefix)) };
   }
 
   /** One node of the screen spec (the port of silicon/nathan/src/ui/render.ts) and its subtree. */
   function build(s, into, parentSpec, byIdx, hover, byName) {
     if (Array.isArray(s)) return cell(s, into, hover);
+    if (s.t === "s") return icon(s, into, parentSpec, byIdx);
     const node =
       s.t === "f"
         ? figma.createFrame()
@@ -400,6 +479,27 @@ const RT = (() => {
       node.setBoundVariable("characters", t);
     }
     for (const c of s.ch || []) build(c, node, s, byIdx, hover, byName);
+    return node;
+  }
+
+  /** An icon: the frame of vectors Figma makes of an SVG document, at the document's size. */
+  function icon(s, into, parentSpec, byIdx) {
+    const node = figma.createNodeFromSvg(s.svg);
+    node.name = s.n;
+    into.appendChild(node);
+    if (parentSpec && parentSpec.L) {
+      node.layoutSizingHorizontal = "FIXED";
+      node.layoutSizingVertical = "FIXED";
+    } else if (s.x !== undefined && s.y !== undefined) {
+      node.x = s.x;
+      node.y = s.y;
+    }
+    if (s.v !== undefined) {
+      const v = byIdx[s.v];
+      if (!v) throw new Error(`no wire ${s.v} for ${s.n}`);
+      node.setBoundVariable("visible", v);
+    }
+    if (s.hd) node.visible = false;
     return node;
   }
 
@@ -580,7 +680,7 @@ const RT = (() => {
     }
     return h.toString(36);
   }
-  const steps = { vars, frame, ui, react, chart };
+  const steps = { vars, frame, overlays, ui, react, chart };
   /** Runs one step after checking its data arrived intact. */
   async function run(step, data, hash) {
     const got = fnv(JSON.stringify(data));

@@ -99,9 +99,16 @@ export const PAINT_SET = HOT.indexOf("pen-down");
  *   constants): worst 754 → 588 actions, mean 579 → 420;
  * - "row@sel": one per row and value of the selection register (the drop's move unit writes only
  *   the selected record): 518 → 333.
- * Drawing clicks (idle-create, drag-span) stay per row: finer grains don't pay off there. The pen
- * is per cell: with PX and PY built in, every pixel but one folds away. */
-export const HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row", "cell", "cell"] as const;
+ * The pick-up and the pen are per cell (with PX and PY built in, every pixel but one folds away).
+ * The drop and the opposite corner are per cell too: they are a release, and no hover fires while
+ * the button is held, so the column cannot come from one (a drop 625 actions, a corner 260). The
+ * first corner stays per row: it is a press, and the pointer was hovered there first. */
+export const HOTSPOT_GRAIN: ReadonlyArray<"row" | "cell" | "row@sel"> = ["cell", "row", "cell", "cell", "cell", "cell"];
+
+/** Which half of a mouse click each hotspot set takes, in `hot` bit order: the press starts a
+ * gesture (pick up, first corner, the pen down or up), the release ends one (drop, opposite corner),
+ * so a drag is one move or one shape, and a click (press and release on one cell) still works. */
+export const HOTSPOT_GESTURE: ReadonlyArray<"down" | "up"> = ["down", "down", "up", "up", "down", "down"];
 
 /** The reaction a click on canvas row `row` (column `col` for a per-cell set, selected slot `sel`
  * for a per-slot one) of hotspot set `set` runs. */
@@ -111,8 +118,8 @@ export const clickRun = (set: number, row: number, col = 0, sel = 0) =>
   (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
 
 /** What hovering cell (`col`, `row`) of hotspot set `set` runs besides storing the pointer's
- * column (every cell does that): on the pen-down set it paints the cell, else nothing more
- * ("pointer/<col>", the store alone). */
+ * column (every cell does that): on the pen-down set it paints the cell (releasing the button over
+ * it does too), else nothing more ("pointer/<col>", the store alone). */
 export const hoverRun = (set: number, row: number, col: number): string =>
   set === PAINT_SET ? `paint/${row}/${col}` : `pointer/${col}`;
 

@@ -41,6 +41,8 @@ function make(api: PluginAPI, s: NodeSpec): SceneNode {
       return api.createEllipse();
     case "text":
       return api.createText();
+    case "svg":
+      return api.createNodeFromSvg(s.svg!);
   }
 }
 
@@ -72,8 +74,10 @@ export async function render(
     out.created++;
     if (ctx.breathe && out.created % BREATHE_EVERY === 0) await ctx.breathe();
 
-    // look
-    if (node.type === "TEXT") {
+    // look (an icon brings its own)
+    if (s.type === "svg") {
+      // drawn at the size its document gives
+    } else if (node.type === "TEXT") {
       const t = s.text!;
       node.fontName = t.bold ? FONT_BOLD : FONT;
       node.fontSize = t.size ?? 12;

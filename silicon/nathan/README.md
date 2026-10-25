@@ -4,7 +4,7 @@ CPU NATHAN is a purpose-built CPU drawn in Figma: 5,636 logic gates in 51 module
 to _be_ the Figma OS editor (`os-ui`):
 
 - tools, by click or by shortcut key;
-- click-click drawing, moving and resizing;
+- drawing, moving and resizing by dragging, as in Figma;
 - colours, rectangles, ellipses and frames;
 - the layers panel with show/hide;
 - duplicate, delete, bring forward / send backward, and nudge;
@@ -24,8 +24,8 @@ In ▶ Present mode Figma's own prototype engine runs it, with no plugin and no 
 
 | Frame                                          | What it is                                                                                                                                                                                                              |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **NATHAN · Figma OS** (opens first)            | The editor. Toolbar (V F R O P) with the pen's Erase and Clear beside it, a 14 × 10-cell canvas, the layers panel, fill colours, Arrange buttons, and shortcuts (D, Delete/Backspace, `[` `]`, arrows, Esc, E, C).    |
-| **NATHAN · the machine** ("see the machine ▸") | All 5,636 gates on one screen, one lamp each, grouped by module (EVDEC, CONDS, HIT8, READPLANE, GEOM, PEN, PAINT, the 8 LAYER records, STATE, DISPLAY…). Every click lights the gates it computes; the shortcut keys work here too. |
+| **NATHAN · Figma OS** (opens first)            | The editor, a 1440 × 810 screen laid out like Figma's UI3: the rail and Layers panel on the left, the canvas with its rulers and the floating toolbar (Move, Frame, Rectangle, Ellipse, Pen; Erase and Clear beside it), the Design panel on the right (the current fill, 16 colours, Arrange, nudge), and shortcuts (V F R O P, D, Delete/Backspace, `[` `]`, arrows, Esc, E, C). |
+| **NATHAN · the machine** ("See gates")          | All 5,636 gates on one screen, one lamp each, grouped by module (EVDEC, CONDS, HIT8, READPLANE, GEOM, PEN, PAINT, the 8 LAYER records, STATE, DISPLAY…). Every click lights the gates it computes; the shortcut keys work here too. The editor's blue "See gates" button and the rail's Gates tab lead here. |
 | **NATHAN · the circuit** ("the circuit ▸")     | The full drawing, every gate and wire, live, in a scrolling window. One button per module scrolls the window to it.                                                                                                     |
 
 ## Build it yourself
@@ -35,13 +35,20 @@ In ▶ Present mode Figma's own prototype engine runs it, with no plugin and no 
 2. In any design file: **Plugins → Development → CPU NATHAN**.
 3. Press, in order:
    1. **Build hardware**: draws the gates on the page "CPU NATHAN", about 40 s.
-   2. **Build the OS**: variables, lamps, reactions and the three frames, about 5 min.
+   2. **Build the OS**: variables, lamps, reactions and the three frames: about 5 min before the
+      press/release rebuild, which stores 1.8× the actions, so expect longer.
    3. **Self-test**: should end with ✓.
 4. Close the plugin and press ▶.
 
-To draw: press **P** (or the Pen button), click a cell to put the pen down, move the pointer over
-the canvas (every cell it enters is inked), click again to lift the pen. **E** toggles Erase (the
-pen inks the background back), **C** clears the bitmap. Any other tool, or Esc, leaves the pen.
+On the canvas, as in Figma: drag a layer to move it, drag on empty canvas with Frame, Rectangle or
+Ellipse to draw one (a click makes a one-cell shape), drag a selection handle to resize. The layer
+lands where the button is let go (the viewer reports nothing in between, below).
+
+To draw: press **P** (or the Pen button), press on the canvas to put the pen down, move the mouse
+(every cell the pointer enters is inked), press again to lift the pen. While the button is held
+the viewer reports no movement, so a drag inks only where it starts and where it is let go: draw
+with the button up. **E** toggles Erase (the pen inks the background back), **C** clears the
+bitmap. Any other tool, or Esc, leaves the pen.
 
 The plugin is only the builder: it draws the machine and stores its reactions. Nothing it does runs
 when you use the file.
@@ -56,7 +63,7 @@ when you use the file.
   the prototype dead to clicks until a reload. Actions behind an `if` that is false cost nothing:
   a 30,000-action reaction with all but two skipped ran fine.
 
-  At 700 every control is one event (the longest, a pick-up click on canvas cell (6, 6), is 591).
+  At 700 every control is one event (the longest, a drop on canvas cell (7, 7), is 631).
   With a smaller budget, a longer reaction is cut between its top-level actions:
   1. the click or key runs the first part, then opens an invisible 1×1 overlay;
   2. the overlay's timer (1 ms) runs the next part on a fresh stack;
@@ -70,7 +77,7 @@ when you use the file.
 
 - **latches**:
   - `auto` (default): every latch gate is evaluated where the reaction fits the budget, `Q = D`
-    otherwise (731 and 30 of the 761 reactions).
+    otherwise.
   - `every gate`, `compact` and `direct` are also available.
 - **identity gates as wires** (on): `AND x 1`, `BUF` and similar gates become wires inside a
   reaction, two gates of the same kind on the same inputs become one, and the logic only one
@@ -118,13 +125,20 @@ plane (READPLANE) reads one record · geom (MOVE SPAN NUDGE) computes the new re
 
 - **Controls made for the state they show in.** A reaction is synthesized with everything its
   control implies held constant, so the gates that would only decide it fold away:
-  - **Canvas clicks.** Six click layers cover the canvas, and the `hot` lines show the one that
-    matches the machine's state (select / draw / drop / opposite corner / pen up / pen down). Each
-    is 10 row strips with their own reaction, PY built in, which folds half the hit test away.
-    Hovering a cell stores its column; the click copies it into the machine's PX. The pick-up and
-    the pen's two layers have a reaction per cell instead, PX built in too (they copy nothing). Every
-    cell still stores its column on hover, the pen-down cells before they paint: a pick-up shows the
-    drop's layer under a pointer that has not moved, and the drop must find the column there.
+  - **Canvas presses and releases.** Six click layers cover the canvas, and the `hot` lines show
+    the one that matches the machine's state (select / draw / drop / opposite corner / pen up / pen
+    down). The canvas takes a mouse click apart: the press (MOUSE_DOWN) starts a gesture (pick up,
+    first corner, the pen down or up), the release (MOUSE_UP) ends one (drop, opposite corner), so
+    a drag is one move or one shape, and a plain click still works. The machine's events are the
+    same CLICK as before, the first half and the second.
+    The first-corner layer is 10 row strips with their own reaction, PY built in, which folds half
+    the hit test away; hovering a cell stores its column, and the press copies it into the
+    machine's PX. Every other layer has a reaction per cell, PX built in too (it copies nothing):
+    the pick-up and the pen because the hit test folds to constants, the drop and the opposite
+    corner because they are releases, and no hover fires while the button is held, so the column
+    cannot come from one. Every cell stores its column on hover and on release (the pen-down cells
+    before they paint): the layer showing changes under a pointer that has not moved, and the next
+    press must find the column there.
   - **Duplicate, Bring forward, Send backward** have one reaction per selected slot: 8 stacked
     buttons, and 8 stacked layers for their keys D `]` `[`, picked by the selection register's bits
     like the selection outline. Only a layer that shows takes a click or a key, so the one for the
@@ -152,15 +166,15 @@ screen:
   PY), 17 `ERASE`, 18 `CLEAR`. The pen's click is `CLICK` with the pen tool and nothing pending:
   it inks the cell and flips the pen (the hardware's DOWN then finds nothing to do).
 - **Strokes are hovers.** The pen-up and pen-down click layers (`hot` lines 4 and 5, picked by
-  the `pendown` bit) have a reaction per cell, PX and PY built in. On the pen-down layer, entering
-  a cell (MOUSE_ENTER, which also has its ON_CLICK) stores the pointer's column, then runs
-  `paint/<row>/<col>`, made with the pen known to be down: every pixel but that one folds away,
-  and what is left is that word's latch.
+  the `pendown` bit) have a reaction per cell, PX and PY built in; a press on either is the pen's
+  click. On the pen-down layer, entering a cell (MOUSE_ENTER) or letting the button go over it
+  (MOUSE_UP) stores the pointer's column, then runs `paint/<row>/<col>`, made with the pen known
+  to be down: every pixel but that one folds away, and what is left is that word's latch.
 
 | control                       | reactions | actions (one event)                                  |
 | ----------------------------- | --------- | ---------------------------------------------------- |
-| a stroke cell (hover)         | 140       | 15, every one (4 store the pointer's column)         |
-| a pen click (down or up)      | 140       | 26, every one (shared by the pen-up and pen-down layers) |
+| a stroke cell (hover, release) | 140      | 15, every one (4 store the pointer's column)         |
+| a pen press (down or up)      | 140       | 26, every one (shared by the pen-up and pen-down layers) |
 | Pen tool (P)                  | 1         | 44 (the other tools 44–45: they now also lift the pen) |
 | Erase (E)                     | 1         | 15                                                   |
 | Clear (C)                     | 1         | 424 (140 × `if (men) Q = 0`, latches Q = D)          |
@@ -171,9 +185,9 @@ screen:
 | --------------------------- | ------------------------------------------------------------------------------------ |
 | gates / modules             | 5,636 / 51 (display: 83; the pen: PEN 26, PAINT 766)                                 |
 | variables                   | 5,660 (5,654 wires + 6 for the pointer column and the warm-up)                       |
-| bound layers                | 17,592: 10,541 lamps on the drawing, 5,636 on the gate map, 1,387 on the editor screen, 28 on the D `[` `]` key layers of the other two frames |
-| reactions                   | 761: 520 on the canvas (140 pick-up cells, 10 draw rows, 80 drop rows × slots, 10 drag-span rows, 140 pen clicks, 140 strokes), 25 controls, 216 per-slot; 142,839 actions stored; every one a single event, at most 591 |
-| build time in Figma desktop | hardware ~40–55 s, OS ~5 min (measured before the pen; it adds 17% gates and 59% reactions) |
+| bound layers                | 17,608: 10,541 lamps on the drawing, 5,636 on the gate map, 1,403 on the editor screen, 28 on the D `[` `]` key layers of the other two frames |
+| reactions                   | 951: 710 on the canvas (140 pick-up cells, 10 first-corner rows, 140 drop cells, 140 opposite-corner cells, 140 pen presses, 140 strokes), 25 controls, 216 per-slot; 263,671 actions stored on the editor's layers; every one a single event, at most 631 |
+| build time in Figma desktop | hardware ~40–55 s, OS ~5 min (measured before the pen and the press/release rebuild, which together store nearly twice the actions) |
 
 ## Verified, and where
 
@@ -203,6 +217,20 @@ screen:
 - a layer with mouse-down and mouse-up reactions doesn't also fire its click;
 - spacers, click bubbling and visibility-switched click layers work.
 
+**Measured in the browser's Present view** (test 14 "press, drag, release", scripted pointer
+events, 2026-10-24), which is why the canvas takes presses and releases:
+
+- no MOUSE_ENTER fires while the mouse button is held, on any layer, whether the press landed on
+  the layer itself, on its parent, or on a layer with no reactions;
+- MOUSE_DOWN fires on the layer under the press, MOUSE_UP on the layer under the release, also
+  when the press made that layer visible (a press that shows another click layer, then a release
+  over it);
+- a parent takes a press and a release its children have no reaction for;
+- `setReactionsAsync` rejects ON_DRAG with SET_VARIABLE actions;
+- a frame taller than the view scrolls, and then every drag scrolls the whole screen instead of
+  reaching the layers, even one that starts on a layer with a MOUSE_DOWN reaction. The editor is
+  1440 × 810 (16:9), wider than a laptop's Present view, so it shows whole and nothing scrolls.
+
 **In Node** (`npx vitest run nathan/test`, from `silicon/`):
 
 - the machine matches the editor spec on 40 random sessions of 120 events (with pen sessions:
@@ -212,18 +240,23 @@ screen:
 - every reaction matches the full gate-level tick on up to 140 sampled states where its control
   shows, in all four latch modes;
 - the plugin runs end to end against a fake of the Figma API, at budget 700 (one event each) and
-  at 400 with identity gates kept (chains of overlays); its self-test starts with a fixed pen
-  session (P, a stroke by hovers, lift, Erase and an erasing stroke, a rectangle, Esc, Clear) and
-  checks every ink rectangle's binding after every action.
+  at 400 with identity gates kept (chains of overlays); its self-test drives the canvas as the
+  viewer does (a press, the button held through a drag with no hovers, the release where it lands)
+  and starts with a fixed pen session (P, a stroke by hovers, lift, Erase and an erasing stroke, a
+  rectangle, Esc, Clear), checking every ink rectangle's binding after every action.
 
-The pen has not been run in Figma desktop yet.
+The press/release build has not been run in Figma desktop yet; the click-to-toggle pen of the
+build before it inked cells in the browser's Present view.
 
 ## Limits
 
 - The canvas is a fixed 14 × 10-cell, 8-layer subset of the editor (`src/model/reference.ts`).
   os-ui's live model has since moved to an unbounded canvas.
-- The pen inks whole cells, in one colour (near-white, so it is hard to see on a white frame). A
-  stroke is the cells the viewer reports the pointer entering: a fast flick can skip a cell.
+- The pen inks whole cells, in one colour (near-white, on the dark canvas). A stroke is the cells
+  the viewer reports the pointer entering: a fast flick can skip a cell. Drawing with the button
+  held is impossible (no hover fires while it is held), so the pen is pressed down and up.
+- A dragged layer jumps to where the button is let go: the viewer reports nothing in between, so
+  it cannot follow the pointer.
 - A gate keeps its last lamp colour when a reaction does not evaluate it: folded to a constant
   (mostly the event decoder), turned into a wire, merged with an identical gate, or in the logic of a
   register that does not load this event. Everything that computes lights up.

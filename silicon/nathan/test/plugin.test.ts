@@ -24,7 +24,7 @@ import {
   UI_COLLECTION,
 } from "../plugin/src/names";
 import { TEST_COLLECTION, TEST_PREFIX } from "../src/platform/tests";
-import { UI_H } from "../src/ui/spec";
+import { UI_H, UI_W } from "../src/ui/spec";
 import { varName } from "../../src/prototype";
 import { nathanNetlist } from "../src/hw";
 import { classify } from "../src/react/synth";
@@ -260,23 +260,27 @@ describe("CPU NATHAN plugin, end to end", () => {
     expect(os?.type).toBe("os");
     const stats = os!.type === "os" ? os!.stats : null!;
     expect(stats.missing).toBe(0);
-    // canvas clicks: pick-up per cell (14 × 10), draw per row (10), drop per row and slot (10 × 8),
-    // drag-span per row (10), the pen's click per cell (14 × 10, shared by the pen-up and pen-down
-    // sets) and its stroke per cell (14 × 10, on hover); then 25 controls (5 tools, layer rows,
-    // eyes, Delete, Esc, Erase, Clear), and for each of the 8 slots: 16 swatches, 4 handles, 4
-    // nudges, Duplicate / Bring forward / Send backward
+    // canvas presses and releases: pick-up per cell (14 × 10, a press), first corner per row (10,
+    // a press), drop per cell (14 × 10, a release: no hover fires while the button is held, so the
+    // column is built in), opposite corner per cell (14 × 10, a release), the pen's press per cell
+    // (14 × 10, shared by the pen-up and pen-down sets) and its stroke per cell (14 × 10, on hover
+    // and release); then 25 controls (5 tools, layer rows, eyes, Delete, Esc, Erase, Clear), and
+    // for each of the 8 slots: 16 swatches, 4 handles, 4 nudges, Duplicate / Bring forward / Send
+    // backward
     expect(stats.reactions).toBe(
-      14 * 10 + 10 + 10 * 8 + 10 + 2 * 14 * 10 + 25 + (16 + 4 + 4 + 3) * 8,
+      14 * 10 + 10 + 14 * 10 + 14 * 10 + 2 * 14 * 10 + 25 + (16 + 4 + 4 + 3) * 8,
     );
     const p = page(fig)!;
     const present = kid(p, PRESENT)!;
     expect(present).not.toBeNull();
     expect(kid(present, "editor")).not.toBeNull();
-    // the gates are one button away in this build, not under the editor
-    expect(kid(kid(kid(present, "editor"), "topbar"), "note")?.characters).toMatch(
-      /see the machine/,
-    );
-    expect(present.height).toBeLessThan(1000); // the editor is shown at full size
+    // the editor fills the frame Present opens, 16:9: wider than a laptop's view, so it shows whole
+    // (a taller frame scrolls, and the viewer turns a drag into a scroll of the whole screen)
+    expect([present.width, present.height]).toEqual([UI_W, UI_H]);
+    expect(UI_W / UI_H).toBeCloseTo(16 / 9, 2);
+    // the gates are one button away: the Design panel's blue button jumps to them
+    const toMachine = kid(kid(kid(present, "editor"), "design"), "button/machine")!;
+    expect(toMachine.reactions.map((r) => r.trigger?.type)).toEqual(["ON_CLICK"]);
     // the machine: every gate as a lamp, bound to its output; the circuit: a window over the drawing
     const machine = kid(p, MACHINE)!;
     const lamps = kid(machine, "gate map")!.children.flatMap((b) =>
@@ -291,11 +295,12 @@ describe("CPU NATHAN plugin, end to end", () => {
     expect(view.overflowDirection).toBe("BOTH");
     expect(kid(view, `cell/${TOP}`)?.type).toBe("COMPONENT");
     const nav = (from: FakeNode, to: FakeNode) =>
-      from.children.some((b) =>
-        b.reactions.some((r) =>
-          r.actions?.some(
-            (a) => a.type === "NODE" && a.destinationId === to.id,
-          ),
+      reactionsUnder(from).some(({ r }) =>
+        r.actions?.some(
+          (a) =>
+            a.type === "NODE" &&
+            a.destinationId === to.id &&
+            String(a.navigation) === "NAVIGATE",
         ),
       );
     expect(nav(present, machine) && nav(machine, present)).toBe(true);
@@ -331,18 +336,34 @@ describe("CPU NATHAN plugin, end to end", () => {
     });
     expect(mixed.map((n) => n.name)).toEqual([]);
     const hover = all.filter(({ r }) => r.trigger?.type === "MOUSE_ENTER");
-    // every cell stores the pointer's column on hover: the pick-up, draw, drag-span, pen-up and
-    // pen-down sets (the stroke too) and the 8 slot copies of the drop set
-    expect(hover).toHaveLength((5 + 8) * 14 * 10);
-    // a stroke cell: its hover paints it, its click lifts the pen, and both are a few actions
-    const penDown = kid(kid(kid(present, "editor"), "canvas"), "hot/pen-down")!;
+    // every cell of the six click-layer sets stores the pointer's column on hover (the pen-down
+    // set's strokes too)
+    expect(hover).toHaveLength(6 * 14 * 10);
+    // a stroke cell: its hover and its release ink it, its press lifts the pen, all a few actions
+    const canvasNode = kid(kid(present, "editor"), "canvas")!;
+    const penDown = kid(canvasNode, "hot/pen-down")!;
     const cell = kid(kid(penDown, "row/3"), "cell/5")!;
     expect(cell.reactions.map((r) => r.trigger?.type).sort()).toEqual([
+      "MOUSE_DOWN",
       "MOUSE_ENTER",
-      "ON_CLICK",
+      "MOUSE_UP",
     ]);
     for (const r of cell.reactions) expect(size(r.actions ?? [])).toBeLessThan(40);
-    expect(all.filter(({ r }) => r.trigger?.type === "MOUSE_DOWN")).toEqual([]);
+    // the canvas takes presses and releases apart, never a click (a drag is one gesture); the
+    // panels take clicks
+    const onCanvas = new Set(reactionsUnder(canvasNode).map(({ r }) => r));
+    expect(
+      all.filter(
+        ({ r }) => r.trigger?.type === "ON_CLICK" && onCanvas.has(r),
+      ),
+    ).toEqual([]);
+    expect(
+      all.filter(
+        ({ r }) =>
+          (r.trigger?.type === "MOUSE_DOWN" || r.trigger?.type === "MOUSE_UP") &&
+          !onCanvas.has(r),
+      ),
+    ).toEqual([]);
     // every control is one event of at most 700 actions: no reaction needs the overlays
     const c = events(fig, 700);
     expect(c.chained).toBe(0);

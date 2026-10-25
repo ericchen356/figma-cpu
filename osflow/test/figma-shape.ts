@@ -154,6 +154,8 @@ export function runEvent(
       const [how, id] = (to ?? "").split(" ");
       const o = id ? nodeById(id) : null;
       if (how === "CLOSE" && open.pop()) return;
+      // to another top-level frame (the gate map): the event ends there, not a chain
+      if (how === "NAVIGATE" && o && !open.length) return;
       if (how === "OVERLAY" && o) open.push(o);
       else if (how === "SWAP" && o && open.length) open[open.length - 1] = o;
       else

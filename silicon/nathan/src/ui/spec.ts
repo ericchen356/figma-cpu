@@ -15,7 +15,8 @@ import {
   TOOL_BITS,
 } from "../hw/layout";
 import { GRID_H, GRID_W } from "../model/reference";
-import { clickRun, HOTSPOT_GRAIN, hoverRun } from "../react/catalog";
+import { clickRun, HOTSPOT_GESTURE, HOTSPOT_GRAIN, hoverRun, PAINT_SET } from "../react/catalog";
+import { type IconName, svgIcon } from "./icons";
 
 /** PICO-8, same as spec/palette.json and os-ui. */
 export const PALETTE_HEX = [
@@ -48,23 +49,33 @@ export const COLOR = {
   dim: "#B3B3B3",
   faint: "#808080",
   line: "#444444",
-  grid: "#262626",
-  frame: "#141414",
+  grid: "#2A2A2A",
+  frame: "#1E1E1E",
   /** The pen's ink. */
   ink: "#F5F5F5",
 };
 
-export const CELL = 48;
+// The editor is a 1440 × 810 (16:9) screen laid out like Figma's UI3 (os-ui's reference frames):
+// the left rail and Layers panel, the canvas with its rulers and the floating toolbar, the Design
+// panel. 16:9 is wider than a laptop's Present view, so the whole frame shows at once: a frame
+// taller than the view scrolls, and the viewer then turns a drag into a scroll of the whole screen
+// (measured: even a drag that starts on a layer with a MOUSE_DOWN reaction).
+export const CELL = 56;
 export const CANVAS_W = GRID_W * CELL;
 export const CANVAS_H = GRID_H * CELL;
+const RAIL_W = 56;
 const LEFT_W = 240;
-const RIGHT_W = 240;
-const TOP_H = 48;
-const MID_W = 720;
-export const UI_W = LEFT_W + MID_W + RIGHT_W;
-export const UI_H = 704;
-export const CANVAS_X = LEFT_W + (MID_W - CANVAS_W) / 2;
-export const CANVAS_Y = TOP_H + 32;
+const RIGHT_W = 242;
+const RULER = 20;
+export const UI_W = 1440;
+export const UI_H = 810;
+/** The canvas region between the panels (rulers included). */
+const MID_X = RAIL_W + LEFT_W;
+const MID_W = UI_W - MID_X - RIGHT_W;
+export const CANVAS_X = MID_X + RULER + Math.round((MID_W - RULER - CANVAS_W) / 2);
+export const CANVAS_Y = 84;
+const BAR_H = 48;
+const BAR_Y = UI_H - 16 - BAR_H;
 
 export type Sizing = "FIXED" | "HUG" | "FILL";
 
@@ -76,21 +87,31 @@ export interface LayoutSpec {
   cross?: "MIN" | "CENTER" | "MAX";
 }
 
-/** What a layer does when clicked / hovered / a key is pressed. */
+/** What a layer does when clicked / hovered / pressed / released / a key is pressed. The canvas
+ * takes the mouse button's press (`down`) and release (`up`) apart, so a drag is one gesture: the
+ * viewer fires MOUSE_DOWN on the layer under the press and MOUSE_UP on the one under the release
+ * (one that the press made visible included), and no MOUSE_ENTER while the button is held. */
 export type Trigger =
-  { on: "click" } | { on: "enter" } | { on: "key"; codes: number[] };
+  | { on: "click" }
+  | { on: "enter" }
+  | { on: "down" }
+  | { on: "up" }
+  | { on: "key"; codes: number[] };
 export interface ReactionRef {
   trigger: Trigger;
-  /** A catalogue reaction ("tool/2", "paint/3/5" on hover), or a pointer-column setter ("pointer/3"). */
+  /** A catalogue reaction ("tool/2", "paint/3/5" on hover), a pointer-column setter ("pointer/3"), or
+   * a jump to another frame ("go/machine"). */
   run: string;
-  /** A hover that stores the pointer's column (this one) before its run: "paint/…" on the pen-down
-   * cells, so a click that follows without the pointer moving finds the column like after any hover. */
+  /** Store the pointer's column (this one) before the run: on a canvas cell's hover or release, so
+   * a press that follows without the pointer moving finds the column (no hover fires during a drag). */
   pointer?: number;
 }
 
 export interface NodeSpec {
-  type: "frame" | "rect" | "ellipse" | "text";
+  type: "frame" | "rect" | "ellipse" | "text" | "svg";
   name: string;
+  /** An icon: an SVG document (type "svg"), drawn at its own width and height. */
+  svg?: string;
   x?: number;
   y?: number;
   w?: number;
@@ -334,7 +355,8 @@ function layerBox(k: number): NodeSpec {
 
 const HANDLE = 12;
 /** Selection outline and the four resize handles of a layer, above the click layers. Its handles
- * run the reactions made for slot `k` (the overlay only shows while `k` is selected). */
+ * run the reactions made for slot `k` (the overlay only shows while `k` is selected). A handle
+ * takes the press: dragging it to the new corner and releasing there resizes. */
 function overlayBox(k: number): NodeSpec {
   const handle = (corner: string, code: number): NodeSpec =>
     frame(`handle/${corner}`, {
@@ -343,7 +365,7 @@ function overlayBox(k: number): NodeSpec {
       fill: COLOR.text,
       stroke: COLOR.accent,
       strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}@${k}` }],
+      reactions: [{ trigger: { on: "down" }, run: `handle/${code}@${k}` }],
     });
   const handleRow = (a: NodeSpec, b: NodeSpec): NodeSpec =>
     frame("handles", {
@@ -382,20 +404,30 @@ function selection(): NodeSpec {
 
 // ---------- the canvas: grid, layers, click layers, overlays ----------
 
-/** One set of click layers: a row of cells per canvas row. Hovering a cell, in any set, stores its
- * column: the set showing changes under a pointer that stays put (a pick-up shows the drop's set),
- * and the next click must still find it. In a per-row set the row takes the click (a click on a
- * cell goes to its row, the cell having no click of its own), running the reaction made for that
- * row with the stored column. In a per-cell set each cell takes its own click, with its column
- * built in; on the pen-down set, entering a cell also paints it (the pen's stroke). A per-slot set
- * is 8 stacked copies picked by the selection register's bits, like the per-slot buttons. */
+/** One set of click layers: a row of cells per canvas row. The set takes one half of a click
+ * (HOTSPOT_GESTURE): the press (pick up, first corner, the pen down or up) or the release (drop,
+ * opposite corner), so a drag is one gesture. Every cell stores its column when the pointer enters
+ * it and when the button is released over it: the set showing changes under a pointer that stays put
+ * (a pick-up shows the drop's set), no hover fires while the button is held, and the next press must
+ * still find the column. In a per-row set the row takes the press (a press on a cell goes to its row,
+ * the cell having none of its own), running the reaction made for that row with the stored column.
+ * In a per-cell set each cell takes its own, with its column built in. On the pen-down set,
+ * entering a cell or releasing over it inks it (the pen's stroke). A per-slot set is 8 stacked
+ * copies picked by the selection register's bits, like the per-slot buttons. */
 function hotspotSet(i: number): NodeSpec {
   const grain = HOTSPOT_GRAIN[i];
+  const gesture = HOTSPOT_GESTURE[i];
   const cellReactions = (r: number, c: number): ReactionRef[] => {
     const hover = hoverRun(i, r, c);
+    const own = grain === "cell" ? clickRun(i, r, c) : null;
+    // the release: the set's own (a drop, a corner), the stroke on the pen-down set, else the column
+    const up = own && gesture === "up" ? own : i === PAINT_SET ? hover : `pointer/${c}`;
+    const storing = (run: string) => (run.startsWith("pointer/") ? {} : { pointer: c });
     return [
-      ...(grain === "cell" ? [{ trigger: { on: "click" as const }, run: clickRun(i, r, c) }] : []),
-      { trigger: { on: "enter" }, run: hover, ...(hover.startsWith("pointer/") ? {} : { pointer: c }) },
+      ...(own && gesture === "down" ? [{ trigger: { on: "down" as const }, run: own }] : []),
+      { trigger: { on: "enter" }, run: hover, ...storing(hover) },
+      // a per-row set's row takes its release itself
+      ...(grain !== "cell" && gesture === "up" ? [] : [{ trigger: { on: "up" as const }, run: up, ...storing(up) }]),
     ];
   };
   const rows = (sel: number): NodeSpec[] =>
@@ -405,7 +437,7 @@ function hotspotSet(i: number): NodeSpec {
         y: r * CELL,
         w: CANVAS_W,
         h: CELL,
-        ...(grain === "cell" ? {} : { reactions: [{ trigger: { on: "click" as const }, run: clickRun(i, r, 0, sel) }] }),
+        ...(grain === "cell" ? {} : { reactions: [{ trigger: { on: gesture }, run: clickRun(i, r, 0, sel) }] }),
         children: Array.from({ length: GRID_W }, (_, c) =>
           frame(`cell/${c}`, {
             x: c * CELL,
@@ -494,76 +526,117 @@ function canvas(): NodeSpec {
   });
 }
 
-// ---------- panels ----------
+// ---------- the chrome: rail, panels, rulers, toolbar ----------
+
+const icon = (
+  name: string,
+  ic: IconName,
+  x: number,
+  y: number,
+  size = 24,
+  color: string = COLOR.text,
+  p: Partial<NodeSpec> = {},
+): NodeSpec => ({ type: "svg", name, svg: svgIcon(ic, size, color), x, y, w: size, h: size, ...p });
+
+const rule = (name: string, x: number, y: number, w: number, h: number): NodeSpec =>
+  rect(name, { x, y, w, h, fill: COLOR.line });
+
+/** The rail at the far left: the Figma mark and the File / Assets / Tools tabs (File is open). */
+function rail(): NodeSpec {
+  const tab = (name: string, ic: IconName, text: string, y: number, on = false, run?: string): NodeSpec[] => {
+    const parts = [
+      ...(on ? [rect(`${name}/on`, { x: 12, y, w: 32, h: 32, radius: 8, fill: COLOR.selected })] : []),
+      icon(`${name}/icon`, ic, 18, y + 6, 20, on ? COLOR.text : COLOR.dim),
+      label(`${name}/label`, text, { x: 28 - text.length * 2.6, y: y + 36, size: 10, color: on ? COLOR.text : COLOR.dim }),
+    ];
+    if (!run) return parts;
+    return [
+      frame(`tab/${name}`, {
+        x: 0,
+        y,
+        w: RAIL_W - 1,
+        h: 52,
+        reactions: [{ trigger: { on: "click" }, run }],
+        children: parts.map((p) => ({ ...p, y: (p.y ?? 0) - y })),
+      }),
+    ];
+  };
+  return frame("rail", {
+    x: 0,
+    y: 0,
+    w: RAIL_W,
+    h: UI_H,
+    fill: COLOR.panel,
+    children: [
+      icon("logo", "logo", 16, 12, 24, COLOR.text),
+      rule("divider", 18, 48, 20, 1),
+      ...tab("file", "file", "File", 60, true),
+      ...tab("assets", "assets", "Assets", 116),
+      ...tab("machine", "cpu", "Gates", 172, false, "go/machine"),
+      rule("edge", RAIL_W - 1, 0, 1, UI_H),
+    ],
+  });
+}
 
 const ROW_H = 32;
+const ROWS_Y = 104;
 function layerRow(k: number, r: number): NodeSpec {
-  const eye = (bright: boolean): NodeSpec =>
-    frame(bright ? "eye" : "eye-dim", {
-      x: 14,
-      y: 11,
-      w: 16,
-      h: 10,
-      stroke: bright ? COLOR.text : COLOR.faint,
-      strokeWeight: 1.5,
-      radius: 5,
-      ...(bright ? { visibleNet: STATE_NETS.vis(k) } : {}),
+  // Figma names a new layer by its kind and number ("Rectangle 3"); the row shows the kind's icon
+  const ICONS: IconName[] = ["rect", "frame", "rect", "ellipse"];
+  const entry = (v: number): NodeSpec =>
+    frame(`name/${KIND_NAMES[v]}`, {
+      layout: { dir: "H", gap: 8, cross: "CENTER" },
+      sizeH: "HUG",
+      sizeV: "HUG",
       children: [
-        rect("pupil", {
-          x: 5,
-          y: 2,
-          w: 6,
-          h: 6,
-          radius: 3,
-          fill: bright ? COLOR.text : COLOR.faint,
+        icon("icon", ICONS[v], 0, 0, 14, COLOR.dim),
+        label("text", `${KIND_NAMES[v]} ${k + 1}`, {
+          size: 11,
+          color: COLOR.text,
+          sizeH: "HUG",
+          sizeV: "HUG",
         }),
       ],
     });
   const hug = (name: string, children: NodeSpec[]): NodeSpec =>
     frame(name, { layout: { dir: "H" }, sizeH: "HUG", sizeV: "HUG", children });
   const name: NodeSpec = {
-    ...pick(
-      2,
-      bits(STATE_NETS.kind(k)),
-      (i) => bit(SCREEN_NETS.nkind, 2 * k + i),
-      hug,
-      (v) =>
-        label(`name/${KIND_NAMES[v]}`, KIND_NAMES[v], {
-          size: 12,
-          color: COLOR.text,
-          sizeH: "HUG",
-          sizeV: "HUG",
-        }),
-    ),
+    ...pick(2, bits(STATE_NETS.kind(k)), (i) => bit(SCREEN_NETS.nkind, 2 * k + i), hug, entry),
     name: "name",
-    x: 76,
-    y: 8,
+    x: 24,
+    y: 9,
     sizeH: "HUG",
     sizeV: "HUG",
   };
   return frame(`row/${k}`, {
     x: 0,
-    y: TOP_H + 40 + r * ROW_H,
+    y: ROWS_Y + r * ROW_H,
     w: LEFT_W,
     h: ROW_H,
     visibleNet: STATE_NETS.used(k),
     reactions: [{ trigger: { on: "click" }, run: `select/${k}` }],
     children: [
+      name,
       frame("eye-hit", {
-        x: 6,
+        x: LEFT_W - 44,
         y: 0,
         w: 32,
         h: ROW_H,
         reactions: [{ trigger: { on: "click" }, run: `vis/${k}` }],
-        children: [eye(false), eye(true)],
+        // a hidden layer's eye stays, dimmed; a visible layer's lights over it
+        children: [
+          icon("eye-dim", "eyeOff", 8, 8, 16, COLOR.faint),
+          frame("eye", {
+            x: 8,
+            y: 8,
+            w: 16,
+            h: 16,
+            fill: COLOR.panel,
+            visibleNet: STATE_NETS.vis(k),
+            children: [icon("glyph", "eye", 0, 0, 16, COLOR.dim)],
+          }),
+        ],
       }),
-      label("slot", String(k + 1), {
-        x: 50,
-        y: 8,
-        size: 12,
-        color: COLOR.faint,
-      }),
-      name,
     ],
   });
 }
@@ -573,24 +646,22 @@ export const KIND_NAMES = ["Layer", "Frame", "Rectangle", "Ellipse"];
 
 function leftPanel(): NodeSpec {
   return frame("layers", {
-    x: 0,
-    y: TOP_H,
+    x: RAIL_W,
+    y: 0,
     w: LEFT_W,
-    h: UI_H - TOP_H,
+    h: UI_H,
     fill: COLOR.panel,
     children: [
-      label("title", "Layers", {
-        x: 16,
-        y: 14,
-        size: 12,
-        bold: true,
-        color: COLOR.text,
-      }),
-      rect("rule", { x: 0, y: 40, w: LEFT_W, h: 1, fill: COLOR.line }),
+      label("file", "Untitled", { x: 16, y: 15, size: 13, bold: true, color: COLOR.text }),
+      icon("file-menu", "chevDown", 80, 18, 14, COLOR.dim),
+      label("project", "Drafts", { x: 16, y: 40, size: 11, color: COLOR.dim }),
+      icon("sidebar", "sidebar", LEFT_W - 36, 14, 20, COLOR.dim),
+      rule("rule", 0, 64, LEFT_W, 1),
+      label("title", "Layers", { x: 16, y: 78, size: 11, bold: true, color: COLOR.text }),
       // the selected row's highlight: rows are listed top = slot 7, so its row is ¬sel
       frame("highlight", {
         x: 8,
-        y: 48,
+        y: ROWS_Y + 4,
         w: LEFT_W - 16,
         h: 24,
         layout: { dir: "V" },
@@ -599,25 +670,53 @@ function leftPanel(): NodeSpec {
         visibleNet: STATE_NETS.hassel,
         children: [
           ...spacer("nsel/", "V", ROW_H, 3, bits(SCREEN_NETS.nsel)),
-          rect("bar", {
-            w: LEFT_W - 16,
-            h: 24,
-            radius: 5,
-            fill: COLOR.selected,
-          }),
+          rect("bar", { w: LEFT_W - 16, h: 24, radius: 5, fill: COLOR.selected }),
         ],
       }),
-      ...Array.from({ length: LAYERS }, (_, r) => ({
-        ...layerRow(LAYERS - 1 - r, r),
-        y: 48 + r * ROW_H,
-      })),
+      ...Array.from({ length: LAYERS }, (_, r) => layerRow(LAYERS - 1 - r, r)),
+      rule("edge", LEFT_W - 1, 0, 1, UI_H),
     ],
   });
 }
 
+/** The rulers along the canvas region's top and left, numbered in cells from the drawing's corner. */
+function rulers(): NodeSpec[] {
+  const top: NodeSpec[] = [];
+  const left: NodeSpec[] = [];
+  for (let c = 0; c <= GRID_W; c += 2) {
+    const x = CANVAS_X - MID_X + c * CELL;
+    top.push(rule(`tick/${c}`, x, RULER - 6, 1, 6));
+    top.push(label(`n/${c}`, String(c), { x: x + 3, y: 3, size: 9, color: COLOR.faint }));
+  }
+  for (let r = 0; r <= GRID_H; r += 2) {
+    const y = CANVAS_Y + r * CELL;
+    left.push(rule(`tick/${r}`, RULER - 6, y, 6, 1));
+    left.push(label(`n/${r}`, String(r), { x: 3, y: y + 3, size: 9, color: COLOR.faint }));
+  }
+  return [
+    frame("ruler/top", {
+      x: MID_X,
+      y: 0,
+      w: MID_W,
+      h: RULER,
+      fill: COLOR.panel,
+      children: [...top, rule("edge", 0, RULER - 1, MID_W, 1)],
+    }),
+    frame("ruler/left", {
+      x: MID_X,
+      y: RULER,
+      w: RULER,
+      h: UI_H - RULER,
+      fill: COLOR.panel,
+      children: [...left.map((n) => ({ ...n, y: (n.y ?? 0) - RULER })), rule("edge", RULER - 1, 0, 1, UI_H - RULER)],
+    }),
+    label("canvas-name", "Canvas · 14 × 10", { x: CANVAS_X, y: CANVAS_Y - 20, size: 11, color: COLOR.dim }),
+  ];
+}
+
 function rightPanel(): NodeSpec {
-  const sw = 40;
-  const gap = 8;
+  const sw = 24;
+  const pitch = 26;
   // One swatch per value of the selection register, stacked and picked by its bits (like the
   // per-slot buttons): the one showing runs the fill reaction made for the selected slot.
   const swatch = (c: number, k: number): NodeSpec =>
@@ -636,64 +735,105 @@ function rightPanel(): NodeSpec {
   const swatches = Array.from({ length: PALETTE_SIZE }, (_, c) => ({
     ...pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => swatch(c, k)),
     name: `color/${c}`,
-    x: 16 + (c % 4) * (sw + gap),
-    y: 112 + Math.floor(c / 4) * (sw + gap),
+    x: 16 + (c % 8) * pitch,
+    y: 204 + Math.floor(c / 8) * pitch,
   }));
+  const section = (name: string, text: string, y: number) =>
+    label(name, text, { x: 16, y, size: 11, bold: true, color: COLOR.text });
   return frame("design", {
     x: UI_W - RIGHT_W,
-    y: TOP_H,
+    y: 0,
     w: RIGHT_W,
-    h: UI_H - TOP_H,
+    h: UI_H,
     fill: COLOR.panel,
     children: [
-      label("title", "Design", {
-        x: 16,
-        y: 14,
-        size: 12,
-        bold: true,
-        color: COLOR.text,
+      rule("edge", 0, 0, 1, UI_H),
+      // the header: who is here, Present, and the way to the gates
+      { type: "ellipse", name: "avatar", x: 16, y: 12, w: 24, h: 24, fill: "#0FA958" },
+      label("avatar-initial", "N", { x: 24, y: 17, size: 11, bold: true, color: COLOR.text }),
+      icon("account", "chevDown", 44, 18, 12, COLOR.dim),
+      icon("present", "play", 120, 16, 16, COLOR.text),
+      icon("present-menu", "chevDown", 138, 18, 12, COLOR.dim),
+      frame("button/machine", {
+        x: RIGHT_W - 8 - 76,
+        y: 10,
+        w: 76,
+        h: 28,
+        radius: 6,
+        fill: COLOR.accent,
+        reactions: [{ trigger: { on: "click" }, run: "go/machine" }],
+        children: [label("label", "See gates", { x: 12, y: 7, size: 11, bold: true, color: COLOR.text })],
       }),
-      rect("rule", { x: 0, y: 40, w: RIGHT_W, h: 1, fill: COLOR.line }),
-      label("fill", "Fill", {
-        x: 16,
-        y: 56,
-        size: 12,
-        bold: true,
-        color: COLOR.text,
-      }),
-      {
-        ...colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 4),
-        name: "current",
-        x: 16,
-        y: 76,
+      frame("tab/design", {
+        x: 8,
+        y: 50,
         w: 56,
         h: 24,
-        radius: 4,
-        stroke: COLOR.line,
-        strokeWeight: 1,
-        clip: true,
-        sizeH: "FIXED",
-        sizeV: "FIXED",
-      },
-      label("current-hint", "current colour", {
-        x: 84,
-        y: 82,
+        radius: 6,
+        fill: COLOR.field,
+        children: [label("label", "Design", { x: 9, y: 5, size: 11, bold: true, color: COLOR.text })],
+      }),
+      label("tab/prototype", "Prototype", { x: 74, y: 55, size: 11, color: COLOR.dim }),
+      label("zoom", "100%", { x: RIGHT_W - 52, y: 55, size: 11, color: COLOR.dim }),
+      icon("zoom-menu", "chevDown", RIGHT_W - 22, 56, 12, COLOR.dim),
+      rule("rule/tabs", 0, 84, RIGHT_W, 1),
+      section("fill", "Fill", 98),
+      frame("fill-field", {
+        x: 16,
+        y: 122,
+        w: RIGHT_W - 32,
+        h: 28,
+        radius: 5,
+        fill: COLOR.field,
+        children: [
+          {
+            ...colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 3),
+            name: "current",
+            x: 6,
+            y: 6,
+            w: 16,
+            h: 16,
+            radius: 3,
+            clip: true,
+            sizeH: "FIXED",
+            sizeV: "FIXED",
+          },
+          {
+            ...colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 0, (c) =>
+              label(`hex/${c}`, PALETTE_HEX[c].slice(1), { size: 11, color: COLOR.text, sizeH: "HUG", sizeV: "HUG" }),
+            ),
+            name: "hex",
+            x: 32,
+            y: 7,
+            sizeH: "HUG",
+            sizeV: "HUG",
+          },
+          label("opacity", "100%", { x: RIGHT_W - 32 - 40, y: 7, size: 11, color: COLOR.dim }),
+        ],
+      }),
+      rule("rule/fill", 0, 164, RIGHT_W, 1),
+      section("colours", "Colours", 176),
+      ...swatches,
+      label("colours-hint", "Fills the selection and the next shape.", {
+        x: 16,
+        y: 262,
         size: 11,
         color: COLOR.faint,
       }),
-      ...swatches,
-      label("arrange", "Arrange", {
-        x: 16,
-        y: 320,
-        size: 12,
-        bold: true,
-        color: COLOR.text,
-      }),
+      rule("rule/colours", 0, 288, RIGHT_W, 1),
+      section("arrange", "Arrange", 300),
       ...arrangeButtons(),
+      rule("rule/arrange", 0, 470, RIGHT_W, 1),
+      section("shortcuts", "Shortcuts", 482),
       label(
         "keys",
-        "Shortcuts\nV F R O P  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge\nE  erase     C  clear the ink",
-        { x: 16, y: 520, size: 11, color: COLOR.faint },
+        "V  move      F  frame      R  rectangle\nO  ellipse    P  pen        E  erase    C  clear\nD  duplicate    ⌫  delete    [ ]  order\nArrow keys  nudge      Esc  cancel",
+        { x: 16, y: 504, size: 11, color: COLOR.faint },
+      ),
+      label(
+        "how",
+        "Drag a layer to move it, drag on the canvas\nto draw a shape, drag a corner to resize.\nPen: press to start drawing, move the mouse\nto ink cells, press again to stop.",
+        { x: 16, y: 584, size: 11, color: COLOR.dim },
       ),
     ],
   });
@@ -719,9 +859,8 @@ function pushButton(
     children: [
       label("label", text, {
         x: 10,
-        y: 8,
+        y: 7,
         size: 11,
-        bold: true,
         color: COLOR.text,
       }),
     ],
@@ -763,205 +902,143 @@ function arrangeButtons(): NodeSpec[] {
     (perSlot ? slotButton : pushButton)(
       n,
       t,
-      16 + (i % 2) * 112,
-      344 + Math.floor(i / 2) * 36,
-      104,
+      16 + (i % 2) * 107,
+      324 + Math.floor(i / 2) * 36,
+      103,
       run,
     ),
   );
   const arrows: Array<[string, string, string]> = [
-    ["left", "Left", "nudge/0"],
-    ["right", "Right", "nudge/1"],
-    ["up", "Up", "nudge/2"],
-    ["down", "Down", "nudge/3"],
+    ["left", "←", "nudge/0"],
+    ["right", "→", "nudge/1"],
+    ["up", "↑", "nudge/2"],
+    ["down", "↓", "nudge/3"],
   ];
   out.push(
     label("nudge", "Nudge one cell", {
       x: 16,
-      y: 426,
+      y: 402,
       size: 11,
       color: COLOR.faint,
     }),
   );
   arrows.forEach(([n, t, run], i) =>
-    out.push(slotButton(n, t, 16 + i * 56, 446, 52, run)),
+    out.push(slotButton(n, t, 16 + i * 53, 422, 49, run)),
   );
   return out;
 }
 
-const TOOL_W = 100;
-const TOOLS_W = 5 * TOOL_W + 4 * 8;
-const OPTION_W = 72;
-const OPTIONS_W = 2 * OPTION_W + 8;
-const BAR_X = LEFT_W + (MID_W - (TOOLS_W + 12 + OPTIONS_W)) / 2;
+const TOOL = 40;
+const TOOL_PITCH = 44;
+const TOOLS_W = 4 + 5 * TOOL_PITCH;
+const OPTIONS_W = 4 + 2 * TOOL_PITCH;
+const BAR_X = MID_X + RULER + Math.round((MID_W - RULER - (TOOLS_W + 8 + OPTIONS_W)) / 2);
 
+/** The floating toolbar under the canvas, like UI3's: one icon per tool, the current one blue (the
+ * highlight is moved by the tool register's bits). */
 function toolbar(): NodeSpec {
-  const tools = [
-    { name: "Move", key: "V" },
-    { name: "Frame", key: "F" },
-    { name: "Rectangle", key: "R" },
-    { name: "Ellipse", key: "O" },
-    { name: "Pen", key: "P" },
+  const tools: Array<{ name: string; icon: IconName }> = [
+    { name: "Move", icon: "move" },
+    { name: "Frame", icon: "frame" },
+    { name: "Rectangle", icon: "rect" },
+    { name: "Ellipse", icon: "ellipse" },
+    { name: "Pen", icon: "pen" },
   ];
-  const w = TOOL_W;
   return frame("toolbar", {
     x: BAR_X,
-    y: CANVAS_Y + CANVAS_H + 24,
+    y: BAR_Y,
     w: TOOLS_W,
-    h: 44,
-    radius: 8,
+    h: BAR_H,
+    radius: 12,
     fill: COLOR.panel,
     stroke: COLOR.line,
     strokeWeight: 1,
     children: [
       frame("highlight", {
-        x: 0,
-        y: 0,
+        x: 4,
+        y: 4,
         layout: { dir: "H" },
         sizeH: "HUG",
         sizeV: "HUG",
         children: [
-          ...spacer("t/", "H", w + 8, TOOL_BITS, bits(STATE_NETS.tool)),
-          rect("active", { w, h: 44, radius: 8, fill: COLOR.accent }),
+          ...spacer("t/", "H", TOOL_PITCH, TOOL_BITS, bits(STATE_NETS.tool)),
+          rect("active", { w: TOOL, h: TOOL, radius: 8, fill: COLOR.accent }),
         ],
       }),
       ...tools.map((t, i) =>
-      frame(`tool/${t.name}`, {
-        x: i * (w + 8),
-        y: 0,
-        w,
-        h: 44,
-        radius: 8,
-        reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
-        children: [
-          label("label", t.name, {
-            x: 10,
-            y: 15,
-            size: 12,
-            bold: true,
-            color: COLOR.text,
-          }),
-          label("key", t.key, { x: w - 18, y: 15, size: 11, color: COLOR.dim }),
-        ],
-      }),
+        frame(`tool/${t.name}`, {
+          x: 4 + i * TOOL_PITCH,
+          y: 4,
+          w: TOOL,
+          h: TOOL,
+          radius: 8,
+          reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
+          children: [icon("icon", t.icon, 8, 8, 24)],
+        }),
       ),
     ],
   });
 }
 
-/** The pen's options, beside the tools: the Erase toggle (its "on" layer is bound to the erase bit)
- * and Clear. They work with any tool. */
+/** The pen's options, beside the tools (where UI3 keeps its mode switcher): the Erase toggle (its
+ * "on" layer is bound to the erase bit) and Clear. They work with any tool. */
 function penOptions(): NodeSpec {
-  const option = (
-    name: string,
-    text: string,
-    key: string,
-    x: number,
-    on?: NodeSpec,
-  ): NodeSpec =>
+  const option = (name: string, ic: IconName, x: number, on?: NodeSpec): NodeSpec =>
     frame(`button/${name}`, {
       x,
-      y: 0,
-      w: OPTION_W,
-      h: 44,
+      y: 4,
+      w: TOOL,
+      h: TOOL,
       radius: 8,
       reactions: [{ trigger: { on: "click" }, run: name }],
-      children: [
-        ...(on ? [on] : []),
-        label("label", text, {
-          x: 10,
-          y: 15,
-          size: 12,
-          bold: true,
-          color: COLOR.text,
-        }),
-        label("key", key, {
-          x: OPTION_W - 18,
-          y: 15,
-          size: 11,
-          color: COLOR.dim,
-        }),
-      ],
+      children: [...(on ? [on] : []), icon("icon", ic, 8, 8, 24)],
     });
   return frame("pen", {
-    x: BAR_X + TOOLS_W + 12,
-    y: CANVAS_Y + CANVAS_H + 24,
+    x: BAR_X + TOOLS_W + 8,
+    y: BAR_Y,
     w: OPTIONS_W,
-    h: 44,
-    radius: 8,
+    h: BAR_H,
+    radius: 12,
     fill: COLOR.panel,
     stroke: COLOR.line,
     strokeWeight: 1,
     children: [
       option(
         "erase",
-        "Erase",
-        "E",
-        0,
-        rect("on", {
-          x: 0,
-          y: 0,
-          w: OPTION_W,
-          h: 44,
-          radius: 8,
-          fill: COLOR.accent,
-          visibleNet: STATE_NETS.erase,
-        }),
+        "erase",
+        4,
+        rect("on", { x: 0, y: 0, w: TOOL, h: TOOL, radius: 8, fill: COLOR.accent, visibleNet: STATE_NETS.erase }),
       ),
-      option("clear", "Clear", "C", OPTION_W + 8),
+      option("clear", "trash", 4 + TOOL_PITCH),
     ],
   });
 }
 
+/** What the canvas does now, centred above the toolbar: one line per click-layer set, shown with it. */
 function status(): NodeSpec {
   const hint = [
-    "Click a layer to pick it up, or click empty canvas to deselect",
-    "Click a cell to start the shape",
-    "Click the cell to drop it on (Esc cancels)",
-    "Click the opposite corner (Esc cancels)",
-    "Pen: click a cell to put the pen down (E erases, C clears)",
-    "Drawing: move over cells to ink them, click to lift the pen",
+    "Drag a layer to move it · click empty canvas to deselect",
+    "Drag on the canvas to draw it · a click makes one cell",
+    "Release where it goes · Esc cancels",
+    "Release at the opposite corner · Esc cancels",
+    "Pen: press on the canvas to start drawing",
+    "Drawing: move to ink cells · press to stop · E erases · C clears",
   ];
   return frame("status", {
-    x: LEFT_W,
-    y: CANVAS_Y + CANVAS_H + 84,
-    w: MID_W,
-    h: 24,
+    x: MID_X + RULER,
+    y: BAR_Y - 30,
+    w: MID_W - RULER,
+    h: 20,
+    layout: { dir: "H", main: "CENTER", cross: "CENTER" },
     children: hint.map((t, i) =>
       label(`hint/${HOT[i]}`, t, {
-        x: 0,
-        y: 0,
         size: 12,
         color: COLOR.dim,
+        sizeH: "HUG",
+        sizeV: "HUG",
         visibleNet: bit(SCREEN_NETS.hot, i),
       }),
     ),
-  });
-}
-
-function topBar(note: string): NodeSpec {
-  return frame("topbar", {
-    x: 0,
-    y: 0,
-    w: UI_W,
-    h: TOP_H,
-    fill: COLOR.panel,
-    children: [
-      label("file", "Drafts / Untitled", {
-        x: 16,
-        y: 17,
-        size: 12,
-        bold: true,
-        color: COLOR.text,
-      }),
-      label("note", note, {
-        x: UI_W - 420,
-        y: 18,
-        size: 11,
-        color: COLOR.faint,
-      }),
-      rect("rule", { x: 0, y: TOP_H - 1, w: UI_W, h: 1, fill: COLOR.line }),
-    ],
   });
 }
 
@@ -1017,11 +1094,8 @@ export function slotKeys(fill: string): NodeSpec {
   };
 }
 
-/** The whole editor screen. `note`, at the right of the top bar, says where its gates are (by
- * default under the editor, in the same frame). */
-export function uiSpec(
-  note = "every pixel of this screen is a gate-level machine — scroll down",
-): NodeSpec {
+/** The whole editor screen. */
+export function uiSpec(): NodeSpec {
   return frame("editor", {
     x: 0,
     y: 0,
@@ -1030,24 +1104,26 @@ export function uiSpec(
     fill: COLOR.frame,
     clip: true,
     children: [
-      topBar(note),
-      leftPanel(),
       canvas(),
+      ...rulers(),
+      rail(),
+      leftPanel(),
+      status(),
       toolbar(),
       penOptions(),
-      status(),
       rightPanel(),
       slotKeys(COLOR.panel),
     ],
   });
 }
 
-/** Every reaction name the screen refers to (the catalogue must provide all of them, `pointer/…` aside). */
+/** Every reaction name the screen refers to (the catalogue must provide all of them, `pointer/…` and
+ * `go/…` aside). */
 export function reactionNames(spec: NodeSpec = uiSpec()): Set<string> {
   const out = new Set<string>();
   const walk = (n: NodeSpec) => {
     for (const r of n.reactions ?? [])
-      if (!r.run.startsWith("pointer/")) out.add(r.run);
+      if (!r.run.startsWith("pointer/") && !r.run.startsWith("go/")) out.add(r.run);
     n.children?.forEach(walk);
   };
   walk(spec);

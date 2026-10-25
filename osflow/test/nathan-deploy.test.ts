@@ -109,7 +109,8 @@ describe("the chunks", () => {
       // as long an event as the part allows: the guard, its flag and up to 500 throwaway flips, then
       // an empty overlay opened and closed when the build has chains
       expect(warm()).toEqual({
-        worst: Math.min(502, b.part),
+        worst:
+          Math.min(500, b.part - 3) + 2 + (b.gen.stats.continued ? 1 : 0),
         events: b.gen.stats.continued ? 2 : 1,
       });
       // it sets only its own wires (the ui unit's: warm, scratch), nothing of the machine
@@ -149,6 +150,8 @@ describe("a user session through the stored reactions", () => {
       "back button",
       "back key",
       "click",
+      "click drag",
+      "click press",
       "delete 46",
       "delete 8",
       "delete button",

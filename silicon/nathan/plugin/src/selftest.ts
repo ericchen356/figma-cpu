@@ -280,7 +280,7 @@ export async function selfTest(
     return {
       layers,
       tool: spacers(find(editor, "toolbar", "highlight")!, "t/"),
-      color: leafIndex(pickedLeaf(find(editor, "design", "current")!)),
+      color: leafIndex(pickedLeaf(find(editor, "design", "fill-field", "current")!)),
       hot:
         sets.filter((s) => shown(s)).length === 1
           ? sets.findIndex((s) => shown(s))
@@ -307,7 +307,13 @@ export async function selfTest(
     return leaf && keyed(leaf, code) ? leaf : null;
   };
   let viaKeys = 0;
-  const act = (ev: Ev, spec: R.State, preferKey: boolean): number => {
+  /** The mouse button is down on the canvas: a press started a drag, and the next canvas click is
+   * where it is let go. Before any other action it is let go away from the canvas (no release
+   * reaches the click layers), and the drag stays pending. */
+  let held = false;
+  /** Does `ev`, which takes the editor from `spec` to `next`; returns the most actions an event ran. */
+  const act = (ev: Ev, spec: R.State, next: R.State, preferKey: boolean): number => {
+    if (held && ev.k !== "click") held = false;
     const keyOr = (code: number, button: () => number) => {
       if (!preferKey) return button();
       const holder = holderOf(code);
@@ -315,8 +321,8 @@ export async function selfTest(
       viaKeys++;
       return fire(holder, "ON_KEY_DOWN", code);
     };
-    /** The one click layer that shows, checked against the one the spec's state needs. */
-    const hotspots = (): UiNode => {
+    /** The one click layer that shows, checked against the one the editor state needs. */
+    const hotspots = (state: R.State = spec): UiNode => {
       const sets = canvas.children!.filter(
         (c) => c.name.startsWith("hot/") && shown(c),
       );
@@ -324,7 +330,7 @@ export async function selfTest(
         throw new Error(
           `${sets.length} click layers are visible, expected exactly 1`,
         );
-      const name = `hot/${HOT[hotOf(spec)]}`;
+      const name = `hot/${HOT[hotOf(state)]}`;
       if (sets[0].name !== name)
         throw new Error(
           `the visible click layer is ${sets[0].name}, expected ${name}`,
@@ -360,17 +366,45 @@ export async function selfTest(
           find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit")!,
         );
       case "click": {
-        const set = hotspots();
-        // a per-slot set is a pick tree of copies: use the one showing
-        const slots = find(set, "slots");
-        const holder = slots ? pickedLeaf(slots) : set;
-        if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
-        const row = find(holder, `row/${ev.y}`)!;
-        const cell = find(row, `cell/${ev.x}`)!;
+        /** Cell (x, y) of the click layers that `state` shows, and its row. */
+        const cellOf = (state: R.State) => {
+          const set = hotspots(state);
+          // a per-slot set is a pick tree of copies: use the one showing
+          const slots = find(set, "slots");
+          const holder = slots ? pickedLeaf(slots) : set;
+          if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
+          const row = find(holder, `row/${ev.y}`)!;
+          return { row, cell: find(row, `cell/${ev.x}`)! };
+        };
+        const has = (n: UiNode, type: string) =>
+          reactionsOf(n).some((x) => x.trigger?.type === type);
+        /** Who takes a press or release there: the cell (a per-cell set), else its row. */
+        const taker = (at: { row: UiNode; cell: UiNode }, type: string) =>
+          has(at.cell, type) ? at.cell : has(at.row, type) ? at.row : null;
+        const release = (state: R.State) => {
+          const on = taker(cellOf(state), "MOUSE_UP");
+          return on ? fire(on, "MOUSE_UP") : 0;
+        };
+        // the button is still down from the press that started this drag: no hover fires on the
+        // way, and the release lands on the set showing
+        if (held) {
+          held = false;
+          return release(spec);
+        }
         // the pointer enters the cell (storing its column; on the pen-down set it inks the cell,
-        // as the click does), then a per-cell set's cell takes the click, a per-row set's row
-        const own = reactionsOf(cell).some((x) => x.trigger?.type === "ON_CLICK");
-        return Math.max(fire(cell, "MOUSE_ENTER"), press(own ? cell : row));
+        // as the press does), then the press: a per-cell set's cell takes it, a per-row set's row
+        const here = cellOf(spec);
+        let most = fire(here.cell, "MOUSE_ENTER");
+        const down = taker(here, "MOUSE_DOWN");
+        if (down) most = Math.max(most, fire(down, "MOUSE_DOWN"));
+        // a press that started a drag holds the button until the next canvas click; any other
+        // click is let go on the same cell, on the set showing now (a pending drag's set when the
+        // press found nothing to do: the button was let go elsewhere after the drag began)
+        if (down && next.drag) {
+          held = true;
+          return most;
+        }
+        return Math.max(most, release(down ? next : spec));
       }
       case "paint": {
         // the pointer enters the cell: only the pen-down set has a hover that paints
@@ -395,7 +429,10 @@ export async function selfTest(
           n.name === `handle/${CORNER[ev.corner]}`
             ? n
             : ((n.children ?? []).map(walk).find(Boolean) ?? null);
-        return press(walk(overlay)!);
+        // the press on the handle starts the resize; the release at the next canvas click ends it
+        const most = fire(walk(overlay)!, "MOUSE_DOWN");
+        held = !!next.drag;
+        return most;
       }
       case "delete":
         return keyOr(46, button("delete"));
@@ -426,7 +463,7 @@ export async function selfTest(
     const ev = i < script.length ? script[i] : uiEvent(rnd, spec, pointer);
     const next = applyRef(spec, ev);
     try {
-      worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
+      worst = Math.max(worst, act(ev, spec, next, rnd(2) === 1));
     } catch (e) {
       return {
         ok: false,

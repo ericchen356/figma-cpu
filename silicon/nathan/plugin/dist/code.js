@@ -3067,7 +3067,7 @@
       },
       (b) => {
         const L = logic(b);
-        const [EVT, TOOL, DRAG] = [b.in("EVT"), b.in("TOOL"), b.in("DRAG")];
+        const [EVT, TOOL2, DRAG] = [b.in("EVT"), b.in("TOOL"), b.in("DRAG")];
         const pick2 = (name) => b.out1(name);
         const evNets = Array.from({ length: 20 }, (_, i) => b.wire1(`ev${i}`));
         const named = {
@@ -3103,15 +3103,15 @@
         );
         b.use("DEC2", { A: DRAG, EN: CONST1, Y: b.out("DG") }, "dragdec");
         const dg2 = b.out("DG");
-        place2(b, "OR", "creating", [TOOL[0], TOOL[1]], b.out1("CREATING"));
+        place2(b, "OR", "creating", [TOOL2[0], TOOL2[1]], b.out1("CREATING"));
         place2(
           b,
           "NOR",
           "is_move_tool",
-          [b.out1("CREATING"), TOOL[2]],
+          [b.out1("CREATING"), TOOL2[2]],
           b.out1("IS_MOVE_TOOL")
         );
-        place2(b, "BUF", "is_pen", [TOOL[2]], b.out1("IS_PEN"));
+        place2(b, "BUF", "is_pen", [TOOL2[2]], b.out1("IS_PEN"));
         L.orAll([dg2[1], dg2[2], dg2[3]], b.out1("DRAGGING"));
         const click2 = evNets[15];
         const dragging = b.out1("DRAGGING");
@@ -4961,7 +4961,8 @@
   ];
   var HOTSPOT_REACTIONS = HOTSPOT_SETS.map((h) => h.name);
   var PAINT_SET = HOT.indexOf("pen-down");
-  var HOTSPOT_GRAIN = ["cell", "row", "row@sel", "row", "cell", "cell"];
+  var HOTSPOT_GRAIN = ["cell", "row", "cell", "cell", "cell", "cell"];
+  var HOTSPOT_GESTURE = ["down", "down", "up", "up", "down", "down"];
   var clickRun = (set, row, col = 0, sel = 0) => `${HOTSPOT_REACTIONS[set]}/${row}` + (HOTSPOT_GRAIN[set] === "cell" ? `/${col}` : "") + (HOTSPOT_GRAIN[set] === "row@sel" ? `@${sel}` : "");
   var hoverRun = (set, row, col) => set === PAINT_SET ? `paint/${row}/${col}` : `pointer/${col}`;
   var CLICK_SPECS = HOTSPOT_SETS.flatMap(
@@ -5115,6 +5116,8 @@
         return api.createEllipse();
       case "text":
         return api.createText();
+      case "svg":
+        return api.createNodeFromSvg(s.svg);
     }
   }
   async function render(ctx, parent, spec) {
@@ -5134,7 +5137,8 @@
       node.name = s.name;
       out.created++;
       if (ctx.breathe && out.created % BREATHE_EVERY === 0) await ctx.breathe();
-      if (node.type === "TEXT") {
+      if (s.type === "svg") {
+      } else if (node.type === "TEXT") {
         const t = s.text;
         node.fontName = t.bold ? FONT_BOLD : FONT;
         node.fontSize = (_a = t.size) != null ? _a : 12;
@@ -5214,6 +5218,33 @@
     return out;
   }
 
+  // nathan/src/ui/icons.ts
+  var ICON = {
+    // the toolbar (os-ui's drawings)
+    move: '<path d="M5.5 4.5 19.5 10.2l-6.9 2.2-2.4 7z"/>',
+    frame: '<path d="M8.5 3.5v17M15.5 3.5v17M3.5 8.5h17M3.5 15.5h17"/>',
+    rect: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/>',
+    ellipse: '<circle cx="12" cy="12" r="8"/>',
+    pen: '<g transform="rotate(45 12 12)"><path d="M12 21 7.6 12.6c-.7-1.5-.5-3.4.5-4.7L12 3l3.9 4.9c1 1.3 1.2 3.2.5 4.7z"/><circle cx="12" cy="10.6" r="1.6"/><path d="M12 12.2V21"/></g>',
+    // Lucide
+    erase: '<path d="M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"/><path d="m5.082 11.09 8.828 8.828"/>',
+    clear: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    trash: '<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+    file: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/>',
+    assets: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+    cpu: '<path d="M12 20v2"/><path d="M12 2v2"/><path d="M17 20v2"/><path d="M17 2v2"/><path d="M2 12h2"/><path d="M2 17h2"/><path d="M2 7h2"/><path d="M20 12h2"/><path d="M20 17h2"/><path d="M20 7h2"/><path d="M7 20v2"/><path d="M7 2v2"/><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
+    play: '<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/>',
+    chevDown: '<path d="m6 9 6 6 6-6"/>',
+    sidebar: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+    // the Figma mark, in outline: two half-pills, a half-pill and a circle, a drop
+    logo: '<path d="M12 2.5H9a3 3 0 0 0 0 6h3z"/><path d="M12 2.5h3a3 3 0 0 1 0 6h-3z"/><path d="M12 8.5H9a3 3 0 0 0 0 6h3z"/><circle cx="15" cy="11.5" r="3"/><path d="M12 14.5H9a3 3 0 1 0 3 3z"/>'
+  };
+  function svgIcon(name, size2, color, weight = 1.5) {
+    return `<svg width="${size2}" height="${size2}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${weight}" stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</svg>`;
+  }
+
   // nathan/src/ui/spec.ts
   var PALETTE_HEX = [
     "#000000",
@@ -5243,22 +5274,26 @@
     dim: "#B3B3B3",
     faint: "#808080",
     line: "#444444",
-    grid: "#262626",
-    frame: "#141414",
+    grid: "#2A2A2A",
+    frame: "#1E1E1E",
     /** The pen's ink. */
     ink: "#F5F5F5"
   };
-  var CELL = 48;
+  var CELL = 56;
   var CANVAS_W = GRID_W * CELL;
   var CANVAS_H = GRID_H * CELL;
+  var RAIL_W = 56;
   var LEFT_W = 240;
-  var RIGHT_W = 240;
-  var TOP_H = 48;
-  var MID_W = 720;
-  var UI_W = LEFT_W + MID_W + RIGHT_W;
-  var UI_H = 704;
-  var CANVAS_X = LEFT_W + (MID_W - CANVAS_W) / 2;
-  var CANVAS_Y = TOP_H + 32;
+  var RIGHT_W = 242;
+  var RULER = 20;
+  var UI_W = 1440;
+  var UI_H = 810;
+  var MID_X = RAIL_W + LEFT_W;
+  var MID_W = UI_W - MID_X - RIGHT_W;
+  var CANVAS_X = MID_X + RULER + Math.round((MID_W - RULER - CANVAS_W) / 2);
+  var CANVAS_Y = 84;
+  var BAR_H = 48;
+  var BAR_Y = UI_H - 16 - BAR_H;
   var frame = (name, p = {}) => __spreadValues({
     type: "frame",
     name
@@ -5401,7 +5436,7 @@
       fill: COLOR.text,
       stroke: COLOR.accent,
       strokeWeight: 2,
-      reactions: [{ trigger: { on: "click" }, run: `handle/${code}@${k}` }]
+      reactions: [{ trigger: { on: "down" }, run: `handle/${code}@${k}` }]
     });
     const handleRow = (a, b) => frame("handles", {
       sizeH: "FILL",
@@ -5433,11 +5468,17 @@
   }
   function hotspotSet(i) {
     const grain = HOTSPOT_GRAIN[i];
+    const gesture = HOTSPOT_GESTURE[i];
     const cellReactions = (r, c) => {
       const hover2 = hoverRun(i, r, c);
+      const own = grain === "cell" ? clickRun(i, r, c) : null;
+      const up2 = own && gesture === "up" ? own : i === PAINT_SET ? hover2 : `pointer/${c}`;
+      const storing = (run) => run.startsWith("pointer/") ? {} : { pointer: c };
       return [
-        ...grain === "cell" ? [{ trigger: { on: "click" }, run: clickRun(i, r, c) }] : [],
-        __spreadValues({ trigger: { on: "enter" }, run: hover2 }, hover2.startsWith("pointer/") ? {} : { pointer: c })
+        ...own && gesture === "down" ? [{ trigger: { on: "down" }, run: own }] : [],
+        __spreadValues({ trigger: { on: "enter" }, run: hover2 }, storing(hover2)),
+        // a per-row set's row takes its release itself
+        ...grain !== "cell" && gesture === "up" ? [] : [__spreadValues({ trigger: { on: "up" }, run: up2 }, storing(up2))]
       ];
     };
     const rows = (sel) => Array.from(
@@ -5447,7 +5488,7 @@
         y: r * CELL,
         w: CANVAS_W,
         h: CELL
-      }, grain === "cell" ? {} : { reactions: [{ trigger: { on: "click" }, run: clickRun(i, r, 0, sel) }] }), {
+      }, grain === "cell" ? {} : { reactions: [{ trigger: { on: gesture }, run: clickRun(i, r, 0, sel) }] }), {
         children: Array.from(
           { length: GRID_W },
           (_2, c) => frame(`cell/${c}`, {
@@ -5529,94 +5570,123 @@
       ]
     });
   }
-  var ROW_H = 32;
-  function layerRow(k, r) {
-    const eye = (bright) => frame(bright ? "eye" : "eye-dim", __spreadProps(__spreadValues({
-      x: 14,
-      y: 11,
-      w: 16,
-      h: 10,
-      stroke: bright ? COLOR.text : COLOR.faint,
-      strokeWeight: 1.5,
-      radius: 5
-    }, bright ? { visibleNet: STATE_NETS.vis(k) } : {}), {
+  var icon = (name, ic, x, y, size2 = 24, color = COLOR.text, p = {}) => __spreadValues({ type: "svg", name, svg: svgIcon(ic, size2, color), x, y, w: size2, h: size2 }, p);
+  var rule = (name, x, y, w, h) => rect(name, { x, y, w, h, fill: COLOR.line });
+  function rail() {
+    const tab = (name, ic, text2, y, on = false, run) => {
+      const parts = [
+        ...on ? [rect(`${name}/on`, { x: 12, y, w: 32, h: 32, radius: 8, fill: COLOR.selected })] : [],
+        icon(`${name}/icon`, ic, 18, y + 6, 20, on ? COLOR.text : COLOR.dim),
+        label(`${name}/label`, text2, { x: 28 - text2.length * 2.6, y: y + 36, size: 10, color: on ? COLOR.text : COLOR.dim })
+      ];
+      if (!run) return parts;
+      return [
+        frame(`tab/${name}`, {
+          x: 0,
+          y,
+          w: RAIL_W - 1,
+          h: 52,
+          reactions: [{ trigger: { on: "click" }, run }],
+          children: parts.map((p) => {
+            var _a;
+            return __spreadProps(__spreadValues({}, p), { y: ((_a = p.y) != null ? _a : 0) - y });
+          })
+        })
+      ];
+    };
+    return frame("rail", {
+      x: 0,
+      y: 0,
+      w: RAIL_W,
+      h: UI_H,
+      fill: COLOR.panel,
       children: [
-        rect("pupil", {
-          x: 5,
-          y: 2,
-          w: 6,
-          h: 6,
-          radius: 3,
-          fill: bright ? COLOR.text : COLOR.faint
+        icon("logo", "logo", 16, 12, 24, COLOR.text),
+        rule("divider", 18, 48, 20, 1),
+        ...tab("file", "file", "File", 60, true),
+        ...tab("assets", "assets", "Assets", 116),
+        ...tab("machine", "cpu", "Gates", 172, false, "go/machine"),
+        rule("edge", RAIL_W - 1, 0, 1, UI_H)
+      ]
+    });
+  }
+  var ROW_H = 32;
+  var ROWS_Y = 104;
+  function layerRow(k, r) {
+    const ICONS = ["rect", "frame", "rect", "ellipse"];
+    const entry = (v) => frame(`name/${KIND_NAMES[v]}`, {
+      layout: { dir: "H", gap: 8, cross: "CENTER" },
+      sizeH: "HUG",
+      sizeV: "HUG",
+      children: [
+        icon("icon", ICONS[v], 0, 0, 14, COLOR.dim),
+        label("text", `${KIND_NAMES[v]} ${k + 1}`, {
+          size: 11,
+          color: COLOR.text,
+          sizeH: "HUG",
+          sizeV: "HUG"
         })
       ]
-    }));
+    });
     const hug = (name2, children) => frame(name2, { layout: { dir: "H" }, sizeH: "HUG", sizeV: "HUG", children });
-    const name = __spreadProps(__spreadValues({}, pick(
-      2,
-      bits(STATE_NETS.kind(k)),
-      (i) => bit(SCREEN_NETS.nkind, 2 * k + i),
-      hug,
-      (v) => label(`name/${KIND_NAMES[v]}`, KIND_NAMES[v], {
-        size: 12,
-        color: COLOR.text,
-        sizeH: "HUG",
-        sizeV: "HUG"
-      })
-    )), {
+    const name = __spreadProps(__spreadValues({}, pick(2, bits(STATE_NETS.kind(k)), (i) => bit(SCREEN_NETS.nkind, 2 * k + i), hug, entry)), {
       name: "name",
-      x: 76,
-      y: 8,
+      x: 24,
+      y: 9,
       sizeH: "HUG",
       sizeV: "HUG"
     });
     return frame(`row/${k}`, {
       x: 0,
-      y: TOP_H + 40 + r * ROW_H,
+      y: ROWS_Y + r * ROW_H,
       w: LEFT_W,
       h: ROW_H,
       visibleNet: STATE_NETS.used(k),
       reactions: [{ trigger: { on: "click" }, run: `select/${k}` }],
       children: [
+        name,
         frame("eye-hit", {
-          x: 6,
+          x: LEFT_W - 44,
           y: 0,
           w: 32,
           h: ROW_H,
           reactions: [{ trigger: { on: "click" }, run: `vis/${k}` }],
-          children: [eye(false), eye(true)]
-        }),
-        label("slot", String(k + 1), {
-          x: 50,
-          y: 8,
-          size: 12,
-          color: COLOR.faint
-        }),
-        name
+          // a hidden layer's eye stays, dimmed; a visible layer's lights over it
+          children: [
+            icon("eye-dim", "eyeOff", 8, 8, 16, COLOR.faint),
+            frame("eye", {
+              x: 8,
+              y: 8,
+              w: 16,
+              h: 16,
+              fill: COLOR.panel,
+              visibleNet: STATE_NETS.vis(k),
+              children: [icon("glyph", "eye", 0, 0, 16, COLOR.dim)]
+            })
+          ]
+        })
       ]
     });
   }
   var KIND_NAMES = ["Layer", "Frame", "Rectangle", "Ellipse"];
   function leftPanel() {
     return frame("layers", {
-      x: 0,
-      y: TOP_H,
+      x: RAIL_W,
+      y: 0,
       w: LEFT_W,
-      h: UI_H - TOP_H,
+      h: UI_H,
       fill: COLOR.panel,
       children: [
-        label("title", "Layers", {
-          x: 16,
-          y: 14,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        rect("rule", { x: 0, y: 40, w: LEFT_W, h: 1, fill: COLOR.line }),
+        label("file", "Untitled", { x: 16, y: 15, size: 13, bold: true, color: COLOR.text }),
+        icon("file-menu", "chevDown", 80, 18, 14, COLOR.dim),
+        label("project", "Drafts", { x: 16, y: 40, size: 11, color: COLOR.dim }),
+        icon("sidebar", "sidebar", LEFT_W - 36, 14, 20, COLOR.dim),
+        rule("rule", 0, 64, LEFT_W, 1),
+        label("title", "Layers", { x: 16, y: 78, size: 11, bold: true, color: COLOR.text }),
         // the selected row's highlight: rows are listed top = slot 7, so its row is ¬sel
         frame("highlight", {
           x: 8,
-          y: 48,
+          y: ROWS_Y + 4,
           w: LEFT_W - 16,
           h: 24,
           layout: { dir: "V" },
@@ -5625,23 +5695,53 @@
           visibleNet: STATE_NETS.hassel,
           children: [
             ...spacer("nsel/", "V", ROW_H, 3, bits(SCREEN_NETS.nsel)),
-            rect("bar", {
-              w: LEFT_W - 16,
-              h: 24,
-              radius: 5,
-              fill: COLOR.selected
-            })
+            rect("bar", { w: LEFT_W - 16, h: 24, radius: 5, fill: COLOR.selected })
           ]
         }),
-        ...Array.from({ length: LAYERS }, (_, r) => __spreadProps(__spreadValues({}, layerRow(LAYERS - 1 - r, r)), {
-          y: 48 + r * ROW_H
-        }))
+        ...Array.from({ length: LAYERS }, (_, r) => layerRow(LAYERS - 1 - r, r)),
+        rule("edge", LEFT_W - 1, 0, 1, UI_H)
       ]
     });
   }
+  function rulers() {
+    const top = [];
+    const left = [];
+    for (let c = 0; c <= GRID_W; c += 2) {
+      const x = CANVAS_X - MID_X + c * CELL;
+      top.push(rule(`tick/${c}`, x, RULER - 6, 1, 6));
+      top.push(label(`n/${c}`, String(c), { x: x + 3, y: 3, size: 9, color: COLOR.faint }));
+    }
+    for (let r = 0; r <= GRID_H; r += 2) {
+      const y = CANVAS_Y + r * CELL;
+      left.push(rule(`tick/${r}`, RULER - 6, y, 6, 1));
+      left.push(label(`n/${r}`, String(r), { x: 3, y: y + 3, size: 9, color: COLOR.faint }));
+    }
+    return [
+      frame("ruler/top", {
+        x: MID_X,
+        y: 0,
+        w: MID_W,
+        h: RULER,
+        fill: COLOR.panel,
+        children: [...top, rule("edge", 0, RULER - 1, MID_W, 1)]
+      }),
+      frame("ruler/left", {
+        x: MID_X,
+        y: RULER,
+        w: RULER,
+        h: UI_H - RULER,
+        fill: COLOR.panel,
+        children: [...left.map((n) => {
+          var _a;
+          return __spreadProps(__spreadValues({}, n), { y: ((_a = n.y) != null ? _a : 0) - RULER });
+        }), rule("edge", RULER - 1, 0, 1, UI_H - RULER)]
+      }),
+      label("canvas-name", "Canvas \xB7 14 \xD7 10", { x: CANVAS_X, y: CANVAS_Y - 20, size: 11, color: COLOR.dim })
+    ];
+  }
   function rightPanel() {
-    const sw = 40;
-    const gap = 8;
+    const sw = 24;
+    const pitch = 26;
     const swatch = (c, k) => frame(`sel/${k}`, {
       x: 0,
       y: 0,
@@ -5656,63 +5756,105 @@
     const level = (n, children) => frame(n, { x: 0, y: 0, w: sw, h: sw, children });
     const swatches = Array.from({ length: PALETTE_SIZE2 }, (_, c) => __spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => swatch(c, k))), {
       name: `color/${c}`,
-      x: 16 + c % 4 * (sw + gap),
-      y: 112 + Math.floor(c / 4) * (sw + gap)
+      x: 16 + c % 8 * pitch,
+      y: 204 + Math.floor(c / 8) * pitch
     }));
+    const section = (name, text2, y) => label(name, text2, { x: 16, y, size: 11, bold: true, color: COLOR.text });
     return frame("design", {
       x: UI_W - RIGHT_W,
-      y: TOP_H,
+      y: 0,
       w: RIGHT_W,
-      h: UI_H - TOP_H,
+      h: UI_H,
       fill: COLOR.panel,
       children: [
-        label("title", "Design", {
-          x: 16,
-          y: 14,
-          size: 12,
-          bold: true,
-          color: COLOR.text
+        rule("edge", 0, 0, 1, UI_H),
+        // the header: who is here, Present, and the way to the gates
+        { type: "ellipse", name: "avatar", x: 16, y: 12, w: 24, h: 24, fill: "#0FA958" },
+        label("avatar-initial", "N", { x: 24, y: 17, size: 11, bold: true, color: COLOR.text }),
+        icon("account", "chevDown", 44, 18, 12, COLOR.dim),
+        icon("present", "play", 120, 16, 16, COLOR.text),
+        icon("present-menu", "chevDown", 138, 18, 12, COLOR.dim),
+        frame("button/machine", {
+          x: RIGHT_W - 8 - 76,
+          y: 10,
+          w: 76,
+          h: 28,
+          radius: 6,
+          fill: COLOR.accent,
+          reactions: [{ trigger: { on: "click" }, run: "go/machine" }],
+          children: [label("label", "See gates", { x: 12, y: 7, size: 11, bold: true, color: COLOR.text })]
         }),
-        rect("rule", { x: 0, y: 40, w: RIGHT_W, h: 1, fill: COLOR.line }),
-        label("fill", "Fill", {
-          x: 16,
-          y: 56,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        __spreadProps(__spreadValues({}, colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 4)), {
-          name: "current",
-          x: 16,
-          y: 76,
+        frame("tab/design", {
+          x: 8,
+          y: 50,
           w: 56,
           h: 24,
-          radius: 4,
-          stroke: COLOR.line,
-          strokeWeight: 1,
-          clip: true,
-          sizeH: "FIXED",
-          sizeV: "FIXED"
+          radius: 6,
+          fill: COLOR.field,
+          children: [label("label", "Design", { x: 9, y: 5, size: 11, bold: true, color: COLOR.text })]
         }),
-        label("current-hint", "current colour", {
-          x: 84,
-          y: 82,
+        label("tab/prototype", "Prototype", { x: 74, y: 55, size: 11, color: COLOR.dim }),
+        label("zoom", "100%", { x: RIGHT_W - 52, y: 55, size: 11, color: COLOR.dim }),
+        icon("zoom-menu", "chevDown", RIGHT_W - 22, 56, 12, COLOR.dim),
+        rule("rule/tabs", 0, 84, RIGHT_W, 1),
+        section("fill", "Fill", 98),
+        frame("fill-field", {
+          x: 16,
+          y: 122,
+          w: RIGHT_W - 32,
+          h: 28,
+          radius: 5,
+          fill: COLOR.field,
+          children: [
+            __spreadProps(__spreadValues({}, colourPick(bits(STATE_NETS.cur), bits(SCREEN_NETS.ncur), 3)), {
+              name: "current",
+              x: 6,
+              y: 6,
+              w: 16,
+              h: 16,
+              radius: 3,
+              clip: true,
+              sizeH: "FIXED",
+              sizeV: "FIXED"
+            }),
+            __spreadProps(__spreadValues({}, colourPick(
+              bits(STATE_NETS.cur),
+              bits(SCREEN_NETS.ncur),
+              0,
+              (c) => label(`hex/${c}`, PALETTE_HEX[c].slice(1), { size: 11, color: COLOR.text, sizeH: "HUG", sizeV: "HUG" })
+            )), {
+              name: "hex",
+              x: 32,
+              y: 7,
+              sizeH: "HUG",
+              sizeV: "HUG"
+            }),
+            label("opacity", "100%", { x: RIGHT_W - 32 - 40, y: 7, size: 11, color: COLOR.dim })
+          ]
+        }),
+        rule("rule/fill", 0, 164, RIGHT_W, 1),
+        section("colours", "Colours", 176),
+        ...swatches,
+        label("colours-hint", "Fills the selection and the next shape.", {
+          x: 16,
+          y: 262,
           size: 11,
           color: COLOR.faint
         }),
-        ...swatches,
-        label("arrange", "Arrange", {
-          x: 16,
-          y: 320,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
+        rule("rule/colours", 0, 288, RIGHT_W, 1),
+        section("arrange", "Arrange", 300),
         ...arrangeButtons(),
+        rule("rule/arrange", 0, 470, RIGHT_W, 1),
+        section("shortcuts", "Shortcuts", 482),
         label(
           "keys",
-          "Shortcuts\nV F R O P  tools      Esc  cancel\n[ ]  send back / forward\nD  duplicate     Delete\nArrow keys  nudge\nE  erase     C  clear the ink",
-          { x: 16, y: 520, size: 11, color: COLOR.faint }
+          "V  move      F  frame      R  rectangle\nO  ellipse    P  pen        E  erase    C  clear\nD  duplicate    \u232B  delete    [ ]  order\nArrow keys  nudge      Esc  cancel",
+          { x: 16, y: 504, size: 11, color: COLOR.faint }
+        ),
+        label(
+          "how",
+          "Drag a layer to move it, drag on the canvas\nto draw a shape, drag a corner to resize.\nPen: press to start drawing, move the mouse\nto ink cells, press again to stop.",
+          { x: 16, y: 584, size: 11, color: COLOR.dim }
         )
       ]
     });
@@ -5729,9 +5871,8 @@
       children: [
         label("label", text2, {
           x: 10,
-          y: 8,
+          y: 7,
           size: 11,
-          bold: true,
           color: COLOR.text
         })
       ]
@@ -5758,191 +5899,133 @@
       ([n, t, run, perSlot], i) => (perSlot ? slotButton : pushButton)(
         n,
         t,
-        16 + i % 2 * 112,
-        344 + Math.floor(i / 2) * 36,
-        104,
+        16 + i % 2 * 107,
+        324 + Math.floor(i / 2) * 36,
+        103,
         run
       )
     );
     const arrows = [
-      ["left", "Left", "nudge/0"],
-      ["right", "Right", "nudge/1"],
-      ["up", "Up", "nudge/2"],
-      ["down", "Down", "nudge/3"]
+      ["left", "\u2190", "nudge/0"],
+      ["right", "\u2192", "nudge/1"],
+      ["up", "\u2191", "nudge/2"],
+      ["down", "\u2193", "nudge/3"]
     ];
     out.push(
       label("nudge", "Nudge one cell", {
         x: 16,
-        y: 426,
+        y: 402,
         size: 11,
         color: COLOR.faint
       })
     );
     arrows.forEach(
-      ([n, t, run], i) => out.push(slotButton(n, t, 16 + i * 56, 446, 52, run))
+      ([n, t, run], i) => out.push(slotButton(n, t, 16 + i * 53, 422, 49, run))
     );
     return out;
   }
-  var TOOL_W = 100;
-  var TOOLS_W = 5 * TOOL_W + 4 * 8;
-  var OPTION_W = 72;
-  var OPTIONS_W = 2 * OPTION_W + 8;
-  var BAR_X = LEFT_W + (MID_W - (TOOLS_W + 12 + OPTIONS_W)) / 2;
+  var TOOL = 40;
+  var TOOL_PITCH = 44;
+  var TOOLS_W = 4 + 5 * TOOL_PITCH;
+  var OPTIONS_W = 4 + 2 * TOOL_PITCH;
+  var BAR_X = MID_X + RULER + Math.round((MID_W - RULER - (TOOLS_W + 8 + OPTIONS_W)) / 2);
   function toolbar() {
     const tools = [
-      { name: "Move", key: "V" },
-      { name: "Frame", key: "F" },
-      { name: "Rectangle", key: "R" },
-      { name: "Ellipse", key: "O" },
-      { name: "Pen", key: "P" }
+      { name: "Move", icon: "move" },
+      { name: "Frame", icon: "frame" },
+      { name: "Rectangle", icon: "rect" },
+      { name: "Ellipse", icon: "ellipse" },
+      { name: "Pen", icon: "pen" }
     ];
-    const w = TOOL_W;
     return frame("toolbar", {
       x: BAR_X,
-      y: CANVAS_Y + CANVAS_H + 24,
+      y: BAR_Y,
       w: TOOLS_W,
-      h: 44,
-      radius: 8,
+      h: BAR_H,
+      radius: 12,
       fill: COLOR.panel,
       stroke: COLOR.line,
       strokeWeight: 1,
       children: [
         frame("highlight", {
-          x: 0,
-          y: 0,
+          x: 4,
+          y: 4,
           layout: { dir: "H" },
           sizeH: "HUG",
           sizeV: "HUG",
           children: [
-            ...spacer("t/", "H", w + 8, TOOL_BITS, bits(STATE_NETS.tool)),
-            rect("active", { w, h: 44, radius: 8, fill: COLOR.accent })
+            ...spacer("t/", "H", TOOL_PITCH, TOOL_BITS, bits(STATE_NETS.tool)),
+            rect("active", { w: TOOL, h: TOOL, radius: 8, fill: COLOR.accent })
           ]
         }),
         ...tools.map(
           (t, i) => frame(`tool/${t.name}`, {
-            x: i * (w + 8),
-            y: 0,
-            w,
-            h: 44,
+            x: 4 + i * TOOL_PITCH,
+            y: 4,
+            w: TOOL,
+            h: TOOL,
             radius: 8,
             reactions: [{ trigger: { on: "click" }, run: `tool/${i}` }],
-            children: [
-              label("label", t.name, {
-                x: 10,
-                y: 15,
-                size: 12,
-                bold: true,
-                color: COLOR.text
-              }),
-              label("key", t.key, { x: w - 18, y: 15, size: 11, color: COLOR.dim })
-            ]
+            children: [icon("icon", t.icon, 8, 8, 24)]
           })
         )
       ]
     });
   }
   function penOptions() {
-    const option = (name, text2, key, x, on) => frame(`button/${name}`, {
+    const option = (name, ic, x, on) => frame(`button/${name}`, {
       x,
-      y: 0,
-      w: OPTION_W,
-      h: 44,
+      y: 4,
+      w: TOOL,
+      h: TOOL,
       radius: 8,
       reactions: [{ trigger: { on: "click" }, run: name }],
-      children: [
-        ...on ? [on] : [],
-        label("label", text2, {
-          x: 10,
-          y: 15,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        label("key", key, {
-          x: OPTION_W - 18,
-          y: 15,
-          size: 11,
-          color: COLOR.dim
-        })
-      ]
+      children: [...on ? [on] : [], icon("icon", ic, 8, 8, 24)]
     });
     return frame("pen", {
-      x: BAR_X + TOOLS_W + 12,
-      y: CANVAS_Y + CANVAS_H + 24,
+      x: BAR_X + TOOLS_W + 8,
+      y: BAR_Y,
       w: OPTIONS_W,
-      h: 44,
-      radius: 8,
+      h: BAR_H,
+      radius: 12,
       fill: COLOR.panel,
       stroke: COLOR.line,
       strokeWeight: 1,
       children: [
         option(
           "erase",
-          "Erase",
-          "E",
-          0,
-          rect("on", {
-            x: 0,
-            y: 0,
-            w: OPTION_W,
-            h: 44,
-            radius: 8,
-            fill: COLOR.accent,
-            visibleNet: STATE_NETS.erase
-          })
+          "erase",
+          4,
+          rect("on", { x: 0, y: 0, w: TOOL, h: TOOL, radius: 8, fill: COLOR.accent, visibleNet: STATE_NETS.erase })
         ),
-        option("clear", "Clear", "C", OPTION_W + 8)
+        option("clear", "trash", 4 + TOOL_PITCH)
       ]
     });
   }
   function status() {
     const hint = [
-      "Click a layer to pick it up, or click empty canvas to deselect",
-      "Click a cell to start the shape",
-      "Click the cell to drop it on (Esc cancels)",
-      "Click the opposite corner (Esc cancels)",
-      "Pen: click a cell to put the pen down (E erases, C clears)",
-      "Drawing: move over cells to ink them, click to lift the pen"
+      "Drag a layer to move it \xB7 click empty canvas to deselect",
+      "Drag on the canvas to draw it \xB7 a click makes one cell",
+      "Release where it goes \xB7 Esc cancels",
+      "Release at the opposite corner \xB7 Esc cancels",
+      "Pen: press on the canvas to start drawing",
+      "Drawing: move to ink cells \xB7 press to stop \xB7 E erases \xB7 C clears"
     ];
     return frame("status", {
-      x: LEFT_W,
-      y: CANVAS_Y + CANVAS_H + 84,
-      w: MID_W,
-      h: 24,
+      x: MID_X + RULER,
+      y: BAR_Y - 30,
+      w: MID_W - RULER,
+      h: 20,
+      layout: { dir: "H", main: "CENTER", cross: "CENTER" },
       children: hint.map(
         (t, i) => label(`hint/${HOT[i]}`, t, {
-          x: 0,
-          y: 0,
           size: 12,
           color: COLOR.dim,
+          sizeH: "HUG",
+          sizeV: "HUG",
           visibleNet: bit(SCREEN_NETS.hot, i)
         })
       )
-    });
-  }
-  function topBar(note) {
-    return frame("topbar", {
-      x: 0,
-      y: 0,
-      w: UI_W,
-      h: TOP_H,
-      fill: COLOR.panel,
-      children: [
-        label("file", "Drafts / Untitled", {
-          x: 16,
-          y: 17,
-          size: 12,
-          bold: true,
-          color: COLOR.text
-        }),
-        label("note", note, {
-          x: UI_W - 420,
-          y: 18,
-          size: 11,
-          color: COLOR.faint
-        }),
-        rect("rule", { x: 0, y: TOP_H - 1, w: UI_W, h: 1, fill: COLOR.line })
-      ]
     });
   }
   var KEYS = [
@@ -5991,7 +6074,7 @@
       y: 0
     });
   }
-  function uiSpec(note = "every pixel of this screen is a gate-level machine \u2014 scroll down") {
+  function uiSpec() {
     return frame("editor", {
       x: 0,
       y: 0,
@@ -6000,12 +6083,13 @@
       fill: COLOR.frame,
       clip: true,
       children: [
-        topBar(note),
-        leftPanel(),
         canvas(),
+        ...rulers(),
+        rail(),
+        leftPanel(),
+        status(),
         toolbar(),
         penOptions(),
-        status(),
         rightPanel(),
         slotKeys(COLOR.panel)
       ]
@@ -7343,7 +7427,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       return {
         layers,
         tool: spacers2(find(editor, "toolbar", "highlight"), "t/"),
-        color: leafIndex(pickedLeaf(find(editor, "design", "current"))),
+        color: leafIndex(pickedLeaf(find(editor, "design", "fill-field", "current"))),
         hot: sets.filter((s) => shown(s)).length === 1 ? sets.findIndex((s) => shown(s)) : -1,
         ink: Array.from(
           { length: GRID_W * GRID_H },
@@ -7365,8 +7449,10 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       return leaf && keyed(leaf, code) ? leaf : null;
     };
     let viaKeys = 0;
-    const act = (ev, spec2, preferKey) => {
+    let held = false;
+    const act = (ev, spec2, next, preferKey) => {
       var _a2, _b2;
+      if (held && ev.k !== "click") held = false;
       const keyOr = (code, button3) => {
         if (!preferKey) return button3();
         const holder = holderOf(code);
@@ -7374,7 +7460,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         viaKeys++;
         return fire(holder, "ON_KEY_DOWN", code);
       };
-      const hotspots = () => {
+      const hotspots = (state = spec2) => {
         const sets = canvas2.children.filter(
           (c) => c.name.startsWith("hot/") && shown(c)
         );
@@ -7382,7 +7468,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           throw new Error(
             `${sets.length} click layers are visible, expected exactly 1`
           );
-        const name = `hot/${HOT[hotOf(spec2)]}`;
+        const name = `hot/${HOT[hotOf(state)]}`;
         if (sets[0].name !== name)
           throw new Error(
             `the visible click layer is ${sets[0].name}, expected ${name}`
@@ -7417,17 +7503,36 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
             find(present, "editor", "layers", `row/${ev.slot}`, "eye-hit")
           );
         case "click": {
-          const set = hotspots();
-          const slots = find(set, "slots");
-          const holder = slots ? pickedLeaf(slots) : set;
-          if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
-          const row = find(holder, `row/${ev.y}`);
-          const cell = find(row, `cell/${ev.x}`);
-          const own = reactionsOf(cell).some((x) => {
+          const cellOf = (state) => {
+            const set = hotspots(state);
+            const slots = find(set, "slots");
+            const holder = slots ? pickedLeaf(slots) : set;
+            if (!holder) throw new Error(`${set.name}: no single slot copy shows`);
+            const row = find(holder, `row/${ev.y}`);
+            return { row, cell: find(row, `cell/${ev.x}`) };
+          };
+          const has = (n, type) => reactionsOf(n).some((x) => {
             var _a3;
-            return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === "ON_CLICK";
+            return ((_a3 = x.trigger) == null ? void 0 : _a3.type) === type;
           });
-          return Math.max(fire(cell, "MOUSE_ENTER"), press(own ? cell : row));
+          const taker = (at, type) => has(at.cell, type) ? at.cell : has(at.row, type) ? at.row : null;
+          const release = (state) => {
+            const on = taker(cellOf(state), "MOUSE_UP");
+            return on ? fire(on, "MOUSE_UP") : 0;
+          };
+          if (held) {
+            held = false;
+            return release(spec2);
+          }
+          const here = cellOf(spec2);
+          let most = fire(here.cell, "MOUSE_ENTER");
+          const down = taker(here, "MOUSE_DOWN");
+          if (down) most = Math.max(most, fire(down, "MOUSE_DOWN"));
+          if (down && next.drag) {
+            held = true;
+            return most;
+          }
+          return Math.max(most, release(down ? next : spec2));
         }
         case "paint": {
           const set = hotspots();
@@ -7451,7 +7556,9 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
             var _a3, _b3;
             return n.name === `handle/${CORNER[ev.corner]}` ? n : (_b3 = ((_a3 = n.children) != null ? _a3 : []).map(walk).find(Boolean)) != null ? _b3 : null;
           };
-          return press(walk(overlay));
+          const most = fire(walk(overlay), "MOUSE_DOWN");
+          held = !!next.drag;
+          return most;
         }
         case "delete":
           return keyOr(46, button2("delete"));
@@ -7481,7 +7588,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       const ev = i < script.length ? script[i] : uiEvent(rnd, spec, pointer);
       const next = applyRef(spec, ev);
       try {
-        worst = Math.max(worst, act(ev, spec, rnd(2) === 1));
+        worst = Math.max(worst, act(ev, spec, next, rnd(2) === 1));
       } catch (e) {
         return {
           ok: false,
@@ -7952,15 +8059,16 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       };
       for (const [run, entry] of catalog) {
         const lead = run.startsWith("click/") && !("PX" in entry.spec.ties) ? copyPointer : [];
+        const first = lead.length + (run.startsWith("click/") || run.startsWith("paint/") ? pxh.length : 0);
         const eventsOf = (r) => {
           const acts = r.actions;
-          if (lead.length + staticSize(acts) <= o.budget) return [acts];
+          if (first + staticSize(acts) <= o.budget) return [acts];
           const [head, tail] = [acts.slice(0, r.commitAt), acts.slice(r.commitAt)];
           const tailSize = staticSize(tail);
           if (tailSize + 1 > o.budget) return null;
-          const parts2 = greedy(head, lead.length);
+          const parts2 = greedy(head, first);
           const last = parts2[parts2.length - 1];
-          const lastSize = staticSize(last) + (parts2.length === 1 ? lead.length : 0) + 1;
+          const lastSize = staticSize(last) + (parts2.length === 1 ? first : 0) + 1;
           if (lastSize + tailSize <= o.budget)
             parts2[parts2.length - 1] = [...last, ...tail];
           else parts2.push(tail);
@@ -7984,12 +8092,12 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           }
         if (!parts) {
           torn.push(run);
-          parts = greedy(entry.reaction.actions, lead.length);
+          parts = greedy(entry.reaction.actions, first);
         }
         const chained = parts.length > 1;
         eventSizes.set(
           run,
-          parts.map((p, k) => staticSize(p) + (k ? 0 : lead.length) + (chained ? 1 : 0))
+          parts.map((p, k) => staticSize(p) + (k ? 0 : first) + (chained ? 1 : 0))
         );
         if (!chained) {
           triggered.set(run, [...lead, ...convert(parts[0])]);
@@ -8019,15 +8127,22 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         await this.breathe();
       }
       const store = (c) => pxh.map((v, i) => setVariable(v.id, boolData((c >> i & 1) === 1)));
+      const goTo = /* @__PURE__ */ new Map();
+      const triggerOf = (t) => t.on === "key" ? keyDown(t.codes) : t.on === "enter" ? mouseEnter(0) : t.on === "down" ? mouseDown(0) : t.on === "up" ? mouseUp(0) : onClick();
       const reactionsFor = (ref2) => {
         const t = ref2.trigger;
         if (ref2.run.startsWith("pointer/"))
           return [
             {
-              trigger: mouseEnter(0),
+              trigger: triggerOf(t),
               actions: store(Number(ref2.run.slice("pointer/".length)))
             }
           ];
+        if (ref2.run.startsWith("go/")) {
+          const to = goTo.get(ref2.run.slice("go/".length));
+          if (!to) throw new Error(`the screen jumps to a frame that does not exist: ${ref2.run}`);
+          return [{ trigger: triggerOf(t), actions: [navigate(to)] }];
+        }
         const actions = triggered.get(ref2.run);
         if (!actions)
           throw new Error(
@@ -8035,7 +8150,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           );
         return [
           {
-            trigger: t.on === "key" ? keyDown(t.codes) : t.on === "enter" ? mouseEnter(0) : onClick(),
+            trigger: triggerOf(t),
             actions: ref2.pointer === void 0 ? actions : [...store(ref2.pointer), ...actions]
           }
         ];
@@ -8056,9 +8171,11 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         f.clipsContent = true;
         return f;
       };
-      const present = frame2(PRESENT);
+      const present = box(this.api, PRESENT, UI_W, UI_H, COLORS.bg);
+      present.clipsContent = true;
       const machine = frame2(MACHINE);
       const circuit = frame2(CIRCUIT);
+      goTo.set("machine", machine.id);
       put(page, circuit, engineNow.x - PAD3, engineNow.y - HEADER);
       put(page, present, circuit.x, circuit.y - GAP2 - present.height);
       put(page, machine, present.x + present.width + GAP2, present.y);
@@ -8077,12 +8194,12 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           render(
             ctx,
             present,
-            uiSpec("every pixel of this screen is a gate-level machine \u2014 see the machine \u25B8")
+            uiSpec()
           )
         )
       );
-      result.root.x = PAD3;
-      result.root.y = HEADER;
+      result.root.x = 0;
+      result.root.y = 0;
       const blocks = new Map(lib.get(TOP).instances.map((i) => [i.name, i.cell]));
       const map = await this.phase(
         "gate map",
@@ -8117,7 +8234,6 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         const b = put(from, button(this.api, label2, COLORS.step, 200, 40), from.width - PAD3 - 200 - slot * 216, 32);
         await b.setReactionsAsync([{ trigger: onClick(), actions: [navigate(to.id)] }]);
       };
-      await go(present, machine, "see the machine \u25B8");
       await go(machine, present, "\u25C2 back to the editor");
       await go(machine, circuit, "the circuit \u25B8", 1);
       await go(circuit, machine, "\u25C2 back to the machine");
@@ -8168,36 +8284,6 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         (f) => !overlayIds.has(f.nodeId)
       );
       const worst = (_a = [...eventSizes.entries()].map(([name, sizes]) => ({ name, actions: Math.max(...sizes) })).sort((a, b) => b.actions - a.actions)[0]) != null ? _a : { name: "-", actions: 0 };
-      put(
-        present,
-        text(
-          this.api,
-          "CPU NATHAN \u2014 the Figma OS editor as a gate-level machine",
-          { size: 24, bold: true }
-        ),
-        PAD3,
-        28
-      );
-      put(
-        present,
-        text(
-          this.api,
-          `${net.gates.length} gates \xB7 ${ids.length} wires (variables) \xB7 ${catalog.size} reactions, longest ${worst.actions} actions in one event (${worst.name})`,
-          { size: 13, color: COLORS.dim }
-        ),
-        PAD3,
-        64
-      );
-      put(
-        present,
-        text(
-          this.api,
-          'Click in the editor: every layer, colour, pixel of ink and lamp on it is a gate-level register bit; "see the machine" shows its gates computing.\nA canvas click is two clicks to move or draw (pick up / put down, first corner / opposite corner). Esc cancels. Pen (P): click to put it down, move to draw, click to lift.',
-          { size: 12, color: COLORS.dim }
-        ),
-        PAD3,
-        88
-      );
       const heading = (f, title, sub) => {
         put(f, text(this.api, title, { size: 24, bold: true }), PAD3, 28);
         put(f, text(this.api, sub, { size: 13, color: COLORS.dim }), PAD3, 64);
@@ -8205,7 +8291,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       heading(
         machine,
         "CPU NATHAN \u2014 the machine",
-        `All ${net.gates.length} gates, one lamp each, by module. Use the editor (or press its shortcut keys here) and watch them compute.`
+        `All ${net.gates.length} gates, one lamp each, by module \xB7 ${ids.length} wires (variables) \xB7 ${catalog.size} reactions, longest ${worst.actions} actions in one event (${worst.name}). Press the editor's shortcut keys here and watch them compute.`
       );
       heading(
         circuit,

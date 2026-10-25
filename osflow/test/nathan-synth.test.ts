@@ -81,7 +81,10 @@ describe("long reactions", () => {
     const plain = generate();
     for (const c of plain.chunks) await new AsyncFunction("figma", c.code)(fake);
     const page = fake.currentPage;
-    expect(page.children.map((n) => n.name)).toEqual([plain.names.frame]);
+    expect(page.children.map((n) => n.name)).toEqual([
+      plain.names.frame,
+      plain.names.machine,
+    ]);
     expect(page.flowStartingPoints.map((f) => f.nodeId)).toEqual([
       page.children[0].id,
     ]);
