@@ -133,8 +133,12 @@ export function structureErrors(b: Built): string[] {
   const errors: string[] = [];
   const name = (id?: string | null) =>
     (id && b.fake.variableById.get(id)?.name) ?? "nothing";
-  // the hover column: the 4 wires after the nets (deploy/nathan.ts)
+  // the hover column: the 4 wires after the nets; then warm, scratch, the pen's anchor (column,
+  // row) (deploy/nathan.ts)
   const hover = [0, 1, 2, 3].map((i) => b.varOfWire(b.gen.wireOf.size + i));
+  const anchor = [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+    b.varOfWire(b.gen.wireOf.size + 6 + i),
+  );
   const runs = new Map<string, Set<string>>();
   const stores = (run: string, acts?: readonly Action[]) =>
     runs.set(run, (runs.get(run) ?? new Set()).add(JSON.stringify(acts)));
@@ -222,6 +226,28 @@ export function structureErrors(b: Built): string[] {
       const c = r.run.startsWith("pointer/")
         ? Number(r.run.slice("pointer/".length))
         : r.pointer;
+      // the press that puts the pen down stores its cell (the stroke's anchor) before its run
+      if (r.anchor) {
+        const { x, y } = r.anchor;
+        same(
+          "anchor stores",
+          JSON.stringify(
+            acts?.slice(0, 8).map((a) =>
+              a.type === "SET_VARIABLE"
+                ? [name(a.variableId), a.variableValue?.value]
+                : a.type,
+            ),
+          ),
+          JSON.stringify(
+            anchor.map((v, i) => [
+              name(v),
+              (((i < 4 ? x : y) >> i % 4) & 1) === 1,
+            ]),
+          ),
+        );
+        stores(r.run, acts?.slice(8));
+        continue;
+      }
       if (c === undefined) {
         stores(r.run, acts);
         continue;
@@ -316,13 +342,34 @@ const storedSize = (acts: readonly Action[]): number =>
     0,
   );
 
+/** A pen stroke's table (react/stroke.ts): one IF per anchor cell, so at most one body runs. The
+ * most it runs: every top-level action and the longest body. Throws unless the IFs' conditions are
+ * pairwise different (each a different anchor value). */
+const tableSize = (acts: readonly Action[]): number => {
+  const ifs = acts.filter((a) => a.type === "CONDITIONAL");
+  const conds = ifs.map((a) => JSON.stringify(a.conditionalBlocks[0].condition));
+  if (new Set(conds).size !== conds.length)
+    throw new Error("a stroke table with two IFs on the same anchor");
+  return (
+    acts.length +
+    Math.max(
+      0,
+      ...ifs.map((a) =>
+        a.conditionalBlocks.reduce((m, x) => m + storedSize(x.actions), 0),
+      ),
+    )
+  );
+};
+
 /** Every stored event (the triggers in the Present frame, every overlay's timer) that could run
- * more than the build's part, whether or not a session fires it. */
+ * more than the build's part, whether or not a session fires it (a stroke table: its one IF). */
 export function budgetErrors(b: Built): string[] {
   const errors: string[] = [];
   for (const n of b.fake.allNodes())
     for (const r of n.reactions) {
-      const size = storedSize(r.actions ?? []);
+      const stroke =
+        r.trigger?.type === "MOUSE_UP" && n.parent?.parent?.name === "hot/pen-down";
+      const size = (stroke ? tableSize : storedSize)(r.actions ?? []);
       if (size > b.part)
         errors.push(`${n.name} ${triggerOf(r.trigger)}: ${size} actions`);
     }

@@ -307,6 +307,12 @@ export class FakeNode {
     c.parent = this;
     this._children.push(c);
   }
+  /** Like Figma: puts `c` at `index` among the children (moving it if it is already one). */
+  insertChild(index: number, c: FakeNode) {
+    this.appendChild(c);
+    this._children.pop();
+    this._children.splice(index, 0, c);
+  }
   remove() {
     if (this.inInstance) throw new Error("Cannot remove a layer inside an instance");
     if (this.parent) this.parent._children = this.parent._children.filter((x) => x !== this);

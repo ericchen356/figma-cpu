@@ -145,6 +145,27 @@ const size = (acts: readonly Action[]): number =>
     0,
   );
 
+/** A pen stroke's table (react/stroke.ts): one IF per anchor cell, so at most one body runs: every
+ * top-level action and the longest body. The IFs' conditions must all differ. */
+const tableSize = (acts: readonly Action[]): number => {
+  const ifs = acts.filter((a) => a.type === "CONDITIONAL");
+  const conds = ifs.map((a) => JSON.stringify(a.type === "CONDITIONAL" && a.conditionalBlocks[0].condition));
+  expect(new Set(conds).size).toBe(conds.length);
+  return (
+    acts.length +
+    Math.max(
+      0,
+      ...ifs.map((a) =>
+        a.type === "CONDITIONAL"
+          ? a.conditionalBlocks.reduce((t, b) => t + size(b.actions), 0)
+          : 0,
+      ),
+    )
+  );
+};
+const isStroke = (node: { parent?: { parent?: { name?: string } | null } | null }, r: Reaction) =>
+  r.trigger?.type === "MOUSE_UP" && node.parent?.parent?.name === "hot/pen-down";
+
 /** What the real Figma refuses or silently changes: a CONDITIONAL inside a CONDITIONAL
  * ("Unrecognized key 'conditionalBlocks'"), more than one condition in a CONDITIONAL (it keeps the
  * first and turns the second into the ELSE), and conditions that are not expressions. */
@@ -184,7 +205,7 @@ function events(fig: FakeFigma, budget: number) {
     ]
       .map(({ node, r }) => ({
         at: `${node.name} ${r.trigger?.type}`,
-        n: size(r.actions ?? []),
+        n: (isStroke(node as FakeNode, r) ? tableSize : size)(r.actions ?? []),
       }))
       .filter((x) => x.n > budget),
   ).toEqual([]);
@@ -339,7 +360,8 @@ describe("CPU NATHAN plugin, end to end", () => {
     // every cell of the six click-layer sets stores the pointer's column on hover (the pen-down
     // set's strokes too)
     expect(hover).toHaveLength(6 * 14 * 10);
-    // a stroke cell: its hover and its release ink it, its press lifts the pen, all a few actions
+    // a stroke cell: its hover inks it and its press lifts the pen, a few actions each; its release
+    // draws the line from the pen's anchor (a table, one IF per anchor: one body runs)
     const canvasNode = kid(kid(present, "editor"), "canvas")!;
     const penDown = kid(canvasNode, "hot/pen-down")!;
     const cell = kid(kid(penDown, "row/3"), "cell/5")!;
@@ -348,7 +370,10 @@ describe("CPU NATHAN plugin, end to end", () => {
       "MOUSE_ENTER",
       "MOUSE_UP",
     ]);
-    for (const r of cell.reactions) expect(size(r.actions ?? [])).toBeLessThan(40);
+    for (const r of cell.reactions)
+      expect(
+        (r.trigger?.type === "MOUSE_UP" ? tableSize : size)(r.actions ?? []),
+      ).toBeLessThan(r.trigger?.type === "MOUSE_UP" ? 200 : 40);
     // the canvas takes presses and releases apart, never a click (a drag is one gesture); the
     // panels take clicks
     const onCanvas = new Set(reactionsUnder(canvasNode).map(({ r }) => r));

@@ -35,6 +35,8 @@ import {
   UI_W,
   uiSpec,
 } from "../../silicon/nathan/src/ui/spec";
+import { GRID_H, GRID_W } from "../../silicon/nathan/src/model/reference";
+import { strokePlan, strokeRun } from "../../silicon/nathan/src/react/stroke";
 import { NET0, NET1 } from "../../silicon/src/netlist/types";
 import type { Expr, PlanAction } from "../../silicon/src/prototype/types";
 
@@ -154,7 +156,12 @@ export function generate(o: GenOptions = {}): Generated {
   // the warm-up when Present opens: done once (WARM), by flipping a bit (SCRATCH) a few hundred times
   const WARM = ids.length + hover.x.length;
   const SCRATCH = WARM + 1;
-  const extraWires = hover.x.length + 2;
+  // the pen's anchor: the cell its press went down on (column, row), for the release's straight line
+  const anchor = {
+    x: [0, 1, 2, 3].map((i) => SCRATCH + 1 + i),
+    y: [0, 1, 2, 3].map((i) => SCRATCH + 5 + i),
+  };
+  const extraWires = hover.x.length + 2 + 8;
   for (let i = 0; i < extraWires; i++) units.push(unitIdx("ui"));
   const initBits =
     ids.map((id) => (init[id] ? "1" : "0")).join("") +
@@ -223,6 +230,46 @@ export function generate(o: GenOptions = {}): Generated {
     runs.set(`pointer/${c}`, store(c));
   // the editor's way to the gate map
   runs.set("go/machine", `@go:${MACHINE}`);
+  // the pen's anchor store, and its straight strokes (react/stroke.ts): one IF per anchor cell
+  const bitsOf = (wires: number[], v: number) =>
+    wires.map((k, i) => `${b36(k)}:${(v >> i) & 1 ? "T" : "F"}`);
+  const anchorStore = (x: number, y: number) =>
+    [...bitsOf(anchor.x, x), ...bitsOf(anchor.y, y)].join(";");
+  const isAnchor = (x: number, y: number) => {
+    const lits = [
+      ...anchor.x.map((k, i) => ((x >> i) & 1 ? b36(k) : `!${b36(k)}`)),
+      ...anchor.y.map((k, i) => ((y >> i) & 1 ? b36(k) : `!${b36(k)}`)),
+    ];
+    return lits.slice(0, -1).reduceRight((acc, l) => `&${l},${acc}`, lits[lits.length - 1]);
+  };
+  {
+    const netWire = (name: string) => {
+      const id = net.aliases.get(name);
+      if (id === undefined) throw new Error(`no net ${name}`);
+      return w(id);
+    };
+    const ink = `!${netWire("erase")}`;
+    const pix = (i: number) => netWire(`pix[${i}]`);
+    const pendownQ = net.aliases.get("pendown")!;
+    const pendownM = [...masterToQ(net)].find(([, q]) => q === pendownQ)?.[0];
+    const lift = [
+      `${w(pendownQ)}:F`,
+      ...(pendownM !== undefined && wireOf.has(pendownM) ? [`${w(pendownM)}:F`] : []),
+      `${netWire("hot[4]")}:T`,
+      `${netWire("hot[5]")}:F`,
+    ].join(";");
+    for (let r = 0; r < GRID_H; r++)
+      for (let c = 0; c < GRID_W; c++) {
+        const plan = strokePlan(r, c);
+        const parts = [`${pix(plan.at)}:${ink}`];
+        for (const l of plan.lines)
+          if (l.bits.length)
+            parts.push(`?${isAnchor(l.x, l.y)}{${l.bits.map((b) => `${pix(b)}:${ink}`).join(";")}}`);
+        // a release away from the anchor ends the stroke: the pen comes up
+        parts.push(`?!${isAnchor(c, r)}{${lift}}`);
+        runs.set(strokeRun(r, c), parts.join(";"));
+      }
+  }
   const continued = new Map<string, number>(); // run → its number of events
   const overlays: Array<{ t: string; n: string; w: number; h: number }> = [];
   const then = (run: string, k: number) => `then ${run} ${k}`;
@@ -408,6 +455,7 @@ export function generate(o: GenOptions = {}): Generated {
             r.run,
             [
               r.pointer !== undefined ? store(r.pointer) : "",
+              r.anchor ? anchorStore(r.anchor.x, r.anchor.y) : "",
               needsLead(r.run) ? lead : "",
             ]
               .filter(Boolean)

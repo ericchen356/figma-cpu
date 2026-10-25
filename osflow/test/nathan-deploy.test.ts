@@ -8,6 +8,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { FigmaValue } from "../../silicon/src/prototype/emulate";
 import { KEYS, SLOT_KEYS } from "../../silicon/nathan/src/ui/spec";
+import { nathanLibrary, nathanNetlist } from "../../silicon/nathan/src/hw";
+import { lineCells, pixOf } from "../../silicon/nathan/src/react/stroke";
+import type { FakeNode } from "../../silicon/test/fake-figma";
 import { figmaShapeErrors, runEvent } from "./figma-shape";
 import {
   budgetErrors,
@@ -204,4 +207,51 @@ describe("reactions that continue through overlays (smaller parts)", () => {
     expect(s.longestChain).toBeGreaterThan(2);
     expect(s.worst).toBeLessThanOrEqual(250);
   });
+});
+
+describe("the pen's straight strokes", () => {
+  it("a drag inks the line from the press to the release and lifts the pen; a click draws freehand", async () => {
+    const b = await build();
+    const net = nathanNetlist(nathanLibrary());
+    const values = b.fake.variableValues() as Map<string, FigmaValue>;
+    const bit = (name: string) =>
+      values.get(b.varOfNet(net.aliases.get(name)!)!) === true;
+    const fire = (n: FakeNode, type: string) =>
+      runEvent(
+        n.reactions.find((r) => r.trigger?.type === type)!.actions ?? [],
+        values,
+        (id) => b.fake.nodeById(id),
+      );
+    const canvas = b.editor.children.find((n) => n.name === "canvas")!;
+    const cell = (set: string, x: number, y: number) =>
+      canvas.children
+        .find((n) => n.name === `hot/${set}`)!
+        .children.find((n) => n.name === `row/${y}`)!
+        .children.find((n) => n.name === `cell/${x}`)!;
+    const inked = () =>
+      Array.from({ length: 140 }, (_, i) => i).filter((i) => bit(`pix[${i}]`));
+    runEvent(
+      b.present.reactions.find((r) => JSON.stringify(r.trigger).includes("[80]"))!
+        .actions ?? [],
+      values,
+      (id) => b.fake.nodeById(id),
+    );
+    // a drag from (2, 1) to (9, 5)
+    fire(cell("pen-up", 2, 1), "MOUSE_DOWN");
+    expect(bit("pendown")).toBe(true);
+    const { worst } = fire(cell("pen-down", 9, 5), "MOUSE_UP");
+    expect(worst).toBeLessThan(200);
+    expect(inked()).toEqual(
+      lineCells(2, 1, 9, 5)
+        .map(([x, y]) => pixOf(x, y))
+        .sort((a, c) => a - c),
+    );
+    expect([bit("pendown"), bit("hot[4]"), bit("hot[5]")]).toEqual([false, true, false]);
+    // a click at (3, 7): the pen stays down, and the cells the pointer enters are inked
+    fire(cell("pen-up", 3, 7), "MOUSE_DOWN");
+    fire(cell("pen-down", 3, 7), "MOUSE_UP");
+    expect(bit("pendown")).toBe(true);
+    fire(cell("pen-down", 4, 7), "MOUSE_ENTER");
+    expect(bit(`pix[${pixOf(3, 7)}]`) && bit(`pix[${pixOf(4, 7)}]`)).toBe(true);
+  }, 300000);
 });

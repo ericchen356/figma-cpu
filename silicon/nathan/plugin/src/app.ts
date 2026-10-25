@@ -60,6 +60,7 @@ import {
 } from "../../../src/prototype/figma-actions";
 import { nathanLibrary, nathanPowerOn } from "../../src/hw";
 import { buildCatalogGently, reactionSpecs } from "../../src/react/catalog";
+import { strokePlan } from "../../src/react/stroke";
 import {
   type Commit,
   masterToQ,
@@ -482,12 +483,19 @@ export class NathanApp {
       // the warm-up when ▶ Present opens: done once, and a bit it flips to get the viewer going
       { name: "ui/warm", type: "BOOLEAN", init: false },
       { name: "ui/scratch", type: "BOOLEAN", init: false },
+      // the pen's anchor: the cell its press went down on (column, row), for the stroke's line
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i): VariableSpec => ({
+        name: `ui/anchor/${i}`,
+        type: "BOOLEAN",
+        init: false,
+      })),
     ];
     const ptr = await this.phase("hover variables", () =>
       createVariables(this.api, UI_COLLECTION, ptrSpecs),
     );
     const pxh = ptr.vars.slice(0, 4);
     const [warmed, scratch] = [ptr.vars[4], ptr.vars[5]];
+    const anchorVars = ptr.vars.slice(6, 14);
     await this.breathe();
 
     this.progress("os", 3, steps, "lamps on the gates and wires");
@@ -664,6 +672,53 @@ export class NathanApp {
             : t.on === "up"
               ? mouseUp(0)
               : onClick();
+    // the pen: the press stores its cell (the anchor); the release draws the line from it (a
+    // table, react/stroke.ts) and, away from the anchor, lifts the pen
+    const anchorStore = (x: number, y: number): Action[] =>
+      anchorVars.map((v, i) =>
+        setVariable(v.id, boolData((((i < 4 ? x : y) >> i % 4) & 1) === 1)),
+      );
+    const netVar = (name: string) => {
+      const id = net.aliases.get(name);
+      const v = id === undefined ? undefined : variables.get(id);
+      if (!v) throw new Error(`no variable for net ${name}`);
+      return v;
+    };
+    const isAnchor = (x: number, y: number) =>
+      anchorVars
+        .map((v, i) =>
+          (((i < 4 ? x : y) >> i % 4) & 1) === 1
+            ? aliasData(v.id)
+            : exprData("NOT", [aliasData(v.id)]),
+        )
+        .reduceRight((acc, lit) => exprData("AND", [lit, acc]));
+    const strokes = new Map<string, Action[]>();
+    const strokeActions = (run: string): Action[] => {
+      const known = strokes.get(run);
+      if (known) return known;
+      const [r, c] = run.slice("stroke/".length).split("/").map(Number);
+      const plan = strokePlan(r, c);
+      const ink = (bit: number) =>
+        setVariable(netVar(`pix[${bit}]`).id, exprData("NOT", [aliasData(netVar("erase").id)]));
+      const pendown = net.aliases.get("pendown")!;
+      const master = [...shadow].find(([, q]) => q === pendown)?.[0];
+      const acts: Action[] = [
+        ink(plan.at),
+        ...plan.lines
+          .filter((l) => l.bits.length)
+          .map((l) => conditional(isAnchor(l.x, l.y), l.bits.map(ink))),
+        conditional(exprData("NOT", [isAnchor(c, r)]), [
+          setVariable(netVar("pendown").id, boolData(false)),
+          ...(master !== undefined && variables.get(master)
+            ? [setVariable(variables.get(master)!.id, boolData(false))]
+            : []),
+          setVariable(netVar("hot[4]").id, boolData(true)),
+          setVariable(netVar("hot[5]").id, boolData(false)),
+        ]),
+      ];
+      strokes.set(run, acts);
+      return acts;
+    };
     const reactionsFor = (ref: ReactionRef): Reaction[] => {
       const t = ref.trigger;
       if (ref.run.startsWith("pointer/"))
@@ -678,7 +733,9 @@ export class NathanApp {
         if (!to) throw new Error(`the screen jumps to a frame that does not exist: ${ref.run}`);
         return [{ trigger: triggerOf(t), actions: [navigate(to)] }];
       }
-      const actions = triggered.get(ref.run);
+      const actions = ref.run.startsWith("stroke/")
+        ? strokeActions(ref.run)
+        : triggered.get(ref.run);
       if (!actions)
         throw new Error(
           `the screen refers to a reaction that does not exist: ${ref.run}`,
@@ -686,10 +743,11 @@ export class NathanApp {
       return [
         {
           trigger: triggerOf(t),
-          actions:
-            ref.pointer === undefined
-              ? actions
-              : [...store(ref.pointer), ...actions],
+          actions: [
+            ...(ref.pointer === undefined ? [] : store(ref.pointer)),
+            ...(ref.anchor ? anchorStore(ref.anchor.x, ref.anchor.y) : []),
+            ...actions,
+          ],
         },
       ];
     };

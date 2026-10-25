@@ -5104,6 +5104,42 @@
     reaction: synthesize(net, spec.ties, __spreadProps(__spreadValues({}, opts), { given: spec.given }))
   });
 
+  // nathan/src/react/stroke.ts
+  function lineCells(x0, y0, x1, y1) {
+    const out = [];
+    const dx = Math.abs(x1 - x0);
+    const dy = -Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    let [x, y] = [x0, y0];
+    for (; ; ) {
+      out.push([x, y]);
+      if (x === x1 && y === y1) return out;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y += sy;
+      }
+    }
+  }
+  var pixOf = (x, y) => y * GRID_W + x;
+  function strokePlan(row, col) {
+    const lines = [];
+    for (let y = 0; y < GRID_H; y++)
+      for (let x = 0; x < GRID_W; x++) {
+        if (x === col && y === row) continue;
+        const cells = lineCells(x, y, col, row).slice(1, -1);
+        lines.push({ x, y, bits: cells.map(([cx, cy]) => pixOf(cx, cy)) });
+      }
+    return { at: pixOf(col, row), lines };
+  }
+  var strokeRun = (row, col) => `stroke/${row}/${col}`;
+
   // nathan/src/ui/render.ts
   var BREATHE_EVERY = 150;
   function make(api, s) {
@@ -5472,10 +5508,11 @@
     const cellReactions = (r, c) => {
       const hover2 = hoverRun(i, r, c);
       const own = grain === "cell" ? clickRun(i, r, c) : null;
-      const up2 = own && gesture === "up" ? own : i === PAINT_SET ? hover2 : `pointer/${c}`;
+      const up2 = own && gesture === "up" ? own : i === PAINT_SET ? strokeRun(r, c) : `pointer/${c}`;
       const storing = (run) => run.startsWith("pointer/") ? {} : { pointer: c };
+      const anchoring = i === PEN_UP_SET ? { anchor: { x: c, y: r } } : {};
       return [
-        ...own && gesture === "down" ? [{ trigger: { on: "down" }, run: own }] : [],
+        ...own && gesture === "down" ? [__spreadValues({ trigger: { on: "down" }, run: own }, anchoring)] : [],
         __spreadValues({ trigger: { on: "enter" }, run: hover2 }, storing(hover2)),
         // a per-row set's row takes its release itself
         ...grain !== "cell" && gesture === "up" ? [] : [__spreadValues({ trigger: { on: "up" }, run: up2 }, storing(up2))]
@@ -5511,6 +5548,7 @@
       children: grain === "row@sel" ? [__spreadProps(__spreadValues({}, pick(3, bits(STATE_NETS.sel), bits(SCREEN_NETS.nsel), level, (k) => level(`sel/${k}`, rows(k)))), { name: "slots" })] : rows(0)
     });
   }
+  var PEN_UP_SET = HOT.indexOf("pen-up");
   function inkLayer() {
     return frame("ink", {
       x: 0,
@@ -6002,14 +6040,43 @@
       ]
     });
   }
+  function drawingBanner() {
+    return frame("drawing", {
+      x: MID_X + RULER,
+      y: 32,
+      w: MID_W - RULER,
+      h: 28,
+      layout: { dir: "H", main: "CENTER", cross: "CENTER" },
+      visibleNet: bit(SCREEN_NETS.hot, PAINT_SET),
+      children: [
+        frame("pill", {
+          layout: { dir: "H", gap: 8, pad: 6, cross: "CENTER" },
+          sizeH: "HUG",
+          sizeV: "HUG",
+          radius: 14,
+          fill: COLOR.accent,
+          children: [
+            icon("icon", "pen", 0, 0, 16, COLOR.text),
+            label("text", "Drawing \xB7 move the mouse to ink \xB7 click to stop", {
+              size: 12,
+              bold: true,
+              color: COLOR.text,
+              sizeH: "HUG",
+              sizeV: "HUG"
+            })
+          ]
+        })
+      ]
+    });
+  }
   function status() {
     const hint = [
       "Drag a layer to move it \xB7 click empty canvas to deselect",
       "Drag on the canvas to draw it \xB7 a click makes one cell",
       "Release where it goes \xB7 Esc cancels",
       "Release at the opposite corner \xB7 Esc cancels",
-      "Pen: press on the canvas to start drawing",
-      "Drawing: move to ink cells \xB7 press to stop \xB7 E erases \xB7 C clears"
+      "Pen: drag to draw a straight line \xB7 click to draw freehand",
+      "Drawing: move the mouse to ink \xB7 click to stop \xB7 E erases \xB7 C clears"
     ];
     return frame("status", {
       x: MID_X + RULER,
@@ -6088,6 +6155,7 @@
         rail(),
         leftPanel(),
         status(),
+        drawingBanner(),
         toolbar(),
         penOptions(),
         rightPanel(),
@@ -7989,7 +8057,13 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         })),
         // the warm-up when ▶ Present opens: done once, and a bit it flips to get the viewer going
         { name: "ui/warm", type: "BOOLEAN", init: false },
-        { name: "ui/scratch", type: "BOOLEAN", init: false }
+        { name: "ui/scratch", type: "BOOLEAN", init: false },
+        // the pen's anchor: the cell its press went down on (column, row), for the stroke's line
+        ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+          name: `ui/anchor/${i}`,
+          type: "BOOLEAN",
+          init: false
+        }))
       ];
       const ptr = await this.phase(
         "hover variables",
@@ -7997,6 +8071,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       );
       const pxh = ptr.vars.slice(0, 4);
       const [warmed, scratch] = [ptr.vars[4], ptr.vars[5]];
+      const anchorVars = ptr.vars.slice(6, 14);
       await this.breathe();
       this.progress("os", 3, steps, "lamps on the gates and wires");
       const engine = findCell(page, TOP);
@@ -8129,6 +8204,41 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
       const store = (c) => pxh.map((v, i) => setVariable(v.id, boolData((c >> i & 1) === 1)));
       const goTo = /* @__PURE__ */ new Map();
       const triggerOf = (t) => t.on === "key" ? keyDown(t.codes) : t.on === "enter" ? mouseEnter(0) : t.on === "down" ? mouseDown(0) : t.on === "up" ? mouseUp(0) : onClick();
+      const anchorStore = (x, y) => anchorVars.map(
+        (v, i) => setVariable(v.id, boolData(((i < 4 ? x : y) >> i % 4 & 1) === 1))
+      );
+      const netVar = (name) => {
+        const id2 = net.aliases.get(name);
+        const v = id2 === void 0 ? void 0 : variables.get(id2);
+        if (!v) throw new Error(`no variable for net ${name}`);
+        return v;
+      };
+      const isAnchor = (x, y) => anchorVars.map(
+        (v, i) => ((i < 4 ? x : y) >> i % 4 & 1) === 1 ? aliasData(v.id) : exprData("NOT", [aliasData(v.id)])
+      ).reduceRight((acc, lit2) => exprData("AND", [lit2, acc]));
+      const strokes = /* @__PURE__ */ new Map();
+      const strokeActions = (run) => {
+        var _a2;
+        const known = strokes.get(run);
+        if (known) return known;
+        const [r, c] = run.slice("stroke/".length).split("/").map(Number);
+        const plan2 = strokePlan(r, c);
+        const ink = (bit3) => setVariable(netVar(`pix[${bit3}]`).id, exprData("NOT", [aliasData(netVar("erase").id)]));
+        const pendown = net.aliases.get("pendown");
+        const master = (_a2 = [...shadow].find(([, q]) => q === pendown)) == null ? void 0 : _a2[0];
+        const acts = [
+          ink(plan2.at),
+          ...plan2.lines.filter((l) => l.bits.length).map((l) => conditional(isAnchor(l.x, l.y), l.bits.map(ink))),
+          conditional(exprData("NOT", [isAnchor(c, r)]), [
+            setVariable(netVar("pendown").id, boolData(false)),
+            ...master !== void 0 && variables.get(master) ? [setVariable(variables.get(master).id, boolData(false))] : [],
+            setVariable(netVar("hot[4]").id, boolData(true)),
+            setVariable(netVar("hot[5]").id, boolData(false))
+          ])
+        ];
+        strokes.set(run, acts);
+        return acts;
+      };
       const reactionsFor = (ref2) => {
         const t = ref2.trigger;
         if (ref2.run.startsWith("pointer/"))
@@ -8143,7 +8253,7 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
           if (!to) throw new Error(`the screen jumps to a frame that does not exist: ${ref2.run}`);
           return [{ trigger: triggerOf(t), actions: [navigate(to)] }];
         }
-        const actions = triggered.get(ref2.run);
+        const actions = ref2.run.startsWith("stroke/") ? strokeActions(ref2.run) : triggered.get(ref2.run);
         if (!actions)
           throw new Error(
             `the screen refers to a reaction that does not exist: ${ref2.run}`
@@ -8151,7 +8261,11 @@ ${why.slice(0, 60)}`, { size: 10, color: COLORS.stop, name: "refused" }), 20 + i
         return [
           {
             trigger: triggerOf(t),
-            actions: ref2.pointer === void 0 ? actions : [...store(ref2.pointer), ...actions]
+            actions: [
+              ...ref2.pointer === void 0 ? [] : store(ref2.pointer),
+              ...ref2.anchor ? anchorStore(ref2.anchor.x, ref2.anchor.y) : [],
+              ...actions
+            ]
           }
         ];
       };

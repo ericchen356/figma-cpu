@@ -16,6 +16,7 @@ import {
 } from "../hw/layout";
 import { GRID_H, GRID_W } from "../model/reference";
 import { clickRun, HOTSPOT_GESTURE, HOTSPOT_GRAIN, hoverRun, PAINT_SET } from "../react/catalog";
+import { strokeRun } from "../react/stroke";
 import { type IconName, svgIcon } from "./icons";
 
 /** PICO-8, same as spec/palette.json and os-ui. */
@@ -105,6 +106,9 @@ export interface ReactionRef {
   /** Store the pointer's column (this one) before the run: on a canvas cell's hover or release, so
    * a press that follows without the pointer moving finds the column (no hover fires during a drag). */
   pointer?: number;
+  /** Store this cell as the pen's anchor before the run (the press that puts the pen down): the
+   * release draws the straight line from it (react/stroke.ts). */
+  anchor?: { x: number; y: number };
 }
 
 export interface NodeSpec {
@@ -420,11 +424,14 @@ function hotspotSet(i: number): NodeSpec {
   const cellReactions = (r: number, c: number): ReactionRef[] => {
     const hover = hoverRun(i, r, c);
     const own = grain === "cell" ? clickRun(i, r, c) : null;
-    // the release: the set's own (a drop, a corner), the stroke on the pen-down set, else the column
-    const up = own && gesture === "up" ? own : i === PAINT_SET ? hover : `pointer/${c}`;
+    // the release: the set's own (a drop, a corner), the pen's straight stroke from where it went
+    // down on the pen-down set, else the column
+    const up = own && gesture === "up" ? own : i === PAINT_SET ? strokeRun(r, c) : `pointer/${c}`;
     const storing = (run: string) => (run.startsWith("pointer/") ? {} : { pointer: c });
+    // the press that puts the pen down remembers where (the stroke's anchor)
+    const anchoring = i === PEN_UP_SET ? { anchor: { x: c, y: r } } : {};
     return [
-      ...(own && gesture === "down" ? [{ trigger: { on: "down" as const }, run: own }] : []),
+      ...(own && gesture === "down" ? [{ trigger: { on: "down" as const }, run: own, ...anchoring }] : []),
       { trigger: { on: "enter" }, run: hover, ...storing(hover) },
       // a per-row set's row takes its release itself
       ...(grain !== "cell" && gesture === "up" ? [] : [{ trigger: { on: "up" as const }, run: up, ...storing(up) }]),
@@ -463,6 +470,8 @@ function hotspotSet(i: number): NodeSpec {
         : rows(0),
   });
 }
+
+const PEN_UP_SET = HOT.indexOf("pen-up");
 
 /** The paint plane: one cell-sized rectangle of ink per pixel, visible on its RAM bit. Above the
  * layers, below the click layers and the selection outline. */
@@ -1014,6 +1023,38 @@ function penOptions(): NodeSpec {
   });
 }
 
+/** While the pen is down (freehand, no button held), a banner over the canvas says so: the pen-down
+ * click layers' line. */
+function drawingBanner(): NodeSpec {
+  return frame("drawing", {
+    x: MID_X + RULER,
+    y: 32,
+    w: MID_W - RULER,
+    h: 28,
+    layout: { dir: "H", main: "CENTER", cross: "CENTER" },
+    visibleNet: bit(SCREEN_NETS.hot, PAINT_SET),
+    children: [
+      frame("pill", {
+        layout: { dir: "H", gap: 8, pad: 6, cross: "CENTER" },
+        sizeH: "HUG",
+        sizeV: "HUG",
+        radius: 14,
+        fill: COLOR.accent,
+        children: [
+          icon("icon", "pen", 0, 0, 16, COLOR.text),
+          label("text", "Drawing · move the mouse to ink · click to stop", {
+            size: 12,
+            bold: true,
+            color: COLOR.text,
+            sizeH: "HUG",
+            sizeV: "HUG",
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
 /** What the canvas does now, centred above the toolbar: one line per click-layer set, shown with it. */
 function status(): NodeSpec {
   const hint = [
@@ -1021,8 +1062,8 @@ function status(): NodeSpec {
     "Drag on the canvas to draw it · a click makes one cell",
     "Release where it goes · Esc cancels",
     "Release at the opposite corner · Esc cancels",
-    "Pen: press on the canvas to start drawing",
-    "Drawing: move to ink cells · press to stop · E erases · C clears",
+    "Pen: drag to draw a straight line · click to draw freehand",
+    "Drawing: move the mouse to ink · click to stop · E erases · C clears",
   ];
   return frame("status", {
     x: MID_X + RULER,
@@ -1109,6 +1150,7 @@ export function uiSpec(): NodeSpec {
       rail(),
       leftPanel(),
       status(),
+      drawingBanner(),
       toolbar(),
       penOptions(),
       rightPanel(),
@@ -1117,13 +1159,13 @@ export function uiSpec(): NodeSpec {
   });
 }
 
-/** Every reaction name the screen refers to (the catalogue must provide all of them, `pointer/…` and
- * `go/…` aside). */
+/** Every reaction name the screen refers to (the catalogue must provide all of them, `pointer/…`,
+ * `go/…` and the pen's `stroke/…` tables aside). */
 export function reactionNames(spec: NodeSpec = uiSpec()): Set<string> {
   const out = new Set<string>();
   const walk = (n: NodeSpec) => {
     for (const r of n.reactions ?? [])
-      if (!r.run.startsWith("pointer/") && !r.run.startsWith("go/")) out.add(r.run);
+      if (!/^(pointer|go|stroke)\//.test(r.run)) out.add(r.run);
     n.children?.forEach(walk);
   };
   walk(spec);
