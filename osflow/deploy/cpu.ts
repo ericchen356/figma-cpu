@@ -870,6 +870,10 @@ export function generateCpu(
   const RAM_PITCH = 21;
   const W = 1180;
   const H = Math.max(640, 160 + RAM_PER_COL * RAM_PITCH + 20);
+  // the Load buttons, each as wide as its label (14 px semibold, about 7.6 px a character)
+  const loadW = LOADS.map((p) => Math.max(106, Math.ceil(20 + 7.6 * `Load ${p}`.length)));
+  const loadX = loadW.map((_, i) => 488 + loadW.slice(0, i).reduce((a, w) => a + w + 10, 0));
+  const ticksX = loadX[LOADS.length - 1] + loadW[LOADS.length - 1] + 16;
   const root = {
     t: "f",
     n: ROOT,
@@ -899,12 +903,12 @@ export function generateCpu(
       button("instruction", "Instruction  ▸▸", 176, 76, 160, "#2F6FED"),
       button("run", "Run  ▸▸▸", 348, 76, 116, "#1E9E5A"),
       ...LOADS.map((p, i) =>
-        button(`load/${p}`, `Load ${p}`, 488 + i * 122, 76, 116, "#555B66"),
+        button(`load/${p}`, `Load ${p}`, loadX[i], 76, loadW[i], "#555B66"),
       ),
       {
         t: "x",
         n: "ticks",
-        x: 984,
+        x: ticksX,
         y: 84,
         tx: ["ticks 0", 18, 1, "#FFB000"],
         vs: "cpu/ticks" + "Text",
