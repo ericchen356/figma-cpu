@@ -827,12 +827,12 @@ function rightPanel(): NodeSpec {
       section("shortcuts", "Shortcuts", 482),
       label(
         "keys",
-        "V  move      F  frame      R  rectangle\nO  ellipse    P  pen        E  erase    C  clear\nD  duplicate    ⌫  delete    [ ]  order\nArrow keys  nudge      Esc  cancel",
+        "V  move     F  frame     R  rectangle\nO  ellipse     P  pen     E  erase\nC  clear ink     D  duplicate     ⌫  delete\n[ ]  order     Arrows  nudge     Esc  cancel",
         { x: 16, y: 504, size: 11, color: COLOR.faint },
       ),
       label(
         "how",
-        "Drag a layer to move it, drag on the canvas\nto draw a shape, drag a corner to resize.\nPen: press to start drawing, move the mouse\nto ink cells, press again to stop.",
+        "Drag a layer to move it.\nDrag on the canvas to draw a shape.\nDrag a corner handle to resize.\nPen: press to start drawing, move\nthe mouse to ink, press to stop.",
         { x: 16, y: 584, size: 11, color: COLOR.dim },
       ),
     ],
