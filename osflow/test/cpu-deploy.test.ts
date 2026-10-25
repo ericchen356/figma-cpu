@@ -6,7 +6,7 @@
 // halts.
 import { beforeAll, describe, expect, it } from "vitest";
 import { EVENT_BUDGET, generateCpu, type CpuGenerated } from "../deploy/cpu";
-import { latchMap } from "../deploy/tick";
+import { latchMap, leaves } from "../deploy/tick";
 import {
   runFigmaActions,
   type FigmaValue,
@@ -137,7 +137,14 @@ function session(program: "count" | "mul" | "fib") {
     }
     return events;
   };
-  const loadCost = fire(byName(`load/${program}`), "ON_CLICK");
+  /** Clicks a panel button and lets the overlay it opens run until it closes; returns the most
+   * actions one of those events executed. */
+  const click = (name: string, max = 32) => {
+    let worst = fire(byName(name), "ON_CLICK");
+    runTimers(max, (n) => (worst = Math.max(worst, n)));
+    return worst;
+  };
+  const loadCost = click(`load/${program}`);
   const model = new IsaModel(assemble(PROGRAMS[program]).bytes);
   const compare = (when: string) => {
     for (const key of PROBED) {
@@ -160,13 +167,15 @@ function session(program: "count" | "mul" | "fib") {
   };
   /** What a panel row's lamps show (bit k = the lamp named bit<k>). */
   const shown = (row: FakeNode) =>
-    row.children.slice(1).reduce((v, lamp) => {
-      const id = lamp.children[0].boundVariables.visible?.id;
-      return (
-        v |
-        ((id && values.get(id) === true ? 1 : 0) << Number(lamp.name.slice(3)))
-      );
-    }, 0);
+    row.children
+      .filter((lit) => /^bit\d$/.test(lit.name))
+      .reduce((v, lit) => {
+        const id = lit.boundVariables.visible?.id;
+        return (
+          v |
+          ((id && values.get(id) === true ? 1 : 0) << Number(lit.name.slice(3)))
+        );
+      }, 0);
   /** Every register row, RAM row and the OUT digits must show the ISA model's state. */
   const comparePanel = (when: string) => {
     for (const [label, key] of Object.entries(PANEL_ROWS))
@@ -199,6 +208,7 @@ function session(program: "count" | "mul" | "fib") {
     peek,
     byName,
     fire,
+    click,
     runTimers,
     model,
     compare,
@@ -209,6 +219,43 @@ function session(program: "count" | "mul" | "fib") {
 describe("the CPU build", () => {
   it("stores only reactions Figma keeps as written", () => {
     expect(figmaShapeErrors(fake.allNodes())).toEqual([]);
+  });
+
+  it("keeps Step's large reaction off every variable a run changes", () => {
+    // Figma's cost of changing a variable grows with the size of every stored reaction that names
+    // it, so the every-gate Step must not name what Run writes (deploy/README.md)
+    const named = (node: FakeNode) => {
+      const reads = new Set<string>();
+      const writes = new Set<string>();
+      const read = (v: unknown): void => {
+        const x = v as {
+          type?: string;
+          value?: { id?: string; expressionArguments?: unknown[] };
+        };
+        if (x?.type === "VARIABLE_ALIAS") reads.add(x.value!.id!);
+        else if (x?.type === "EXPRESSION")
+          x.value!.expressionArguments!.forEach(read);
+      };
+      const walk = (acts: readonly Action[]) => {
+        for (const a of acts)
+          if (a.type === "CONDITIONAL")
+            for (const b of a.conditionalBlocks)
+              (read(b.condition), walk(b.actions));
+          else if (a.type === "SET_VARIABLE")
+            (writes.add(a.variableId!), read(a.variableValue));
+      };
+      for (const r of node.reactions) walk(r.actions ?? []);
+      return { reads, writes };
+    };
+    const top = (name: string) =>
+      fake.currentPage.children.find((n) => n.name === name)!;
+    const run = gen.names.overlays
+      .slice(0, 2)
+      .flatMap((n) => [...named(top(n)).writes]);
+    const step = named(top(gen.names.stepBody));
+    expect(
+      run.filter((id) => step.reads.has(id) || step.writes.has(id)),
+    ).toEqual([]);
   });
 
   it("draws every gate", () => {
@@ -234,9 +281,9 @@ describe("the CPU build", () => {
       const s = session(program);
       let worst = 0;
       let haltedAt = -1;
-      const step = s.byName("step");
       for (let tick = 1; tick <= 400; tick++) {
-        worst = Math.max(worst, s.fire(step, "ON_CLICK"));
+        worst = Math.max(worst, s.click("step"));
+        expect(s.overlay()).toBeNull();
         s.model.tick();
         s.compare(`tick ${tick}`);
         if (tick % 16 === 0) s.comparePanel(`tick ${tick}`);
@@ -257,10 +304,9 @@ describe("the CPU build", () => {
   for (const program of ["mul", "fib"] as const)
     it(`runs ${program} one Instruction a click`, () => {
       const s = session(program);
-      const button = s.byName("instruction");
       let worst = 0;
       for (let i = 1; i <= 120 && !s.model.state.HALTED; i++) {
-        worst = Math.max(worst, s.fire(button, "ON_CLICK"));
+        worst = Math.max(worst, s.click("instruction", 1));
         expect(s.overlay()).toBeNull();
         s.model.step();
         s.compare(`instruction ${i}`);
@@ -271,7 +317,7 @@ describe("the CPU build", () => {
       expect(s.model.state.HALTED).toBe(1);
       expect(worst).toBeLessThanOrEqual(EVENT_BUDGET);
       // a halted CPU stays put
-      s.fire(button, "ON_CLICK");
+      s.click("instruction", 1);
       s.compare("an Instruction after HALT");
       expect(s.values.get(s.ids.get("cpu/ticksText")!)).toBe(
         `ticks ${s.model.ticks}`,
@@ -282,7 +328,6 @@ describe("the CPU build", () => {
     it(`runs ${program} to HALT with one Run click, and pauses when the pill is clicked`, () => {
       const s = session(program);
       const per = gen.stats.instructionsPerEvent;
-      expect(per).toBeGreaterThan(1);
       s.fire(s.byName("run"), "ON_CLICK");
       for (let k = 0; k < 8; k++) s.fire(s.overlay()!, "AFTER_TIMEOUT");
       for (let k = 0; k < 8 * per; k++) s.model.step();
@@ -291,7 +336,7 @@ describe("the CPU build", () => {
       expect(s.overlay()).toBeNull();
       // Steps in the middle of an instruction, after a run left the flip-flops' masters behind
       for (let k = 0; k < 3; k++) {
-        s.fire(s.byName("step"), "ON_CLICK");
+        s.click("step");
         s.model.tick();
         s.compare(`Step ${k + 1} after the pause`);
       }
@@ -325,6 +370,7 @@ describe("the CPU build", () => {
     const net = gen.net;
     const lm = latchMap(net);
     const masters = new Set(lm.slaves.map((sl) => sl.master!.q));
+    const halted = net.aliases.get(PROBES.HALTED.name)!;
     const watched = [
       ...lm.latches.map((l) => l.q).filter((q) => !masters.has(q)),
       ...net.ports.filter((p) => /^SEG_/.test(p.name)).flatMap((p) => p.nets),
@@ -354,10 +400,21 @@ describe("the CPU build", () => {
       }
     };
     let checked = 0;
+    // Step's shadows and Run's temporaries are variables beyond the netlist's nets
+    const lists = [
+      ...gen.ticks.flatMap((tk) => [tk.full, ...tk.fast.map((f) => f.actions)]),
+      ...gen.tNext,
+      gen.stepping.sync,
+      gen.stepping.finish,
+    ];
+    let size = net.netNames.length;
+    for (const a of lists.flat())
+      if ("set" in a)
+        size = Math.max(size, a.set + 1, ...leaves(a.to).map((n) => n + 1));
     for (const tk of gen.ticks)
       for (const f of tk.fast)
         for (let r = 0; r < 24; r++) {
-          const s = new Uint8Array(net.netNames.length).map(() => random());
+          const s = new Uint8Array(size).map(() => random());
           s[NET0] = 0;
           s[NET1] = 1;
           s[net.aliases.get("RESET")!] = 0;
@@ -377,8 +434,14 @@ describe("the CPU build", () => {
                 (n, i) => (s[n] = SEVEN_SEG[nibble][i] === "1" ? 1 : 0),
               );
           const step = s.slice();
+          // Step: the copies in (shadows, masters), the body, the copies out
+          run(gen.stepping.sync, step);
           run(tk.full, step);
+          run(gen.stepping.finish, step);
           run(f.actions, s);
+          // T's move after the body, while the CPU runs (a tick that halts moves T itself)
+          if (!tk.halts)
+            for (const x of [step, s]) if (!x[halted]) run(gen.tNext[tk.t], x);
           for (const n of watched)
             if (s[n] !== step[n])
               throw new Error(

@@ -12,6 +12,8 @@ const log = (level: string, text: string) => {
 };
 
 $("editor").onclick = () => send({ type: "editor" });
+$("live").onclick = () => send({ type: "live", budget: 700 });
+$("selftest").onclick = () => send({ type: "selftest", events: 120, seed: Date.now() % 100000 });
 
 window.onmessage = (e: MessageEvent) => {
   const m = e.data.pluginMessage as ToUi | undefined;

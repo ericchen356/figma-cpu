@@ -177,6 +177,16 @@ export interface TickOptions {
    * the slave copied the master the tick before, but right even after `direct` ticks left the
    * master behind. */
   heldBySlave?: boolean;
+  /** Latches (by the output of the latch that takes D: a flip-flop's master) this tick leaves to
+   * the caller: no commit, and none of the logic only they need. */
+  skip?: Set<number>;
+  /** Without `direct`: leave the HIGH pass (every slave takes its master) to the caller, which runs
+   * it after these actions; the refresh then reads the masters that loaded. */
+  noHighPass?: boolean;
+  /** State nets read through other variables (copies the caller makes before the tick). */
+  readAs?: Map<number, number>;
+  /** Latches and refreshed wires written to other variables (that the caller copies back). */
+  writeAs?: Map<number, number>;
 }
 
 export interface TickPlan {
@@ -198,9 +208,11 @@ export function tickPlan(
   for (const [n, v] of o.ties) val[n] = v;
   // what each net is, as an expression of the state: a constant, a state net, or a gate
   const expr: Array<Expr | undefined> = new Array(net.netNames.length);
+  const readNet = (n: number) => o.readAs?.get(n) ?? n;
+  const writeNet = (n: number) => o.writeAs?.get(n) ?? n;
   const exprOf = (n: number): Expr => {
     if (val[n] !== 2) return { const: val[n] as 0 | 1 };
-    return expr[n] ?? { var: n };
+    return expr[n] ?? { var: readNet(n) };
   };
   const real = new Set<number>(); // gates that stay gates (not folded away)
   for (const gi of lm.order) {
@@ -221,7 +233,9 @@ export function tickPlan(
     }
   }
   // the latches that can load, and the gates their D and EN need
-  const loading = lm.loaders.filter((l) => val[l.en] !== 0);
+  const loading = lm.loaders.filter(
+    (l) => val[l.en] !== 0 && !o.skip?.has(l.q),
+  );
   const need = new Set<number>();
   const want = (n: number) => {
     const d = net.driver[n];
@@ -274,21 +288,34 @@ export function tickPlan(
     const d = sub(exprOf(l.d));
     const en = sub(exprOf(l.en));
     return {
-      set: q,
-      to: val[l.en] === 1 ? d : or(and(en, d), and(not(en), { var: hold })),
+      set: writeNet(q),
+      to:
+        val[l.en] === 1
+          ? d
+          : or(and(en, d), and(not(en), { var: readNet(hold) })),
     };
   };
   const loaded = new Set<number>();
   if (o.direct) {
     // every commit reads the state from before the tick, so one that reads another's latch goes
     // first (a counter writes its top bit first); a cycle of them needs the masters after all
+    // a latch whose next value is its own (a sticky flag this tick cannot set), or the constant it
+    // is tied to, needs no write
     const ordered = readersFirst(
-      loading.map((l) => {
-        const q = slaveOf.get(l.q) ?? l.q;
-        return commitOf(l, q, q);
-      }),
+      loading
+        .map((l) => {
+          const q = slaveOf.get(l.q) ?? l.q;
+          return commitOf(l, q, q);
+        })
+        .filter(
+          (c) =>
+            !("var" in c.to && c.to.var === c.set) &&
+            !("const" in c.to && val[c.set] === c.to.const),
+        ),
     );
-    if (!ordered) return tickPlan(net, lm, { ...o, direct: false });
+    // (the masters, which `direct` ticks leave behind, then hold through their slaves)
+    if (!ordered)
+      return tickPlan(net, lm, { ...o, direct: false, heldBySlave: true });
     actions.push(...ordered);
     for (const l of loading) loaded.add(l.q);
   } else {
@@ -305,13 +332,32 @@ export function tickPlan(
       actions.push(c);
       loaded.add(l.q);
     }
-    for (const s of lm.slaves)
-      if (loaded.has(s.master!.q))
-        actions.push({ set: s.q, to: { var: s.master!.q } });
+    if (!o.noHighPass)
+      for (const s of lm.slaves)
+        if (loaded.has(s.master!.q))
+          actions.push({ set: s.q, to: { var: s.master!.q } });
   }
+  // a flip-flop that loaded, as the refresh reads it: its master when the slaves copy later
+  const masterOf = new Map(lm.slaves.map((s) => [s.q, s.master!.q]));
+  const now = (n: number) =>
+    !o.direct && o.noHighPass && loaded.has(masterOf.get(n) ?? -1)
+      ? masterOf.get(n)!
+      : n;
   if (o.refresh && [...o.refresh.when].some((q) => loaded.has(q))) {
+    // a refresh gate reads one before it where that one was written, and the state as the tick reads it
+    const outs = new Set(o.refresh.gates.map((gi) => net.gates[gi].out));
     const src = (n: number): Expr =>
-      n === NET0 ? { const: 0 } : n === NET1 ? { const: 1 } : { var: n };
+      n === NET0
+        ? { const: 0 }
+        : n === NET1
+          ? { const: 1 }
+          : {
+              var: outs.has(n)
+                ? writeNet(n)
+                : now(n) !== n
+                  ? now(n)
+                  : readNet(n),
+            };
     const inRefresh = new Map<number, number>();
     for (const gi of o.refresh.gates)
       for (const i of ins(net.gates[gi]))
@@ -325,7 +371,7 @@ export function tickPlan(
       const to = gateOf(g.type, a, b ?? { const: 0 });
       if (foldable(g.out, to, inRefresh.get(g.out) ?? 0))
         refolded.set(g.out, to);
-      else actions.push({ set: g.out, to });
+      else actions.push({ set: writeNet(g.out), to });
     }
   }
   return { actions, loading: loading.length };
@@ -376,7 +422,7 @@ function depth(e: Expr): number {
 }
 
 /** The wires an expression reads. */
-function leaves(e: Expr): number[] {
+export function leaves(e: Expr): number[] {
   if ("var" in e) return [e.var];
   if ("const" in e) return [];
   if ("not" in e) return leaves(e.not);

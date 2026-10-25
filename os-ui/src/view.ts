@@ -13,6 +13,7 @@ import {
   shownItem,
 } from "./chrome";
 import { layerCss, PX_PER_CELL } from "./code";
+import { chipWindow, cpuPanel, showCpu } from "./cpuview";
 import {
   GRID_H,
   GRID_W,
@@ -138,6 +139,7 @@ function toolsPanel(): string {
 function leftPanel(s: State): string {
   if (leftTab === "assets") return assetsPanel();
   if (leftTab === "tools") return toolsPanel();
+  if (leftTab === "cpu") return cpuPanel();
   return layersPanel(s);
 }
 
@@ -775,7 +777,10 @@ export function render(s: State, root: HTMLElement): void {
   CELL_PX = cellPx();
   const q = (sel: string) => root.querySelector(sel) as HTMLElement;
   q("#rail").innerHTML = railHtml();
-  q("#left").innerHTML = leftPanel(s);
+  // The CPU panel stays in place while it shows, so its gate map survives: cpuview.ts updates it.
+  const left = q("#left");
+  if (leftTab !== "cpu" || !left.querySelector(".cpu-panel")) left.innerHTML = leftPanel(s);
+  if (leftTab === "cpu") showCpu(left, s);
   q("#title").textContent = s.title;
   q("#right").innerHTML = propertiesPanel(s);
   q("#toolbar").innerHTML = toolbar(s);
@@ -786,6 +791,7 @@ export function render(s: State, root: HTMLElement): void {
       .join("") +
     paintHtml(s) +
     frameLabels(s) +
+    (leftTab === "cpu" ? chipWindow(CELL_PX) : "") +
     selection(s) +
     penMarker(s) +
     editorHtml(s);

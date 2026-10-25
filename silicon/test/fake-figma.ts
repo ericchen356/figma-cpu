@@ -297,6 +297,9 @@ export class FakeNode {
     this.height = h;
   }
   appendChild(c: FakeNode) {
+    // like Figma: only containers have children; on a shape or a text, appendChild does not exist
+    if (!["DOCUMENT", "PAGE", "FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP", "SECTION", "BOOLEAN_OPERATION"].includes(this.type))
+      throw new TypeError("not a function");
     if (this.type === "INSTANCE" || this.inInstance) throw new Error("Cannot move node. New parent is an instance or is inside of an instance");
     if (c.inInstance) throw new Error("Cannot move node. Node is inside of an instance");
     if (c.type === "PAGE" && this.type !== "DOCUMENT") throw new Error("pages can only be children of the document");
@@ -335,6 +338,12 @@ export class FakeNode {
   }
   getPluginData(k: string) {
     return this.pluginData.get(k) ?? "";
+  }
+  setSharedPluginData(ns: string, k: string, v: string) {
+    this.pluginData.set(`${ns}\u0000${k}`, v);
+  }
+  getSharedPluginData(ns: string, k: string) {
+    return this.pluginData.get(`${ns}\u0000${k}`) ?? "";
   }
   async loadAsync() {
     this.loaded = true;
@@ -413,6 +422,11 @@ export class FakeNode {
             // a Scroll-to targets a layer inside a scrolling frame; the other navigations a top-level frame
             if (String(a.navigation) !== "SCROLL_TO" && dest.parent?.type !== "PAGE")
               throw new Error(`navigate to ${dest.name}, which is not a top-level frame`);
+            // like Figma (measured): a swap to the overlay the reaction sits in is refused
+            let top: FakeNode = this;
+            while (top.parent && top.parent.type !== "PAGE") top = top.parent;
+            if (String(a.navigation) === "SWAP" && dest === top)
+              throw new Error(`Reaction was invalid (destination ${dest.id} was rejected — the destination may not be reachable from this source)`);
           }
           if (a.type === "CONDITIONAL") for (const b of a.conditionalBlocks) check(b.actions);
         }
@@ -472,8 +486,11 @@ export class FakeVariable {
   setValueForMode(modeId: string, value: unknown) {
     if (this.removed) throw new Error(`${this.name}: variable was removed`);
     if (!this.collection.modes.some((m) => m.modeId === modeId)) throw new Error(`${this.name}: unknown mode ${modeId}`);
-    const want = this.resolvedType === "BOOLEAN" ? "boolean" : this.resolvedType === "FLOAT" ? "number" : "string";
-    if (typeof value !== want) throw new Error(`${this.name}: ${this.resolvedType} variable cannot hold ${JSON.stringify(value)}`);
+    // like Figma: a COLOR holds {r, g, b, a} with channels in 0–1
+    const isColour = (v: unknown) =>
+      !!v && typeof v === "object" && ["r", "g", "b", "a"].every((k) => typeof (v as Record<string, unknown>)[k] === "number" && (v as Record<string, number>)[k] >= 0 && (v as Record<string, number>)[k] <= 1);
+    const want = this.resolvedType === "BOOLEAN" ? "boolean" : this.resolvedType === "FLOAT" ? "number" : this.resolvedType === "COLOR" ? "colour" : "string";
+    if (want === "colour" ? !isColour(value) : typeof value !== want) throw new Error(`${this.name}: ${this.resolvedType} variable cannot hold ${JSON.stringify(value)}`);
     this.valuesByMode[modeId] = value;
     this.api.variableWrites++;
   }
@@ -569,6 +586,11 @@ export class FakeFigma {
   createVector() {
     return this.make("VECTOR");
   }
+  createStar() {
+    const n = this.make("STAR");
+    Object.assign(n, { pointCount: 5, innerRadius: 0.382 });
+    return n;
+  }
   createComponent() {
     return this.make("COMPONENT");
   }
@@ -645,6 +667,12 @@ export class FakeFigma {
     getLocalVariablesAsync: async (type?: string) => [...this.variableById.values()].filter((v) => !type || v.resolvedType === type),
     getVariableByIdAsync: async (id: string) => this.variableById.get(id) ?? null,
     getVariableCollectionByIdAsync: async (id: string) => this.collections.find((c) => c.id === id) ?? null,
+    /** Like Figma: a copy of a solid paint whose colour follows a COLOR variable. */
+    setBoundVariableForPaint: (paint: { type: string }, field: string, v: FakeVariable) => {
+      if (paint.type !== "SOLID" || field !== "color") throw new Error("setBoundVariableForPaint: only a solid paint's color");
+      if (!(v instanceof FakeVariable) || v.resolvedType !== "COLOR") throw new Error("setBoundVariableForPaint: needs a COLOR variable");
+      return { ...paint, boundVariables: { color: { type: "VARIABLE_ALIAS", id: v.id } } };
+    },
   };
 
   /** Variable id → default-mode value: what the prototype starts from (for runFigmaActions). */

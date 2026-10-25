@@ -262,6 +262,49 @@ export const SCREENS = {
   "doc-loaded": ["Shared file, opened to edit", loadDemo, { hash: shareHash(DEMO) }],
 };
 
+// ---- parts: pieces of a screen in each state the live Figma OS shows (osui/data/parts.json) -----
+/** How to get each tool from a fresh page: its shortcut, or its toolbar flyout. */
+const TOOL_WAYS = {
+  move: (c) => key(c, "v"),
+  hand: (c) => key(c, "h"),
+  scale: (c) => key(c, "k"),
+  frame: (c) => key(c, "f"),
+  section: (c) => key(c, "s", SHIFT),
+  slice: (c) => key(c, "s"),
+  rect: (c) => key(c, "r"),
+  line: (c) => key(c, "l"),
+  arrow: (c) => key(c, "l", SHIFT),
+  ellipse: (c) => key(c, "o"),
+  polygon: (c) => pick(c, "shape", "tool:polygon"),
+  star: (c) => pick(c, "shape", "tool:star"),
+  pen: (c) => key(c, "p"),
+  paint: (c) => key(c, "p", SHIFT),
+  erase: (c) => key(c, "e"),
+  text: (c) => key(c, "t"),
+  comment: (c) => key(c, "c"),
+};
+/** One layer of each kind, side by side so none sits in another, then nothing selected. */
+const kindRows = (kinds) => async (c) => {
+  for (const [i, k] of kinds.entries()) {
+    await TOOL_WAYS[k](c);
+    const [x, y] = [(i % 4) * 3, Math.floor(i / 4) * 3];
+    await box(c, [x, y], [x + 1, y + 1]);
+  }
+  await key(c, "Escape");
+};
+/** The tools a toolbar group shows only once picked (every one but each group's first). */
+const PICKED_TOOLS = ["hand", "scale", "section", "slice", "line", "arrow", "ellipse", "polygon", "star", "paint", "erase"];
+/** Part id → [how to get there from a fresh page, the DOM id of the subtree to keep]. */
+export const PARTS = {
+  ...Object.fromEntries(Object.entries(TOOL_WAYS).map(([t, go]) => [`toolbar/${t}`, [go, "toolbar"]])),
+  // the group's button showing the tool it remembers while another group's tool is active
+  ...Object.fromEntries(
+    PICKED_TOOLS.map((t) => [`toolbar/idle/${t}`, [async (c) => (await TOOL_WAYS[t](c), await TOOL_WAYS.text(c)), "toolbar"]]),
+  ),
+  "rows/a": [kindRows(["frame", "section", "slice", "rect", "line", "arrow", "ellipse", "polygon"]), "left"],
+  "rows/b": [kindRows(["star"]), "left"],
+};
+
 // ---- capture ------------------------------------------------------------------------------------
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".woff2": "font/woff2", ".svg": "image/svg+xml", ".map": "application/json" };
 function serve(root) {
@@ -304,55 +347,117 @@ function domOf(n) {
   return Object.keys(o).length ? o : undefined;
 }
 
-const wanted = process.argv.slice(2);
+/** Fails with the screen's name if a step does not finish (a hang otherwise stalls every screen). */
+const within = (ms, what, p) =>
+  Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${ms} ms`)), ms))]);
+
+// `node capture.mjs` captures every screen and part; `--parts` only the parts; named screens or
+// parts are captured into the existing files (the rest of each file stays as it was).
+const args = process.argv.slice(2);
+const onlyParts = args.includes("--parts");
+const wanted = args.filter((a) => !a.startsWith("--"));
+const want = (id) => (wanted.length ? wanted.includes(id) : true);
+const doScreens = !onlyParts && (!wanted.length || wanted.some((id) => id in SCREENS));
+const doParts = onlyParts || !wanted.length || wanted.some((id) => id in PARTS);
 execFileSync("npm", ["run", "-s", "build"], { cwd: OSUI, stdio: "inherit" });
 mkdirSync(OUT, { recursive: true });
 const server = await serve(OSUI);
 const base = `http://127.0.0.1:${server.address().port}/index.html`;
 const c = await launch({ port: 9300 + Math.floor(Math.random() * 400) });
-const svgs = [];
-const svgIndex = new Map();
-const images = {};
-const imageIndex = new Map();
-const screens = [];
-const keepSvg = (markup) => {
-  if (!svgIndex.has(markup)) (svgIndex.set(markup, svgs.length), svgs.push(markup));
-  return svgIndex.get(markup);
-};
-try {
-  for (const [id, [title, go, opt]] of Object.entries(SCREENS)) {
-    if (wanted.length && !wanted.includes(id)) continue;
-    await open(c, opt?.hash ? `${base}#share=${opt.hash}` : base);
-    try {
-      await go(c);
-    } catch (e) {
-      throw new Error(`screen ${id}: ${e.message}`);
-    }
-    // park the pointer where no :hover rule applies, unless the screen is about a hover
-    if (!id.startsWith("menu-main-")) await move(c, 1300, 895);
-    await sleep(150);
-    const doc = await extract(c);
-    const used = await resolveFonts(c, doc);
-    const fig = toFigma(doc, { fontFor: (n) => used.get(n.id) });
-    const layers = [];
-    for (const { src, ...l } of fig.layers) {
-      const out = { ...l, dom: src != null ? domOf(doc.nodes[src]) : undefined };
-      if (out.svg) out.svg = keepSvg(out.svg);
-      if (out.svgUrl) out.svgUrl = keepSvg(out.svgUrl);
-      if (out.image) {
-        const png = await imagePng(c, l.image.src, l.image.invert);
-        if (!imageIndex.has(png)) imageIndex.set(png, `img${imageIndex.size}`), (images[`img${imageIndex.size - 1}`] = png);
-        out.image = { ref: imageIndex.get(png), fit: l.image.fit, natural: l.image.natural };
+
+/** A file of captured layers: each SVG and image stored once, layers point at them by index. */
+function store(prev) {
+  const svgs = [...(prev?.svgs ?? [])];
+  const svgIndex = new Map(svgs.map((s, i) => [s, i]));
+  const images = { ...(prev?.images ?? {}) };
+  const imageIndex = new Map(Object.entries(images).map(([k, v]) => [v, k]));
+  return {
+    svgs,
+    images,
+    keepSvg(markup) {
+      if (!svgIndex.has(markup)) (svgIndex.set(markup, svgs.length), svgs.push(markup));
+      return svgIndex.get(markup);
+    },
+    keepImage(png) {
+      if (!imageIndex.has(png)) {
+        const ref = `img${Object.keys(images).length}`;
+        imageIndex.set(png, ref);
+        images[ref] = png;
       }
-      layers.push(out);
+      return imageIndex.get(png);
+    },
+  };
+}
+const read = (file) => (existsSync(join(OUT, file)) ? JSON.parse(readFileSync(join(OUT, file), "utf8")) : null);
+
+/** Loads a fresh page, drives it, and returns its layers as Figma layer JSON. */
+async function grab(id, go, opt, files) {
+  // a fresh document every time: a URL that differs only after "#" would not reload the page
+  await c.send("Page.navigate", { url: "about:blank" });
+  await sleep(50);
+  await within(15000, `${id}: load`, open(c, opt?.hash ? `${base}#share=${opt.hash}` : base));
+  await within(30000, `${id}: driving the page`, go(c));
+  // park the pointer where no :hover rule applies, unless the screen is about a hover
+  if (!id.startsWith("menu-main-")) await move(c, 1300, 895);
+  await sleep(150);
+  const doc = await within(30000, `${id}: extract`, extract(c));
+  const used = await within(60000, `${id}: fonts`, resolveFonts(c, doc));
+  const fig = toFigma(doc, { fontFor: (n) => used.get(n.id) });
+  const layers = [];
+  for (const { src, ...l } of fig.layers) {
+    const out = { ...l, dom: src != null ? domOf(doc.nodes[src]) : undefined };
+    if (out.svg) out.svg = files.keepSvg(out.svg);
+    if (out.svgUrl) out.svgUrl = files.keepSvg(out.svgUrl);
+    if (out.image) {
+      const png = await imagePng(c, l.image.src, l.image.invert);
+      out.image = { ref: files.keepImage(png), fit: l.image.fit, natural: l.image.natural };
     }
-    screens.push({ id, title, layers });
-    console.log(`${id}: ${layers.length} layers`);
+    layers.push(out);
+  }
+  return layers;
+}
+
+/** The layers of the subtree whose root is the DOM element with this id. */
+function subtree(layers, domId) {
+  const root = layers.find((l) => l.dom?.id === domId);
+  if (!root) throw new Error(`no #${domId} in the capture`);
+  const keep = new Set([root.id]);
+  for (const l of layers) if (l.parent != null && keep.has(l.parent)) keep.add(l.id);
+  return layers.filter((l) => keep.has(l.id)).map((l) => (l.id === root.id ? { ...l, parent: null } : l));
+}
+
+const [w, h] = [1440, 900];
+try {
+  if (doScreens) {
+    const prev = wanted.length ? read("screens.json") : null;
+    const files = store(prev);
+    const screens = [];
+    for (const [id, [title, go, opt]] of Object.entries(SCREENS)) {
+      const old = prev?.screens.find((s) => s.id === id);
+      if (!want(id)) {
+        if (old) screens.push(old);
+        continue;
+      }
+      const t0 = Date.now();
+      screens.push({ id, title, layers: await grab(id, go, opt, files) });
+      console.log(`${id}: ${screens[screens.length - 1].layers.length} layers (${Date.now() - t0} ms)`);
+    }
+    writeFileSync(join(OUT, "screens.json"), JSON.stringify({ viewport: [w, h], svgs: files.svgs, images: files.images, screens }));
+    console.log(`${screens.length} screens, ${files.svgs.length} distinct SVGs, ${Object.keys(files.images).length} images`);
+  }
+  if (doParts) {
+    const prev = wanted.length && !onlyParts ? read("parts.json") : null;
+    const files = store(prev);
+    const parts = { ...(prev?.parts ?? {}) };
+    for (const [id, [go, domId]] of Object.entries(PARTS)) {
+      if (!onlyParts && !want(id)) continue;
+      parts[id] = subtree(await grab(id, go, undefined, files), domId);
+      console.log(`part ${id}: ${parts[id].length} layers`);
+    }
+    writeFileSync(join(OUT, "parts.json"), JSON.stringify({ viewport: [w, h], svgs: files.svgs, images: files.images, parts }));
+    console.log(`${Object.keys(parts).length} parts`);
   }
 } finally {
   await c.close();
   server.close();
 }
-const [w, h] = [1440, 900];
-writeFileSync(join(OUT, "screens.json"), JSON.stringify({ viewport: [w, h], svgs, images, screens }));
-console.log(`${screens.length} screens, ${svgs.length} distinct SVGs, ${Object.keys(images).length} images`);

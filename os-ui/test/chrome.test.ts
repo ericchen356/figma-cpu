@@ -65,8 +65,8 @@ describe("menus", () => {
 });
 
 describe("rail and palette", () => {
-  it("has File, Assets and Tools on the rail, File first, and no Variables", () => {
-    expect(RAIL.map((r) => r.id)).toEqual(["file", "assets", "tools"]);
+  it("has File, Assets, Tools and CPU on the rail, File first, and no Variables", () => {
+    expect(RAIL.map((r) => r.id)).toEqual(["file", "assets", "tools", "cpu"]);
   });
 
   it("lists each command once and never the palette itself", () => {

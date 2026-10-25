@@ -50,6 +50,13 @@ export const I = {
   file: icon(L.File),
   assets: icon(L.LayoutGrid),
   tools: icon(L.Wrench),
+  cpu: icon(L.Cpu),
+  // CPU panel status line
+  circleCheck: icon(L.CircleCheck),
+  refresh: icon(L.RefreshCw),
+  circleAlert: icon(L.CircleAlert),
+  triangleAlert: icon(L.TriangleAlert),
+  loader: icon(L.LoaderCircle),
   // UI
   chevDown: icon(L.ChevronDown),
   chevRight: icon(L.ChevronRight),

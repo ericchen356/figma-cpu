@@ -58,14 +58,41 @@ export interface Layer {
   /** The DOM node it came from: id, classes, data attributes (for finding regions). */
   dom?: { id?: string; cls?: string; data?: Record<string, string> };
 }
-export interface Capture {
-  state: string;
-  viewport: [number, number];
+/** One os-ui screen as captured. In the file, `svg`/`svgUrl` are indices into `svgs` and an
+ * image is a `ref` into `images`; `screenLayers` resolves them. */
+export interface Screen {
+  id: string;
+  title: string;
   layers: Layer[];
+}
+export interface ScreensFile {
+  viewport: [number, number];
+  svgs: string[];
+  images: Record<string, string>;
+  screens: Screen[];
+}
+
+/** A screen's layers with their SVG markup and image pixels filled in. */
+export function screenLayers(file: ScreensFile, screen: Screen): Layer[] {
+  return screen.layers.map((l) => {
+    const raw = l as Layer & {
+      svg?: string | number;
+      svgUrl?: string | number | null;
+      image?: { ref?: string };
+    };
+    const out: Layer = { ...l };
+    if (typeof raw.svg === "number") out.svg = file.svgs[raw.svg];
+    if (typeof raw.svgUrl === "number") out.svgUrl = file.svgs[raw.svgUrl];
+    if (raw.image?.ref)
+      out.image = { ...l.image, png: file.images[raw.image.ref] };
+    return out;
+  });
 }
 
 export interface LayerContext {
   api: PluginAPI;
+  /** What could not be built as captured: "layer — step: error". The build goes on without it. */
+  problems?: string[];
   /** Called every `breatheEvery` nodes: a long synchronous run drops Figma's server connection. */
   breathe?: () => Promise<void>;
   breatheEvery?: number;
@@ -220,6 +247,10 @@ function effectsOf(l: Layer): Effect[] {
   return out;
 }
 
+/** Whether a node can hold children (only frames do here; an ellipse, rectangle or text cannot). */
+const holds = (n: SceneNode | undefined): boolean =>
+  !!n && ["FRAME", "GROUP", "COMPONENT", "INSTANCE", "SECTION"].includes(n.type);
+
 /** Builds `layers` under `root`, whose top-left is page point (ox, oy). Returns every created node
  * by layer id. */
 export async function buildLayers(
@@ -234,15 +265,33 @@ export async function buildLayers(
   const byId = new Map(layers.map((l) => [l.id, l]));
   let count = 0;
   for (const l of layers) {
-    const parentLayer = l.parent != null ? byId.get(l.parent) : undefined;
+    // the nearest ancestor that can hold children: a circle or a text with content inside (the
+    // avatar's "N") is a shape in Figma, so its content goes into its own parent, right above it
+    let parentLayer = l.parent != null ? byId.get(l.parent) : undefined;
+    while (parentLayer && !holds(made.get(parentLayer.id)))
+      parentLayer =
+        parentLayer.parent != null ? byId.get(parentLayer.parent) : undefined;
     const parent = (parentLayer && made.get(parentLayer.id)) as
       (FrameNode & ChildrenMixin) | undefined;
     const host = parent ?? root;
     const px = parentLayer ? parentLayer.x : origin.x;
     const py = parentLayer ? parentLayer.y : origin.y;
-    const node = await make(api, l, fonts);
+    const problems = ctx.problems ?? [];
+    let node: SceneNode | null = null;
+    try {
+      node = await make(api, l, fonts, problems);
+    } catch (e) {
+      problems.push(`${label(l)} — create: ${message(e)}`);
+    }
     if (!node) continue;
-    host.appendChild(node);
+    try {
+      host.appendChild(node);
+    } catch (e) {
+      // a new node starts on the page itself: never leave it loose there
+      node.remove();
+      (ctx.problems ?? []).push(`${label(l)} — place: ${message(e)}`);
+      continue;
+    }
     node.x = l.x - px;
     node.y = l.y - py;
     if (l.rotation) {
@@ -262,32 +311,63 @@ export async function buildLayers(
   return made;
 }
 
-async function make(
+const message = (e: unknown) =>
+  e instanceof Error
+    ? `${e.message}${e.stack ? ` @ ${e.stack.split("\n").slice(0, 3).join(" ← ")}` : ""}`
+    : String(e);
+const label = (l: Layer) => `${l.type} #${l.id} "${l.name.slice(0, 40)}"`;
+
+/** One layer as a Figma node. Each property group is applied on its own: if Figma refuses one,
+ * the node keeps the rest and the refusal is reported. */
+export async function make(
   api: PluginAPI,
   l: Layer,
   fonts: Fonts,
+  problems: string[],
 ): Promise<SceneNode | null> {
+  const step = (what: string, f: () => void) => {
+    try {
+      f();
+    } catch (e) {
+      problems.push(`${label(l)} — ${what}: ${message(e)}`);
+    }
+  };
   const w = Math.max(0.01, l.w);
   const h = Math.max(0.01, l.h);
   if (l.type === "TEXT" && l.text) {
     const t = api.createText();
     const T = l.text;
     t.name = l.name;
-    t.fontName = fonts.name(T.family, T.weight);
-    t.fontSize = T.size;
-    t.lineHeight = { value: T.lineHeight, unit: "PIXELS" };
-    t.letterSpacing = { value: T.letterSpacing, unit: "PIXELS" };
-    t.textAlignHorizontal =
-      T.align === "RIGHT" ? "RIGHT" : T.align === "CENTER" ? "CENTER" : "LEFT";
-    t.fills = T.color ? [solid(T.color)] : [];
-    t.characters = T.chars;
-    if (T.fixedWidth != null) {
-      t.textAutoResize = "HEIGHT";
-      t.resize(Math.max(0.01, T.fixedWidth), h);
-      if (T.truncate)
-        (t as unknown as { textTruncation: string }).textTruncation = "ENDING";
-    } else t.textAutoResize = "WIDTH_AND_HEIGHT";
-    if (l.opacity != null) t.opacity = l.opacity;
+    step("font", () => (t.fontName = fonts.name(T.family, T.weight)));
+    step("font size", () => (t.fontSize = T.size));
+    step(
+      "line height",
+      () => (t.lineHeight = { value: T.lineHeight, unit: "PIXELS" }),
+    );
+    step(
+      "letter spacing",
+      () => (t.letterSpacing = { value: T.letterSpacing, unit: "PIXELS" }),
+    );
+    step("align", () => {
+      t.textAlignHorizontal =
+        T.align === "RIGHT"
+          ? "RIGHT"
+          : T.align === "CENTER"
+            ? "CENTER"
+            : "LEFT";
+    });
+    step("colour", () => (t.fills = T.color ? [solid(T.color)] : []));
+    step("characters", () => (t.characters = T.chars));
+    step("size", () => {
+      if (T.fixedWidth != null) {
+        t.textAutoResize = "HEIGHT";
+        t.resize(Math.max(0.01, T.fixedWidth), h);
+        if (T.truncate)
+          (t as unknown as { textTruncation: string }).textTruncation =
+            "ENDING";
+      } else t.textAutoResize = "WIDTH_AND_HEIGHT";
+    });
+    if (l.opacity != null) step("opacity", () => (t.opacity = l.opacity!));
     return t;
   }
   if (l.type === "SVG" || l.svg) {
@@ -295,8 +375,8 @@ async function make(
     if (!markup) return null;
     const v = api.createNodeFromSvg(markup);
     v.name = l.type === "SVG" ? l.name : "svg";
-    v.resize(w, h);
-    if (l.opacity != null) v.opacity = l.opacity;
+    step("size", () => v.resize(w, h));
+    if (l.opacity != null) step("opacity", () => (v.opacity = l.opacity!));
     return v;
   }
   const n =
@@ -306,60 +386,77 @@ async function make(
         ? api.createRectangle()
         : api.createFrame();
   n.name = l.name;
-  n.resize(w, h);
-  const fills: Paint[] = [];
-  for (const f of l.fills ?? [])
-    if (f.type === "SOLID" && f.hex) fills.push(solid({ hex: f.hex, a: f.a }));
-  if (l.image?.png) {
-    const img = api.createImage(base64Bytes(l.image.png));
-    fills.push({
-      type: "IMAGE",
-      imageHash: img.hash,
-      scaleMode: l.image.fit === "cover" ? "FILL" : "FIT",
-    });
-  }
-  n.fills = fills;
-  if (l.strokes) {
-    n.strokes = [solid(l.strokes.color)];
-    n.strokeAlign = l.strokes.align === "OUTSIDE" ? "OUTSIDE" : "INSIDE";
-    const [t, r, b, lw] = l.strokes.weights;
-    if (t === r && r === b && b === lw) n.strokeWeight = t;
-    else {
-      const s = n as unknown as {
-        strokeTopWeight: number;
-        strokeRightWeight: number;
-        strokeBottomWeight: number;
-        strokeLeftWeight: number;
-      };
-      s.strokeTopWeight = t;
-      s.strokeRightWeight = r;
-      s.strokeBottomWeight = b;
-      s.strokeLeftWeight = lw;
+  step("size", () => n.resize(w, h));
+  step("fills", () => {
+    const fills: Paint[] = [];
+    for (const f of l.fills ?? [])
+      if (f.type === "SOLID" && f.hex)
+        fills.push(solid({ hex: f.hex, a: f.a }));
+    if (l.image?.png) {
+      const img = api.createImage(base64Bytes(l.image.png));
+      fills.push({
+        type: "IMAGE",
+        imageHash: img.hash,
+        scaleMode: l.image.fit === "cover" ? "FILL" : "FIT",
+      });
     }
-    if (l.strokes.dash === "dashed") n.dashPattern = [4, 4];
-    else if (l.strokes.dash === "dotted") n.dashPattern = [1, 2];
+    n.fills = fills;
+  });
+  if (l.strokes) {
+    const st = l.strokes;
+    step("strokes", () => {
+      n.strokes = [solid(st.color)];
+      n.strokeAlign = st.align === "OUTSIDE" ? "OUTSIDE" : "INSIDE";
+    });
+    step("stroke weights", () => {
+      const [t, r, b, lw] = st.weights;
+      if (t === r && r === b && b === lw) n.strokeWeight = t;
+      else {
+        const s = n as unknown as {
+          strokeTopWeight: number;
+          strokeRightWeight: number;
+          strokeBottomWeight: number;
+          strokeLeftWeight: number;
+        };
+        s.strokeTopWeight = t;
+        s.strokeRightWeight = r;
+        s.strokeBottomWeight = b;
+        s.strokeLeftWeight = lw;
+      }
+    });
+    if (st.dash === "dashed" || st.dash === "dotted")
+      step(
+        "dashes",
+        () => (n.dashPattern = st.dash === "dashed" ? [4, 4] : [1, 2]),
+      );
   }
   if (l.outline && l.outline.color && !l.strokes && !l.outline.offset) {
-    n.strokes = [solid(l.outline.color)];
-    n.strokeAlign = "OUTSIDE";
-    n.strokeWeight = l.outline.w;
+    const o = l.outline;
+    step("outline", () => {
+      n.strokes = [solid(o.color!)];
+      n.strokeAlign = "OUTSIDE";
+      n.strokeWeight = o.w;
+    });
   }
   const radii = l.type === "ELLIPSE" ? null : radiusOf(l.radius);
-  if (radii) {
-    const r = n as unknown as RectangleCornerMixin & { cornerRadius: number };
-    if (radii.every((v) => v === radii[0])) r.cornerRadius = radii[0];
-    else {
-      r.topLeftRadius = radii[0];
-      r.topRightRadius = radii[1];
-      r.bottomRightRadius = radii[2];
-      r.bottomLeftRadius = radii[3];
-    }
-  }
+  if (radii)
+    step("corner radius", () => {
+      const r = n as unknown as RectangleCornerMixin & { cornerRadius: number };
+      if (radii.every((v) => v === radii[0])) r.cornerRadius = radii[0];
+      else {
+        r.topLeftRadius = radii[0];
+        r.topRightRadius = radii[1];
+        r.bottomRightRadius = radii[2];
+        r.bottomLeftRadius = radii[3];
+      }
+    });
   const effects = effectsOf(l);
-  if (effects.length) n.effects = effects;
-  if (l.opacity != null) n.opacity = l.opacity;
-  if (l.blend && BLEND[l.blend]) n.blendMode = BLEND[l.blend];
-  if (n.type === "FRAME") n.clipsContent = !!l.clips;
+  if (effects.length) step("effects", () => (n.effects = effects));
+  if (l.opacity != null) step("opacity", () => (n.opacity = l.opacity!));
+  if (l.blend && BLEND[l.blend])
+    step("blend", () => (n.blendMode = BLEND[l.blend!]));
+  if (n.type === "FRAME")
+    step("clip", () => ((n as FrameNode).clipsContent = !!l.clips));
   return n;
 }
 
