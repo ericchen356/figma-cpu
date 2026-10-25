@@ -9,13 +9,13 @@
 //                only those are written, to layers found by NAME on the current page through a
 //                LayerPort. A missing layer is logged once per name, never thrown.
 //   canvas → RAM a keymap event (UI button, key, or selecting a named layer) becomes an input
-//                byte, held here and handed to the DeviceBus only when RAM[14] reads 0 at a tick
+//                byte, held here and handed to the DeviceBus only when RAM[IN] reads 0 at a tick
 //                boundary. At most one byte is held; while one is held, new events are dropped.
 //
 // Lost-key race (inherent to the contract, see os/hello-os.asm): the byte is poked at a frame /
 // Step boundary, which can fall anywhere inside an instruction. If the OS has already executed
 // `LD R0,[IN]` (it read 0) but not yet its consume `ST R3,[IN]`, the consume overwrites the poked
-// byte with 0 and the key is lost. Waiting for RAM[14] = 0 avoids overwriting an unconsumed key;
+// byte with 0 and the key is lost. Waiting for RAM[IN] = 0 avoids overwriting an unconsumed key;
 // it cannot close that window. A lost key shows up as "nothing changed": send it again.
 //
 // No `figma` global here: the Figma side is the injected LayerPort (figmaLayerPort for real
@@ -114,7 +114,7 @@ export class OsHost implements DeviceHook {
   get name(): string | null {
     return this.active?.name ?? null;
   }
-  /** The input byte waiting for RAM[14] to read 0, if any. */
+  /** The input byte waiting for RAM[IN] to read 0, if any. */
   get pending(): number | null {
     return this.held?.value ?? null;
   }
@@ -207,7 +207,7 @@ export class OsHost implements DeviceHook {
 
   // ---------- canvas → RAM ----------
 
-  /** A keymap event (UI button, key, selected layer). Held until RAM[14] reads 0. */
+  /** A keymap event (UI button, key, selected layer). Held until RAM[IN] reads 0. */
   send(event: InputEvent): SendResult {
     const label = event.type === "click" ? `click "${event.node}"` : `key "${event.key}"`;
     if (!this.active) {
@@ -229,7 +229,7 @@ export class OsHost implements DeviceHook {
   }
 
   /** DeviceHook, called by PluginClock at the tick boundary before each frame / step: the
-   * DeviceBus first (raw "input" bytes), then the held key if RAM[14] reads 0. */
+   * DeviceBus first (raw "input" bytes), then the held key if RAM[IN] reads 0. */
   apply(sim: SimLike): number {
     this.sim = sim;
     let forced = this.d.bus.apply(sim);

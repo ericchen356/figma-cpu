@@ -2,7 +2,7 @@
 // binding table maps a RAM byte, bit or bit range to one property of a named canvas layer. The
 // plugin reads RAM after a batch of ticks, calls applyBindings() with the previous snapshot, and
 // writes only the returned changes. The reverse direction, inputFromEvent(), turns a click on a
-// named layer or a key into the byte the plugin pokes into the INPUT byte (RAM[14]).
+// named layer or a key into the byte the plugin pokes into the INPUT byte (RAM[IN], 62).
 // Pure and deterministic: no Figma API, no clock, no randomness.
 import { RAM_BYTES } from "../isa/spec";
 

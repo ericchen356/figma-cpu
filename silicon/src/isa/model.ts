@@ -80,6 +80,7 @@ export interface IsaState {
 const EXCLUSIVE: [Signal, Signal][] = [
   ["MDR_LOAD", "MEM_READ"],
   ["PC_LOAD", "PC_INC"],
+  ["REG_LOAD_D", "REG_LOAD_S"], // the register file has one write port
 ];
 
 export class IsaModel {
@@ -131,6 +132,8 @@ export class IsaModel {
         return s.R[s.IR & 3];
       case "Y_OUT":
         return s.Y;
+      case "ONE_OUT":
+        return 1;
       default:
         throw new Error(`no model for bus driver ${drivers[0]}`);
     }
@@ -157,6 +160,7 @@ export class IsaModel {
     const { PC, MAR, MDR, IR, A, T } = s;
     const op = OPCODES[IR >> 4];
     const rd = (IR >> 2) & 3;
+    const rs = IR & 3;
     const ramOut = s.RAM[MAR];
     const bus = this.drive(sig);
     const f = on("Y_LOAD") || on("FLAGS_LOAD") ? alu(A, bus, op.alu?.sel ?? 0, op.alu?.sub ?? false) : null;
@@ -174,6 +178,7 @@ export class IsaModel {
       }
     }
     if (on("REG_LOAD_D")) s.R[rd] = bus;
+    if (on("REG_LOAD_S")) s.R[rs] = bus;
     if (on("A_LOAD")) s.A = bus;
     if (on("PC_LOAD")) s.PC = bus & ADDR_MASK;
     if (on("PC_INC")) s.PC = (PC + 1) & ADDR_MASK;

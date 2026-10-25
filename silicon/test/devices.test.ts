@@ -95,14 +95,13 @@ function recording(sim: FastSim) {
 }
 
 describe("device layer: DeviceBus (pure)", () => {
-  it("IN_ADDR is 14, the byte below OUT (15)", () => {
-    expect(IN_ADDR).toBe(14);
+  it("IN_ADDR is the byte below OUT", () => {
     expect(IN_ADDR).toBe(OUT_ADDR - 1);
     expect(() => new DeviceBus(OUT_ADDR)).toThrow(/OUT/);
     expect(() => new DeviceBus(RAM_BYTES)).toThrow();
   });
 
-  it("pokes exactly the 8 RAM[14] latch nets and nothing else; other RAM untouched", () => {
+  it("pokes exactly the 8 RAM[IN] latch nets and nothing else; other RAM untouched", () => {
     const bytes = bytesOf("echo");
     const sim = new FastSim(net, schedule, powerOnWith(net, bytes));
     sim.run(5);
@@ -135,8 +134,8 @@ describe("device layer: DeviceBus (pure)", () => {
     const want = Array.from({ length: RAM_BYTES }, (_, a) => bytes[a] ?? 0);
     expect(readFramebuffer(sim)).toEqual(want);
     expect(readFramebuffer(sim, 4, 3)).toEqual(want.slice(4, 7));
-    expect(readFramebuffer(sim, 16, 0)).toEqual([]);
-    expect(() => readFramebuffer(sim, 10, 7)).toThrow(/outside RAM/);
+    expect(readFramebuffer(sim, RAM_BYTES, 0)).toEqual([]);
+    expect(() => readFramebuffer(sim, RAM_BYTES - 6, 7)).toThrow(/outside RAM/);
   });
 });
 

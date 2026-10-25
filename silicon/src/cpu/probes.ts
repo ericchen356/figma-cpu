@@ -1,7 +1,7 @@
 // Probes contract (SILICON.md §5): where the architectural state of the gate-level CPU lives,
 // as hierarchical net names of the flattened `CPU` (resolvable through FlatNetlist.aliases).
 // The keys match IsaModel.probe() (src/isa/model.ts), so a test bench can compare them 1:1.
-import { RAM_BYTES } from "../isa/spec";
+import { RAM_ADDR_BITS, RAM_BYTES } from "../isa/spec";
 
 export interface Probe {
   /** Net name; bit i of a multi-bit probe is `${name}[i]`. */
@@ -13,8 +13,8 @@ export interface Probe {
  * what the *next* T-state drives (IsaModel.nextBus()); during the LOW pass it shows the value
  * the current T-state drives (IsaModel's BUS after that tick). */
 export const PROBES: Record<string, Probe> = {
-  PC: { name: "pc", width: 4 },
-  MAR: { name: "mar", width: 4 },
+  PC: { name: "pc", width: RAM_ADDR_BITS },
+  MAR: { name: "mar", width: RAM_ADDR_BITS },
   MDR: { name: "mdr", width: 8 },
   IR: { name: "ir", width: 8 },
   R0: { name: "r0", width: 8 },

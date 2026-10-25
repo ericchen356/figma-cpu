@@ -45,30 +45,31 @@ describe("calibration against the real CPU", () => {
   const model = cpuNetlistFor(BASE);
 
   it("the base configuration builds exactly the real CPU (same gates, nets, order)", () => {
-    expect(model.gates.length).toBe(2296);
+    expect(model.gates.length).toBe(4803);
     expect(model.gates).toEqual(real.gates);
     expect(model.netNames).toEqual(real.netNames);
     expect(model.ports).toEqual(real.ports);
   });
 
-  it("RAM(4) = 808, PC(4) = 67, MAR(4) = 40, DEC(4) = 30, and the PLA = the real CONTROL", () => {
+  it("RAM(6) = 3,230, PC(6) = 99, MAR(6) = 60, DEC(6) = 100, and the PLA = the real CONTROL", () => {
     const blocks = gatesByBlock(real);
-    expect(blocks.ram).toBe(808);
-    expect(measureParts(4)).toEqual({ ram: blocks.ram, pc: blocks.pc, mar: blocks.mar, dec: 30 });
+    expect(blocks.ram).toBe(3230);
+    expect(measureParts(6)).toEqual({ ram: blocks.ram, pc: blocks.pc, mar: blocks.mar, dec: 100 });
+    expect(measureParts(4)).toMatchObject({ ram: 808, pc: 67, mar: 40, dec: 30 }); // the 16-byte CPU before
     expect(gatesByBlock(model)).toEqual(blocks);
   });
 
-  it("estimate() of the base matches the real plan: 2,298 variables, 3,855 actions, 11 events per tick", () => {
+  it("estimate() of the base matches the real plan: 4,805 variables, 8,750 actions, 24 events per tick", () => {
     const r = estimate(BASE);
-    expect(r).toMatchObject({ gates: 2296, variables: 2298, plan: { actionsPerTick: 3855, eventsPerTick: 11 }, isa: "v1" });
-    expect(r.blocks.ram).toBe(808);
+    expect(r).toMatchObject({ gates: 4803, variables: 4805, plan: { actionsPerTick: 8750, eventsPerTick: 24 }, isa: "v1" });
+    expect(r.blocks.ram).toBe(3230);
   });
 
   it("counted layers equal a real draw on the fake Figma: base (= the real library) and a v2 configuration", async () => {
     const base = countLayers(buildLibrary(BASE)).total;
     expect(base).toBe(countLayers(cpuLibrary()).total);
     expect(await drawnLayers(cpuLibrary())).toBe(base);
-    expect(base).toBe(72553);
+    expect(base).toBe(153174); // with gate labels: over docs/CPU-V2.md's 150k limit, so build the 64-byte CPU without them
     const v2 = buildLibrary({ ...V2_ALL, registers: 8, addrBits: 5 });
     expect(await drawnLayers(v2)).toBe(countLayers(v2).total);
   });
@@ -98,7 +99,8 @@ describe("monotonic in the address width", () => {
 
   it("every feature costs gates on top of the base", () => {
     const base = estimate({ ...BASE, addrBits: 5 }).gates;
-    for (const f of [{ inputPort: true }, { callRet: true }, { indirectLoadStore: true }, { registers: 8 as const }])
+    // (Not indirectLoadStore: v1 has LDR, STR and LDRI itself now; the flag only switches to the v2 encoding.)
+    for (const f of [{ inputPort: true }, { callRet: true }, { registers: 8 as const }])
       expect(estimate({ ...BASE, addrBits: 5, ...f }).gates).toBeGreaterThan(base);
   });
 });
@@ -159,8 +161,8 @@ describe("CLI wrapper", () => {
     const out = JSON.parse(r.stdout);
     const want = estimate({ ...V2_ALL, addrBits: 5 });
     expect(out).toMatchObject({ gates: want.gates, layers: want.layers, variables: want.variables, plan: want.plan });
-    const t = spawnSync(process.execPath, ["tools/cost-model.mjs", "--sweep", "4..5"], { cwd: SILICON, encoding: "utf8" });
+    const t = spawnSync(process.execPath, ["tools/cost-model.mjs", "--sweep", "5..6"], { cwd: SILICON, encoding: "utf8" });
     expect(t.status, t.stderr).toBe(0);
-    expect(t.stdout).toContain("| 16 | v1 | 2296 | 808 |");
+    expect(t.stdout).toContain("| 64 | v1 | 4803 | 3230 |");
   });
 });

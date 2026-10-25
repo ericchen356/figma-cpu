@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { cpuNetlist } from "../src/cpu";
+import { RAM_BYTES } from "../src/isa";
 import { parseRest, type AuditInput, type RestAction, type RestNode } from "../src/audit/audit";
 import { auditBuild, destinations, expectedFrom, memLampNames, type BuildAudit } from "../src/audit/build";
 
@@ -41,7 +42,7 @@ function find(root: RestNode, name: string, within?: string): RestNode {
   return hit;
 }
 
-// Wires: 4 gate outputs (g0..g3), 1 wire lit (w0), 2 panel probes (p0, p1), 128 RAM bits (m0..m127).
+// Wires: 4 gate outputs (g0..g3), 1 wire lit (w0), 2 panel probes (p0, p1), one RAM bit per MEM lamp (m0…).
 const GATE_WIRES = ["g0", "g1", "g2", "g3"];
 const WIRES = [...GATE_WIRES, "w0", "p0", "p1", ...memLampNames().map((_, i) => `m${i}`)];
 const EXPECTED = { gates: { AND: 2, XOR: 1, NOT: 1 }, wires: WIRES.length };
@@ -156,8 +157,8 @@ describe("auditBuild: a correctly built chunked file", () => {
     ]);
     expect(a.reactions.run.edges).toEqual({ "CPU · Run A": ["CPU · Run B", "CPU · Control"], "CPU · Run B": ["CPU · Run A", "CPU · Control"] });
     expect(a.bindings.gates).toEqual({ instances: 4, bound: 4, unbound: [] });
-    expect(a.bindings.mem).toEqual({ present: 128, bound: 128, missing: [], unbound: [] });
-    expect(a.bindings.panel.lamps).toBe(130);
+    expect(a.bindings.mem).toEqual({ present: RAM_BYTES * 8, bound: RAM_BYTES * 8, missing: [], unbound: [] });
+    expect(a.bindings.panel.lamps).toBe(2 + RAM_BYTES * 8); // the 2 probes + the MEM screen
     expect(a.bindings.panel.instances).toHaveLength(8);
     expect(a.variables.wires).toBe(WIRES.length);
     expect(Object.keys(a.variables.roles).sort()).toEqual(["counter", "phase", "phaseNow", "resetPhase", "resetPhaseNow", "running", "text"]);
@@ -235,7 +236,7 @@ describe("auditBuild: each failure mode fires", () => {
     delete l.children!.find((c) => c.name === "lit")!.boundVariables;
     const a = run(input);
     expect(failed(a)).toEqual(["bind:panel", "bind:mem"]); // the instances still carry the binding: the variable count is unchanged
-    expect(check(a, "bind:mem").message).toBe("127 of 128 MEM lamps bound; unbound: lamp/ram/row3/b5/Q");
+    expect(check(a, "bind:mem").message).toBe(`${RAM_BYTES * 8 - 1} of ${RAM_BYTES * 8} MEM lamps bound; unbound: lamp/ram/row3/b5/Q`);
     expect(a.bindings.panel.unbound).toEqual(["lamp/ram/row3/b5/Q"]);
   });
   it("a missing MEM lamp", () => {
@@ -244,7 +245,7 @@ describe("auditBuild: each failure mode fires", () => {
     mem.children = mem.children!.filter((n) => n.name !== "lamp/ram/row15/b0/Q");
     const c = check(run(input), "bind:mem");
     expect(c.status).toBe("fail");
-    expect(c.message).toBe("127 of 128 MEM lamps bound; missing: lamp/ram/row15/b0/Q");
+    expect(c.message).toBe(`${RAM_BYTES * 8 - 1} of ${RAM_BYTES * 8} MEM lamps bound; missing: lamp/ram/row15/b0/Q`);
   });
   it("a panel without any MEM matrix (pre-MEM panel kept by Compile)", () => {
     const { canvas, input } = builtFile();
@@ -297,10 +298,10 @@ describe("auditBuild: each failure mode fires", () => {
 });
 
 describe("expectedFrom", () => {
-  it("counts the CPU's gates and wires like plan() does (2,296 gates, 2,298 wires)", () => {
+  it("counts the CPU's gates and wires like plan() does (4,803 gates, 4,805 wires)", () => {
     const e = expectedFrom(cpuNetlist());
-    expect(Object.values(e.gates).reduce((a, b) => a + b, 0)).toBe(2296);
-    expect(e.wires).toBe(2298);
+    expect(Object.values(e.gates).reduce((a, b) => a + b, 0)).toBe(4803);
+    expect(e.wires).toBe(4805);
   });
 });
 

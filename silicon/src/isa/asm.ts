@@ -4,16 +4,18 @@
 // Syntax: one statement per line, `;` starts a comment. Mnemonics and registers are
 // case-insensitive; symbols (labels) are case-sensitive.
 //   label:  MNEM op, op
-//   .org expr            the next byte goes to address expr (0–15)
+//   .org expr            the next byte goes to address expr (0–63)
 //   .db expr, ...        raw bytes
 // Operands, by kind (OpcodeSpec.operands):
 //   Rd, Rs   R0–R3; Rd → bits 3:2, Rs → bits 1:0 of the instruction byte
 //   [Rd], [Rs]  the same fields written as a pointer, e.g. LDR R0, [R1] (brackets required)
+//   [Rs+]    a pointer the instruction steps afterwards, e.g. LDRI R0, [R1+]
 //   imm      expr, −128…255 (negatives stored as two's complement) → 2nd byte
-//   addr     [expr] or expr, 0–15 → 2nd byte
-// Expressions: numbers 42 0x2A 0b101010 'c', symbols (labels; OUT = 15 is predefined),
-// unary −, binary + and −, parentheses.
-import { OPCODES, type OpcodeSpec, OUT_ADDR, RAM_BYTES, REGISTERS } from "./spec";
+//   addr     [expr] or expr, 0–63 → 2nd byte
+// Expressions: numbers 42 0x2A 0b101010 'c', symbols (labels; OUT = 63 and IN = 62 are
+// predefined), unary −, binary + and −, parentheses.
+// NOP is not an opcode (its code is LDRI's): it assembles as MOV R0, R0, the same 4-tick no-op.
+import { IN_ADDR, OPCODES, type OpcodeSpec, OUT_ADDR, RAM_BYTES, REGISTERS } from "./spec";
 
 export interface AsmError {
   /** 1-based source line. */
@@ -35,7 +37,10 @@ export interface AsmResult {
 }
 
 /** Symbols every program can use. */
-export const PREDEFINED_SYMBOLS: Readonly<Record<string, number>> = { OUT: OUT_ADDR };
+export const PREDEFINED_SYMBOLS: Readonly<Record<string, number>> = { OUT: OUT_ADDR, IN: IN_ADDR };
+
+/** Mnemonics that are another instruction: NOP → MOV R0, R0. */
+const ALIASES: Readonly<Record<string, { op: string; args: string[] }>> = { NOP: { op: "MOV", args: ["R0", "R0"] } };
 
 const BY_MNEM = new Map(OPCODES.map((o) => [o.mnem, o]));
 const ADDR_MASK = RAM_BYTES - 1;
@@ -184,6 +189,12 @@ function parse(raw: string, line: number): Stmt {
   if (!om) throw new AsmFail(`cannot parse "${s}"`);
   st.op = om[1];
   st.args = splitOperands(om[2] ?? "");
+  const alias = ALIASES[st.op.toUpperCase()];
+  if (alias) {
+    if (om[2]?.trim()) throw new AsmFail(`${st.op.toUpperCase()} takes no operands`);
+    st.op = alias.op;
+    st.args = [...alias.args];
+  }
   return st;
 }
 
@@ -215,6 +226,11 @@ function encode(op: OpcodeSpec, args: string[], symbols: ReadonlyMap<string, num
       const r = inner ? regIndex(inner[1]) : -1;
       if (r < 0) throw new AsmFail(`${usage(op)}: expected a register in brackets, like [R1], got "${arg}"`);
       first |= kind === "[Rd]" ? r << 2 : r;
+    } else if (kind === "[Rs+]") {
+      const inner = /^\[(.*)\+\s*\]$/.exec(arg.trim());
+      const r = inner ? regIndex(inner[1]) : -1;
+      if (r < 0) throw new AsmFail(`${usage(op)}: expected a stepped pointer, like [R1+], got "${arg}"`);
+      first |= r;
     } else if (kind === "imm") {
       if (/^\[.*\]$/.test(arg)) throw new AsmFail(`${usage(op)}: ${arg} is a memory operand, ${op.mnem} takes a value`);
       rest.push(byte(arg, symbols));
@@ -374,6 +390,8 @@ export function disassemble(ram: ArrayLike<number>, addr = 0): { text: string; s
         return `[${REGISTERS[(b >> 2) & 3]}]`;
       case "[Rs]":
         return `[${REGISTERS[b & 3]}]`;
+      case "[Rs+]":
+        return `[${REGISTERS[b & 3]}+]`;
       case "imm":
         return String(at(next++));
       case "addr": {

@@ -6,6 +6,9 @@
 > ~400-action chunk runs at roughly 10 hops/s **(estimate from measured costs)**, and the specialized deploy of this CPU
 > (`osflow/deploy/cpu.ts`) runs ~92 ticks/s on count **(measured)**.
 
+> **Since then (2026-10-24):** RAM is 64 bytes (OUT = 63, IN = 62) and the CPU has LDR / STR / LDRI pointers; see
+> POINTERS.md. The 16-byte figures below are as written then.
+
 Written 2026-10-24 for the three people working in parallel: **CPU design**, **"Figma OS"** (the app that runs on the CPU), and
 **plugin/toolchain** (us). Every number below comes from the repo or from a test run; guesses are marked **(guess)**.
 

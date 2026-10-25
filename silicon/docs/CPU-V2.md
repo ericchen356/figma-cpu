@@ -10,6 +10,10 @@ Written 2026-10-24 for the CPU designer and for Nathan (the OS-like app). Every 
 by `tools/cost-model.ts` unless it is marked **(assumption)** or **(estimate)**. Reproduce any row with
 `node tools/cost-model.mjs …` (commands are given under each table).
 
+> **Built (2026-10-24):** the CPU now has 64 bytes of RAM, as recommended below, with LDR / STR and a stepping LDRI
+> (POINTERS.md), but still the v1 encoding, no IN port in hardware (IN is RAM[62], written by the plugin), no CALL / RET
+> and 4 registers. As built: 4,803 gates, 153,174 layers with gate labels (so build it without them), 24 events per tick.
+
 ## How the numbers are measured
 
 - **Gates / variables / actions / events are not extrapolated.** For every configuration the model *builds* the CPU as a
@@ -20,8 +24,10 @@ by `tools/cost-model.ts` unless it is marked **(assumption)** or **(estimate)**.
   the condition mux, the IN mux, the IO decoder). The netlist is then flattened, compiled with the real `compile()`
   (`inputs: []`, or `["IN"]` with an input port) and planned with the real `plan()` (cap 400 actions per event, ungated,
   which is what the plugin uses: `plugin/src/app.ts` never sets `gate`).
-- **Calibration (test/cost-model.test.ts):** the base configuration (16 bytes, 4 registers, no features) produces a netlist
-  *identical* to `cpuNetlist()`: same 2,285 gates in the same order, same 2,289 nets. RAM(4) = 808, PC(4) = 67, MAR(4) = 40,
+- **Calibration (test/cost-model.test.ts):** the base configuration produces a netlist *identical* to `cpuNetlist()`. Since
+  2026-10-24 that is the 64-byte CPU as built (see below and POINTERS.md: 4,803 gates, 4,805 variables, 8,750 actions and
+  24 events per tick); the cost model now uses the CPU's own N-bit RAM / PC / decoder builders. The tables below were
+  measured before that, on the 16-byte CPU: same 2,285 gates in the same order, same 2,289 nets. RAM(4) = 808, PC(4) = 67, MAR(4) = 40,
   DEC(4) = 30, CONTROL = 123, all equal to the real CPU. The plan matches too: 2,287 variables, 3,860 actions, 11 events
   per tick, 6 reset events (the numbers in WHATS-LEFT.md).
 - **Layers** are counted from the plugin's own layout code (`src/figma/layout.ts`) node for node the way `src/figma/draw.ts`

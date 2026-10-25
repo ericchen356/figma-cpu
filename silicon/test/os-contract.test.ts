@@ -30,12 +30,13 @@ const ram = (pairs: Record<number, number>) => {
   for (const [a, v] of Object.entries(pairs)) r[Number(a)] = v;
   return r;
 };
-const SIMPLE = { name: "t", entry: "start", ram: 16, source: "t.asm" };
+const SIMPLE = { name: "t", entry: "start", ram: RAM_BYTES, source: "t.asm" };
+const [IN, OUT] = [IN_ADDR, OUT_ADDR];
 const REGIONS = [
   { name: "code", start: 0, end: 9, kind: "code" },
-  { name: "data", start: 10, end: 13, kind: "data" },
-  { name: "in", start: 14, end: 14, kind: "input" },
-  { name: "out", start: 15, end: 15, kind: "output" },
+  { name: "data", start: 10, end: IN - 1, kind: "data" },
+  { name: "in", start: IN, end: IN, kind: "input" },
+  { name: "out", start: OUT, end: OUT, kind: "output" },
 ];
 
 describe("image loader (src/os/image.ts)", () => {
@@ -46,10 +47,10 @@ describe("image loader (src/os/image.ts)", () => {
     expect(img.ok).toBe(true);
     expect(INPUT_ADDR).toBe(IN_ADDR);
     expect(img.entry).toBe(0);
-    expect(img.labels).toEqual({ loop: 0, winx: 12, IN: 14 });
+    expect(img.labels).toEqual({ loop: 0, winx: 12 }); // IN and OUT are predefined
     expect(img.use.filter((u) => u === "code").length).toBe(12);
     expect(img.use.filter((u) => u === "data").length).toBe(1);
-    expect(img.use.slice(13)).toEqual([null, null, null]);
+    expect(img.use.slice(13)).toEqual(new Array(RAM_BYTES - 13).fill(null));
     expect(img.bytes.length).toBe(RAM_BYTES);
   });
 
@@ -61,29 +62,30 @@ describe("image loader (src/os/image.ts)", () => {
     expect(e.msg).toBe('regions "code" (0–9) and "vars" (8–12) overlap at 8–9');
   });
 
-  it("rejects code reaching 15 (the OUT port) and 14 (INPUT), with the line", () => {
-    const toOut = loadImage({ ...SIMPLE, regions: REGIONS }, "start: JMP 14\n.org 14\nJMP start");
+  it("rejects code reaching OUT and INPUT, with the line", () => {
+    const toOut = loadImage({ ...SIMPLE, regions: REGIONS }, `start: JMP ${IN}\n.org ${IN}\nJMP start`);
     expect(codes(toOut)).toContain("code-range");
-    const e = toOut.errors.find((x) => x.code === "code-range" && x.addr === 15)!;
+    const e = toOut.errors.find((x) => x.code === "code-range" && x.addr === OUT)!;
     expect(e.line).toBe(3);
-    expect(e.msg).toBe('line 3: "JMP 0" reaches address 15, the OUT port; code must end below 14');
-    expect(toOut.errors.find((x) => x.code === "code-range" && x.addr === 14)!.msg).toMatch(/address 14, the INPUT byte/);
+    expect(e.msg).toBe(`line 3: "JMP 0" reaches address ${OUT}, the OUT port; code must end below ${IN}`);
+    expect(toOut.errors.find((x) => x.code === "code-range" && x.addr === IN)!.msg).toMatch(new RegExp(`address ${IN}, the INPUT byte`));
 
-    const region = loadImage({ ...SIMPLE, regions: [{ name: "code", start: 0, end: 15, kind: "code" }] }, "start: JMP start");
+    const region = loadImage({ ...SIMPLE, regions: [{ name: "code", start: 0, end: OUT, kind: "code" }] }, "start: JMP start");
     expect(region.errors[0]).toMatchObject({ code: "region-range", region: "code" });
-    expect(region.errors[0].msg).toBe('code region "code" ends at 15 (OUT); code and data must end below 14 (14 is INPUT, 15 is OUT)');
+    expect(region.errors[0].msg).toBe(`code region "code" ends at ${OUT} (OUT); code and data must end below ${IN} (${IN} is INPUT, ${OUT} is OUT)`);
   });
 
-  it("rejects an oversize program (assembler: needs more than 16 bytes) and a manifest for more RAM", () => {
-    const big = Array.from({ length: 9 }, () => "LDI R0, 1").join("\n");
+  it("rejects an oversize program (assembler: needs more than RAM_BYTES) and a manifest for more RAM", () => {
+    const n = RAM_BYTES / 2 + 1; // LDI is 2 bytes
+    const big = Array.from({ length: n }, () => "LDI R0, 1").join("\n");
     const img = loadImage({ ...SIMPLE, regions: REGIONS }, `start: ${big}`);
     const e = img.errors.find((x) => x.code === "oversize")!;
-    expect(e.msg).toBe("line 9: program needs 18 bytes but RAM has 16 (0..15); this is the first line that does not fit");
+    expect(e.msg).toBe(`line ${n}: program needs ${RAM_BYTES + 2} bytes but RAM has ${RAM_BYTES} (0..${RAM_BYTES - 1}); this is the first line that does not fit`);
     expect(img.ok).toBe(false);
 
-    const wide = loadImage({ ...SIMPLE, ram: 64, regions: REGIONS }, "start: JMP start");
+    const wide = loadImage({ ...SIMPLE, ram: 2 * RAM_BYTES, regions: REGIONS }, "start: JMP start");
     expect(wide.errors.map((x) => [x.code, x.msg])).toEqual([
-      ["ram-size", "manifest is for 64 bytes of RAM; this machine has 16 (CPU v2 is needed for more, see docs/CPU-V2.md)"],
+      ["ram-size", `manifest is for ${2 * RAM_BYTES} bytes of RAM; this machine has ${RAM_BYTES} (docs/CPU-V2.md prices larger RAM)`],
     ]);
   });
 
@@ -119,12 +121,12 @@ describe("image loader (src/os/image.ts)", () => {
 
   it("checks I/O placement and manifest shape without throwing", () => {
     const io = loadImage(
-      { ...SIMPLE, regions: [REGIONS[0], { name: "kbd", start: 13, end: 13, kind: "input" }, { name: "o", start: 14, end: 15, kind: "output" }] },
+      { ...SIMPLE, regions: [REGIONS[0], { name: "kbd", start: IN - 1, end: IN - 1, kind: "input" }, { name: "o", start: IN, end: OUT, kind: "output" }] },
       "start: JMP start",
     );
     expect(io.errors.map((x) => x.msg)).toEqual([
-      'input region "kbd" is 13; the INPUT byte is exactly 14',
-      'output region "o" is 14–15; the OUT byte is exactly 15',
+      `input region "kbd" is ${IN - 1}; the INPUT byte is exactly ${IN}`,
+      `output region "o" is ${IN}–${OUT}; the OUT byte is exactly ${OUT}`,
     ]);
     const warn = loadImage({ ...SIMPLE, regions: [REGIONS[0]] }, "start: JMP start");
     expect(warn.ok).toBe(true);
@@ -197,14 +199,14 @@ describe("binding engine (src/os/bindings.ts)", () => {
 
   it("validation reports precise problems; applyBindings refuses an invalid table", () => {
     const bad = [
-      { ram: { addr: 16 }, node: "a", prop: "x" },
+      { ram: { addr: RAM_BYTES }, node: "a", prop: "x" },
       { ram: { addr: 1, bits: [5, 2] }, node: "b", prop: "y" },
       { ram: { addr: 1 }, node: "c", prop: "visible", map: { scale: 2 } },
       { ram: { addr: 1 }, node: "d", prop: "fill", map: { table: ["red"] } },
       { ram: { addr: 1 }, node: "e", prop: "size" },
     ];
     expect(validateBindings(bad).errors).toEqual([
-      "binding 0 (a.x): ram.addr 16 is outside RAM (0–15)",
+      `binding 0 (a.x): ram.addr ${RAM_BYTES} is outside RAM (0–${RAM_BYTES - 1})`,
       "binding 1 (b.y): ram.bits must be [lo, hi] with 0 ≤ lo ≤ hi ≤ 7",
       "binding 2 (c.visible): visible takes a {table}, not a scale",
       'binding 3 (d.fill): map.table for fill must hold colors "#rrggbb"',

@@ -1,5 +1,5 @@
 ; dump.asm — walk memory with a pointer: OUT shows the bytes at 0, 1, 2, … (this program's own
-; machine code first), forever. The pointer wraps around the 16 bytes of RAM.
+; machine code first), forever. The pointer wraps around the 64 bytes of RAM.
 
         LDI R1, 0       ; R1 = pointer
         LDI R3, 1

@@ -4,19 +4,21 @@
 //   ALU      A[8] B[8] SEL[3] SUB → Y[8] CO Z N        adder / AND / OR / XOR / NOT A
 //   REGFILE  D[8] WSEL[2] WE RSEL[2] CLK → Q[8] R0..R3  four REG_W8, one write port, one read port
 //   RAM_ROW  D[8] WE SEL → Q[8] RD[8]                  one byte of RAM: 8 DLATCH + read gates
-//   RAM16    ADDR[4] DIN[8] WE CLK → DOUT[8]           16 RAM_ROW, written only while CLK=0
-//   PC4      D[4] LOAD INC RESET CLK → Q[4]            program counter
+//   RAM64    ADDR[6] DIN[8] WE CLK → DOUT[8]           64 RAM_ROW, written only while CLK=0
+//   PC6      D[6] LOAD INC RESET CLK → Q[6]            program counter
 //   TSTATE   T_RESET RESET HALTED CLK → Q[3]           T-state counter (frozen while halted)
 //   HALT_FF  HALT RESET CLK → Q                        the HALTED flip-flop
-//   BUSMUX   PC[4] PC_OUT MDR[8] MDR_OUT REG[8] REG_OUT Y[8] Y_OUT → BUS[8]
+//   BUSMUX   PC[6] PC_OUT MDR[8] MDR_OUT REG[8] REG_OUT Y[8] Y_OUT ONE_OUT → BUS[8]
+// RAM<n> and PC<n> follow RAM_ADDR_BITS (src/isa/spec.ts); the names above are for 6 bits.
 //
 // Timing (SILICON.md §2): every enable that opens a latch while CLK=0 (DFFE masters, RAM bits)
 // is computed from flip-flop outputs and combinational logic only, so it is stable during the
 // LOW pass. Inside every cell the gate that computes a latch enable comes before the latch, so
 // even a naive in-order simulator never sees a stale enable.
 import { define } from "../hdl/builder";
+import { defineDecN, defineInc, defineMux2W, defineReg } from "../cells";
 import { place } from "../cells/util";
-import { ALU_SEL } from "../isa/spec";
+import { ALU_SEL, RAM_ADDR_BITS, RAM_BYTES } from "../isa/spec";
 import { CONST1, type Library } from "../netlist/types";
 
 /** ALU functions and their SEL codes (the decoder line that selects each), from spec.ts. */
@@ -111,25 +113,28 @@ export function defineRamRow(lib: Library): void {
   );
 }
 
-/** RAM16 — 16 RAM_ROW row0..row15. Rows are written only during the LOW pass:
+/** RAM<2^N> — 2^N RAM_ROW row0.., written only during the LOW pass:
  * EN_k = ¬CLK · WE · (ADDR = k), with DIN from the MDR flip-flops, so the RAM never sees its
  * own output in the same phase. DOUT[i] = OR over k of row_k.Q[i]·(ADDR = k). */
-export function defineRam16(lib: Library): void {
+export function defineRam(lib: Library, N = RAM_ADDR_BITS): string {
+  const rows = 1 << N;
+  const name = `RAM${rows}`;
+  const dec = N <= 4 ? `DEC${N}` : defineDecN(lib, N);
   define(
     lib,
-    "RAM16",
-    { in: { ADDR: 4, DIN: 8, WE: 1, CLK: 1 }, out: { DOUT: 8 } },
+    name,
+    { in: { ADDR: N, DIN: 8, WE: 1, CLK: 1 }, out: { DOUT: 8 } },
     (b) => {
       const [DIN, DOUT] = [b.in("DIN"), b.out("DOUT")];
       // Write strobe first, so every row enable sees ¬CLK of the current pass.
       const nclk = place(b, "NOT", "nclk", [b.in1("CLK")]);
       const we = place(b, "AND", "we_low", [nclk, b.in1("WE")]);
-      const sel = b.wire("sel", 16);
-      b.use("DEC4", { A: b.in("ADDR"), EN: CONST1, Y: sel }, "dec");
+      const sel = b.wire("sel", rows);
+      b.use(dec, { A: b.in("ADDR"), EN: CONST1, Y: sel }, "dec");
       const rd: string[][] = [];
-      for (let k = 0; k < 16; k++)
+      for (let k = 0; k < rows; k++)
         rd.push(b.use("RAM_ROW", { D: DIN, WE: we, SEL: sel[k], Q: b.wire(`mem${k}`, 8), RD: b.wire(`rd${k}`, 8) }, `row${k}`).RD);
-      // Output OR plane: a balanced tree of 15 ORs per bit.
+      // Output OR plane: a balanced tree of rows − 1 ORs per bit.
       for (let i = 0; i < 8; i++) {
         let level = rd.map((r) => r[i]);
         let depth = 1;
@@ -142,30 +147,39 @@ export function defineRam16(lib: Library): void {
         }
       }
     },
-    "16 × 8 RAM of D latches: row ADDR is written with DIN while CLK = 0 and WE = 1; DOUT = row ADDR",
+    `${rows} × 8 RAM of D latches: row ADDR is written with DIN while CLK = 0 and WE = 1; DOUT = row ADDR`,
   );
+  return name;
 }
 
-/** PC4 — program counter: D_next = RESET ? 0 : LOAD ? D : PC + 1, loaded when LOAD + INC + RESET. */
-export function definePc4(lib: Library): void {
+/** PC<N> — program counter: D_next = RESET ? 0 : LOAD ? D : PC + 1, loaded when LOAD + INC + RESET. */
+export function definePc(lib: Library, N = RAM_ADDR_BITS): string {
+  const name = `PC${N}`;
+  for (const [cell, def] of [
+    [`INC_W${N}`, () => defineInc(lib, N)],
+    [`MUX2_W${N}`, () => defineMux2W(lib, N)],
+    [`REG_W${N}`, () => defineReg(lib, N)],
+  ] as const)
+    if (!lib.has(cell)) def();
   define(
     lib,
-    "PC4",
-    { in: { D: 4, LOAD: 1, INC: 1, RESET: 1, CLK: 1 }, out: { Q: 4 } },
+    name,
+    { in: { D: N, LOAD: 1, INC: 1, RESET: 1, CLK: 1 }, out: { Q: N } },
     (b) => {
       const [D, Q, LOAD, RESET] = [b.in("D"), b.out("Q"), b.in1("LOAD"), b.in1("RESET")];
-      const next = b.wire("next", 4);
-      b.use("INC_W4", { A: Q, Y: next }, "inc");
-      const pick = b.wire("pick", 4);
-      b.use("MUX2_W4", { A: next, B: D, S: LOAD, Y: pick }, "src");
+      const next = b.wire("next", N);
+      b.use(`INC_W${N}`, { A: Q, Y: next }, "inc");
+      const pick = b.wire("pick", N);
+      b.use(`MUX2_W${N}`, { A: next, B: D, S: LOAD, Y: pick }, "src");
       const nrst = place(b, "NOT", "nrst", [RESET]);
       const d = pick.map((p, i) => place(b, "AND", `clr${i}`, [p, nrst]));
       const step = place(b, "OR", "step", [LOAD, b.in1("INC")]);
       const load = place(b, "OR", "load", [step, RESET]);
-      b.use("REG_W4", { D: d, LOAD: load, CLK: b.in1("CLK"), Q }, "reg");
+      b.use(`REG_W${N}`, { D: d, LOAD: load, CLK: b.in1("CLK"), Q }, "reg");
     },
-    "4-bit program counter: PC ← 0 on RESET, ← D on LOAD, ← PC + 1 on INC",
+    `${N}-bit program counter: PC ← 0 on RESET, ← D on LOAD, ← PC + 1 on INC`,
   );
+  return name;
 }
 
 /** TSTATE — 3-bit T-state counter: T ← 0 on RESET or T_RESET, else T + 1; frozen while HALTED
@@ -208,13 +222,14 @@ export function defineHaltFf(lib: Library): void {
 }
 
 /** BUSMUX — the shared bus as an AND-OR of the drivers (the control unit enables at most one).
- * PC drives only bits 0–3; bits 4–7 read 0 then. Nothing enabled → 0. */
-export function defineBusmux(lib: Library): void {
+ * PC drives only its N low bits; the bits above read 0 then. ONE_OUT drives the constant 1
+ * (bit 0 only). Nothing enabled → 0. */
+export function defineBusmux(lib: Library, N = RAM_ADDR_BITS): void {
   define(
     lib,
     "BUSMUX",
     {
-      in: { PC: 4, PC_OUT: 1, MDR: 8, MDR_OUT: 1, REG: 8, REG_OUT: 1, Y: 8, Y_OUT: 1 },
+      in: { PC: N, PC_OUT: 1, MDR: 8, MDR_OUT: 1, REG: 8, REG_OUT: 1, Y: 8, Y_OUT: 1, ONE_OUT: 1 },
       out: { BUS: 8 },
     },
     (b) => {
@@ -229,28 +244,31 @@ export function defineBusmux(lib: Library): void {
         const terms = drivers
           .filter(([, src]) => i < src.length)
           .map(([name, src, en]) => place(b, "AND", `${name}${i}`, [src[i], en]));
-        // Balanced OR of the 3 or 4 terms.
+        // Balanced OR of the 3 or 4 terms; bit 0 also takes ONE_OUT.
         const ab = place(b, "OR", `or_a${i}`, [terms[0], terms[1]]);
+        const out = i === 0 ? undefined : BUS[i];
+        let bus: string;
         if (terms.length === 4) {
           const cd = place(b, "OR", `or_b${i}`, [terms[2], terms[3]]);
-          place(b, "OR", `bus${i}`, [ab, cd], BUS[i]);
-        } else place(b, "OR", `bus${i}`, [ab, terms[2]], BUS[i]);
+          bus = place(b, "OR", `bus${i}`, [ab, cd], out);
+        } else bus = place(b, "OR", `bus${i}`, [ab, terms[2]], out);
+        if (i === 0) place(b, "OR", "one", [bus, b.in1("ONE_OUT")], BUS[0]);
       }
     },
-    "The bus: BUS = PC·PC_OUT + MDR·MDR_OUT + REG·REG_OUT + Y·Y_OUT (PC drives bits 0–3 only)",
+    `The bus: BUS = PC·PC_OUT + MDR·MDR_OUT + REG·REG_OUT + Y·Y_OUT + ONE_OUT (PC drives bits 0–${N - 1} only, ONE_OUT bit 0)`,
   );
 }
 
 /** Every datapath module, in dependency order. */
-export const DATAPATH_MODULES = ["ALU", "REGFILE", "RAM_ROW", "RAM16", "PC4", "TSTATE", "HALT_FF", "BUSMUX"] as const;
+export const DATAPATH_MODULES = ["ALU", "REGFILE", "RAM_ROW", `RAM${RAM_BYTES}`, `PC${RAM_ADDR_BITS}`, "TSTATE", "HALT_FF", "BUSMUX"] as const;
 
 /** Defines the datapath modules (needs the cell library: run buildCells first). */
 export function buildDatapath(lib: Library): void {
   defineAlu(lib);
   defineRegfile(lib);
   defineRamRow(lib);
-  defineRam16(lib);
-  definePc4(lib);
+  defineRam(lib);
+  definePc(lib);
   defineTstate(lib);
   defineHaltFf(lib);
   defineBusmux(lib);
