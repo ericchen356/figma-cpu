@@ -1,10 +1,17 @@
 # Leila's CPU in the Figma OS's CPU tab
 
-An extension that puts silicon's 8-bit CPU (2,296 gates, Leila's LDR/STR pointers included) and its Live
-dashboard into the live Figma OS frame (`os-ui · live (gate-level CPU)`). In Present, the rail's **CPU**
-tab shows the dashboard over the canvas and the right panel: every lamp, arrow, microcode cell and
-magnified gate is bound to one of the CPU's wires, and Figma's prototype engine computes them. Nothing
-runs in a plugin at run time.
+An extension that puts silicon's 8-bit CPU (2,296 gates, Leila's LDR/STR pointers included) into the live
+Figma OS frame (`os-ui · live (gate-level CPU)`), shown the way Leila's Live view shows it
+(`tools/connector/live-view.js`, renders in `docs/figma/img/live-*.png`): the gates themselves, each one
+turning yellow while its output is 1. In Present, the rail's **CPU** tab covers the canvas and the right
+panel with:
+
+- a slim bar with Step, Run, Stop and Reset, the phase and tick counters, and one button per program;
+- windows of the CPU's blocks drawn as gates: register file, control unit, bus mux + IR, ALU, MAR + MDR
+  (the pointer's way to memory), PC + T-state. No lamps, displays or diagrams.
+
+Every gate's light is bound to the CPU wire it drives, and Figma's prototype engine computes them.
+Nothing runs in a plugin at run time.
 
 It adds to the file and rebuilds nothing. The OS chip, its variables and the other extensions' layers
 are left alone.

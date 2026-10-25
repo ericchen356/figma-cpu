@@ -17,7 +17,7 @@ import {
 } from "../../src/prototype/figma-actions";
 import { cpuPrograms } from "../../src/prototype/live";
 import { type FigmaValue, runFigmaActions } from "../../src/prototype";
-import { listingText } from "../../src/live";
+import { collectPrefixed, listingText } from "../../src/live";
 import { FakeFigma, type FakeNode } from "../../test/fake-figma";
 import {
   LIVE,
@@ -147,15 +147,9 @@ class Player {
     }
     return true;
   }
-  get inst(): FakeNode {
-    const view = fk(this.w.r.view);
-    const i = view.children.find((c) => c.type === "INSTANCE");
-    if (!i) throw new Error("the view holds no dashboard instance");
-    return i;
-  }
-  /** The one showing layer named `name` inside the dashboard instance (stacked layers: only one shows). */
+  /** The one showing layer named `name` in the view (stacked layers: only one shows). */
   layer(name: string): FakeNode {
-    const hits = this.inst.findAll((n) => n.name === name && this.shows(n));
+    const hits = fk(this.w.r.view).findAll((n) => n.name === name && this.shows(n));
     if (hits.length !== 1)
       throw new Error(`${hits.length} showing layers named ${name}`);
     return hits[0];
@@ -238,7 +232,7 @@ describe("Leila's CPU in the CPU tab", () => {
     expect(pl.shows(fk(w.r.view))).toBe(false);
     pl.vals.set(w.tab, true);
     expect(pl.shows(fk(w.r.view))).toBe(true);
-    expect(pl.inst.width).toBeLessThanOrEqual(1440);
+    for (const m of w.r.windows) expect(fk(m).width).toBeLessThanOrEqual(1440);
     expect(pl.ctl("ctl/program")).toBe("ptrout");
     expect(w.r.problems).toEqual([]);
   });
@@ -380,20 +374,41 @@ describe("Leila's CPU in the CPU tab", () => {
     expect(pl.shows(back)).toBe(false);
   });
 
-  it("the stacked Step / Run / Reset copies sit inside the component, next to the original (none loose on the page)", () => {
-    const comp = fk(w.r.dashboard);
-    const steps = comp.findAll((n) => n.name === "ctl/step");
+  it("the stacked Step / Run / Reset buttons sit together in the bar (none loose on the page)", () => {
+    const view = fk(w.r.view);
+    const steps = view.findAll((n) => n.name === "ctl/step");
     expect(steps.length).toBe(w.r.chunks);
-    for (const s of steps) expect(s.parent).toBe(steps[0].parent);
-    expect(comp.findAll((n) => n.name === "ctl/run").length).toBe(w.r.chunks);
-    expect(comp.findAll((n) => n.name === "ctl/reset").length).toBe(w.r.disks.length);
+    for (const s of steps) expect([s.parent!.name, s.x, s.y]).toEqual([`${PREFIX}view`, steps[0].x, steps[0].y]);
+    expect(view.findAll((n) => n.name === "ctl/run").length).toBe(w.r.chunks);
+    expect(view.findAll((n) => n.name === "ctl/reset").length).toBe(w.r.disks.length);
     const page = w.f.currentPage;
     expect(page.children.filter((n) => n.name.startsWith("ctl/")).map((n) => n.name)).toEqual([]);
   });
 
-  it("the clock pad is hidden (each cell would hold the whole tick)", () => {
-    const pad = fk(w.r.dashboard).findOne((n) => n.name === "ctl/pad")!;
-    expect(pad.visible).toBe(false);
+  it("the windows hold the CPU's own blocks drawn as gates, every gate's light bound to its output wire", () => {
+    expect(w.r.windows.map((m) => m.name)).toEqual(["mag/regs", "mag/ctrl", "mag/busmux", "mag/ir", "mag/alu", "mag/mar", "mag/mdr", "mag/pc", "mag/tstate"]);
+    const net = w.r.net;
+    let gates = 0;
+    for (const m of w.r.windows) {
+      const inst = fk(m).children.find((c) => c.type === "INSTANCE")!;
+      expect(inst, m.name).toBeTruthy();
+      const b = collectPrefixed(inst as unknown as InstanceNode, net, `${m.name.slice(4)}/`);
+      expect(b.missing, `${m.name}: gates without a light`).toEqual([]);
+      for (const [gi, node] of b.gateLit) {
+        const out = net.gates[gi].out;
+        if (out <= 1) continue;
+        expect(fk(node).boundVariables.visible?.id, net.gates[gi].path).toBe(w.r.varIds.get(out));
+        gates++;
+      }
+    }
+    expect(gates).toBeGreaterThan(500);
+  });
+
+  it("only gates: no lamps, display or diagrams, just the bar's counters (bound) and the windows", () => {
+    const view = fk(w.r.view);
+    for (const kind of ["lamp/", "seg/", "arrow/", "row/", "col/", "tag/"]) expect(view.findAll((n) => n.name.startsWith(kind)).map((n) => n.name)).toEqual([]);
+    for (const t of ["var/ctl/tickText", "var/ctl/phaseText"]) expect(view.findOne((n) => n.name === t)!.boundVariables.characters, t).toBeTruthy();
+    expect(view.children.filter((n) => n.name.startsWith("window/")).length).toBe(6);
   });
 
   it("removeLiveTab deletes exactly what it made and its collection; adding again works", async () => {

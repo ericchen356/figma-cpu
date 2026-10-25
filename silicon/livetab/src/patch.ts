@@ -1,23 +1,25 @@
 // Leila's CPU in the Figma OS's CPU tab: the silicon 8-bit CPU (LDR/STR pointers included) running
-// natively in Present, shown by the Live dashboard (src/live) over the OS's workspace whenever the
-// rail's CPU tab is open. It is added to a live frame already in the file ("os-ui · live (gate-level
-// CPU)", with the Figma OS extension's CPU tab), without touching the OS chip:
+// natively in Present, shown the way Leila's Live view shows it (tools/connector/live-view.js): the
+// CPU's own blocks drawn as gates, every gate lit while its output is 1, under a slim bar with the
+// clock's buttons and the programs; no lamps or diagrams. It is added to a live frame already in the file ("os-ui ·
+// live (gate-level CPU)", with the Figma OS extension's CPU tab), without touching the OS chip:
 //
 //   · the variables: one BOOLEAN per CPU wire plus the clock's, in their own collection "Leila CPU";
-//   · the dashboard component (datapath, microcode grid, magnifiers, RAM, 7-segment), next to the
-//     live frame, with the three magnified cells drawn beside it (not the whole 72k-layer CPU);
-//   · one instance of it inside the live frame, over the canvas and the right panel (the rail and
-//     the Layers panel stay usable), shown while `tab/cpu` (the extension's view variable) is true,
-//     with a switch back to the OS chip;
+//   · the register file, control unit, bus mux, IR, ALU, MAR, MDR, PC and T-state drawn as cell
+//     components beside the live frame (not RAM and the wiring between blocks, ~31k layers in all:
+//     every layer of the presented frame costs time per event);
+//   · the view inside the live frame, over the canvas and the right panel (the rail and the Layers
+//     panel stay usable), shown while `tab/cpu` (the extension's view variable) is true, with a
+//     switch back to the OS chip: windows holding instances of those blocks, each gate's light bound
+//     to the CPU wire it drives;
 //   · the clock, in place: one Step and one Run button per chunk of the tick, stacked, only the
 //     current chunk's showing, so no reaction holds more than one chunk (≤ CAP actions: Figma times
 //     out storing the whole ~3,900-action tick in one reaction in a file this big). Run and every
 //     program load play as full-size, see-through overlays that SWAP from chunk to chunk and CLOSE
-//     at the end, so the OS frame stays on screen and the dashboard lights up underneath.
+//     at the end, so the OS frame stays on screen and lights up underneath.
 //
 // Buttons act on MOUSE_UP and take MOUSE_DOWN too (with the OS's own "press" actions), because the
-// canvas cells under the view would otherwise take the press. The clock pad is hidden: each of its
-// cells would need the whole tick in one reaction.
+// canvas cells under the view would otherwise take the press.
 //
 // Everything made here is remembered by id (shared plugin data on the document), so removeLiveTab
 // deletes exactly that. Build time only: in Present, Figma's prototype engine does all the work.
@@ -25,18 +27,8 @@ import { compile, type CompiledSchedule } from "../../src/compile";
 import { cpuLibrary, cpuNetlist, PROBES } from "../../src/cpu";
 import { drawLibrary } from "../../src/figma";
 import { PROGRAMS } from "../../src/isa";
-import {
-  bindDashboard,
-  buildDashboard,
-  CTL_PAD,
-  CTL_RESET,
-  CTL_RUN,
-  CTL_STEP,
-  CTL_STOP,
-  DEFAULT_MAGNIFIERS,
-  diskName,
-  listingText,
-} from "../../src/live";
+import { bindDashboard, CTL_RESET, CTL_RUN, CTL_STEP, CTL_STOP, diskName, listingText, loadLiveFonts, magName } from "../../src/live";
+import { frame as box, L, rect, text } from "../../src/live/style";
 import {
   bindVisible,
   createVariables,
@@ -88,6 +80,23 @@ const AROUND = 10;
 export const DEFAULT_PROGRAM = "ptrout";
 const CUSTOM = "custom";
 
+interface Block {
+  cell: string;
+  prefix: string;
+}
+/** The CPU's blocks the view draws as gates, as Leila's Live view zooms on them (src/cpu/cpu.ts). */
+const BLOCKS: Block[] = [
+  { cell: "REGFILE", prefix: "regs" },
+  { cell: "CONTROL", prefix: "ctrl" },
+  { cell: "BUSMUX", prefix: "busmux" },
+  { cell: "REG_W8", prefix: "ir" },
+  { cell: "ALU", prefix: "alu" },
+  { cell: "REG_W4", prefix: "mar" },
+  { cell: "REG_W8", prefix: "mdr" },
+  { cell: "PC4", prefix: "pc" },
+  { cell: "TSTATE", prefix: "tstate" },
+];
+
 export interface LiveTabOptions {
   /** Program in RAM at power-on (default ptrout, Leila's pointer demo). */
   program?: string;
@@ -98,7 +107,8 @@ export interface LiveTabOptions {
 export interface LiveTabResult {
   frame: FrameNode;
   view: FrameNode;
-  dashboard: ComponentNode;
+  /** The `mag/<prefix>` frames holding the CPU's blocks as gates. */
+  windows: FrameNode[];
   variables: number;
   /** Events per clock tick (Step clicks or Run hops). */
   chunks: number;
@@ -432,57 +442,52 @@ export async function addLiveTab(
     ];
   };
 
-  // ---- the dashboard component, beside the live frame
+  // ---- the CPU's blocks drawn as gates, beside the live frame (the view's windows instance them)
+  const fonts = await loadLiveFonts(api);
   await loadFonts(api);
+  const ctx = { api, fonts };
   const at = { x: frame.x, y: frame.y + frame.height + 400 };
-  log("drawing the magnified cells…");
+  log("drawing the register file, ALU, bus mux, IR and control unit as gates…");
   const before = new Set(page.children.map((n) => n.id));
-  const mags = DEFAULT_MAGNIFIERS.map((m) => m.cell);
-  await drawLibrary(
+  const drawn = await drawLibrary(
     cpuLibrary(),
     { gates: page, cells: page, cpu: page },
-    { only: mags, gateLabels: false },
+    { only: [...new Set(BLOCKS.map((b) => b.cell))], gateLabels: false },
   );
   const libNodes = page.children.filter((n) => !before.has(n.id));
-  // Line the drawn gates and cells up below the dashboard's spot.
   let lx = at.x;
-  const ly = at.y + 1200 + 200;
+  let ly = at.y;
+  let rowH = 0;
   for (const n of libNodes) {
+    if (lx > at.x + 12000) {
+      lx = at.x;
+      ly += rowH + 200;
+      rowH = 0;
+    }
     n.x = lx;
     n.y = ly;
-    lx += n.width + 80;
+    lx += n.width + 120;
+    rowH = Math.max(rowH, n.height);
     keep(n);
   }
   remember();
-  await breathe();
-  log("drawing the dashboard…");
-  const dash = await buildDashboard(api, page, net, {
-    at,
-    source: PROGRAMS[bootName],
-    programName: bootName,
-    programs: PROGRAMS,
-    cellPages: [page],
-    log,
-  });
-  const comp = keep(dash.component);
-  comp.name = `${PREFIX}Dashboard`;
-  keep(dash.nodes.padCell);
-  remember();
-  const report = bindDashboard(comp, net, varByNet, { ctl });
-  log(
-    `bound ${report.bound} lights${report.unbound.length ? `, ${report.unbound.length} without a variable` : ""}`,
-  );
-  if (report.missingVars.length)
-    log(`texts without a variable: ${report.missingVars.join(", ")}`);
-  // The clock pad would need the whole tick in each cell's reaction: hidden with its header and hint.
-  const pad = comp.findOne((n) => n.name === CTL_PAD);
-  if (pad) pad.visible = false;
-  for (const t of comp.findAll(
-    (n) =>
-      n.type === "TEXT" &&
-      (n.name === "hint/pad" || (n as TextNode).characters === "Clock pad"),
-  ))
-    t.visible = false;
+  // Leila's brighter highlights: at a window's scale, a lit gate's 22 % amber is too faint to see.
+  for (const g of drawn.gates.values()) {
+    if (before.has(g.id)) continue;
+    const l = g.children.find((c) => c.name === "lit") as (SceneNode & MinimalFillsMixin & MinimalStrokesMixin) | null;
+    if (!l) continue;
+    try {
+      l.fills = [{ type: "SOLID", color: { r: 1, g: 0.86, b: 0.2 }, opacity: 0.85 }];
+      l.strokes = [{ type: "SOLID", color: { r: 1, g: 0.92, b: 0.35 } }];
+      l.strokeWeight = 4;
+    } catch {
+      /* cosmetic */
+    }
+  }
+  const cellOf = (name: string) =>
+    drawn.cells.get(name) ??
+    (page.children.find((n) => n.type === "COMPONENT" && n.name === `cell/${name}`) as ComponentNode | undefined) ??
+    null;
   await breathe();
 
   // ---- overlays: Run (one per chunk) and a program load (one per hop), full size and see-through
@@ -493,8 +498,8 @@ export async function addLiveTab(
     page.appendChild(f);
     f.name = `${PREFIX}${name}`;
     f.resize(W, H);
-    f.x = at.x + 2000 + (i % 4) * (W + 80);
-    f.y = at.y + Math.floor(i / 4) * (H + 80);
+    f.x = at.x + (i % 4) * (W + 80);
+    f.y = ly + rowH + 400 + Math.floor(i / 4) * (H + 80);
     f.fills = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 0.01 }];
     f.clipsContent = true;
     const pill = api.createFrame();
@@ -595,138 +600,123 @@ export async function addLiveTab(
     navigateWith(loadOv[0].f.id, "OVERLAY"),
   ];
 
-  // ---- the dashboard's controls: Step and Run stacked per chunk, Reset per program, the disks
-  const named = (name: string) =>
-    comp.findAll(
-      (n) => n.name === name && !insideInstance(n, comp),
-    ) as FrameNode[];
-  const stackOf = (
-    name: string,
-    count: number,
-    visibleBy: (i: number) => Variable,
-  ): FrameNode[] => {
-    const base = need(named(name)[0], `dashboard layer ${name}`);
-    const out = [base];
-    const parent = base.parent as FrameNode;
-    for (let i = 1; i < count; i++) {
-      // Figma's clone() puts the copy at the top of the current page: back next to the original.
-      const c = base.clone();
-      parent.appendChild(c);
-      c.x = base.x;
-      c.y = base.y;
-      out.push(c);
-    }
-    out.forEach((b, i) => bindVisible(b, visibleBy(i)));
-    return out;
-  };
-  const steps = stackOf(CTL_STEP, K, phaseIs);
-  for (const [k, b] of steps.entries())
-    await react(b, `Step ${k + 1}`, tapActs(chunkEvent(k)));
-  const runButtons = stackOf(CTL_RUN, K, phaseIs);
-  for (const [k, b] of runButtons.entries())
-    await react(
-      b,
-      `Run ${k + 1}`,
-      tapActs([set(running, true), navigateWith(runs[k].f.id, "OVERLAY")]),
-    );
-  for (const b of named(CTL_STOP))
-    await react(b, "Stop", tapActs([set(running, false)]));
-  const resets = stackOf(CTL_RESET, disks.length, (e) => cv(`ctl/diskIs/${e}`));
-  for (const [e, b] of resets.entries())
-    await react(b, `Reset (${disks[e].name})`, tapActs(loadClick(e)));
-  for (const [e, d] of disks.entries())
-    for (const b of named(diskName(d.name)))
-      await react(b, `disk ${d.name}`, tapActs(loadClick(e)));
-  await breathe();
-
-  // ---- the view inside the live frame: over the canvas and the right panel while the CPU tab shows
-  // Over the canvas and the right panel: the rail and the Layers panel stay as they are.
+  // ---- the view inside the live frame, laid out like Leila's Live view: the controls, the programs
+  // and the CPU's own blocks drawn as gates, every gate lit while its output is 1. Over the canvas and
+  // the right panel while the CPU tab shows; the rail and the Layers panel stay as they are.
   const x0 = canvas.x;
   const y0 = canvas.y;
   const vw = right.x + right.width - x0;
   const vh = frame.height - y0;
-  const root = keep(api.createFrame());
-  app.appendChild(root);
-  root.name = `${PREFIX}tab`;
-  root.resize(vw, vh);
-  root.x = x0;
-  root.y = y0;
-  root.fills = [];
-  root.clipsContent = true;
+  const root = keep(box(ctx, app, `${PREFIX}tab`, x0, y0, vw, vh, { clip: true }));
   bindVisible(root, tabVar);
-  const view = api.createFrame();
-  root.appendChild(view);
-  view.name = `${PREFIX}view`;
-  view.resize(vw, vh);
-  view.x = 0;
-  view.y = 0;
-  view.fills = [{ type: "SOLID", color: hex("#1E1E1E") }];
+  const view = box(ctx, root, `${PREFIX}view`, 0, 0, vw, vh, { fill: L.bg, clip: true });
   bindVisible(view, cv("view/show"));
   await react(view, "view", blockAll());
-  const inst = comp.createInstance();
-  view.appendChild(inst);
-  inst.name = `${PREFIX}Live`;
-  const s = Math.min((vw - 24) / comp.width, (vh - 56) / comp.height);
-  if ("rescale" in inst) inst.rescale(s);
-  else (inst as SceneNode as FrameNode).resize(comp.width * s, comp.height * s); // the fake API has no rescale
-  inst.x = Math.round((vw - comp.width * s) / 2);
-  inst.y = 44;
-  const toggle = (
-    parent: FrameNode,
-    name: string,
-    label: string,
-    x: number,
-    y: number,
-  ) => {
-    const b = api.createFrame();
-    parent.appendChild(b);
-    b.name = `${PREFIX}${name}`;
-    b.resize(10, 28);
-    b.cornerRadius = 6;
-    b.fills = [{ type: "SOLID", color: hex("#2C2C2C") }];
-    b.strokes = [{ type: "SOLID", color: hex("#444444") }];
-    const t = api.createText();
-    b.appendChild(t);
-    t.fontName = { family: "Inter", style: "Medium" };
-    t.fontSize = 12;
-    t.characters = label;
-    t.fills = [{ type: "SOLID", color: hex("#E6E6E6") }];
-    b.resize(Math.ceil(t.width) + 24, 28);
-    t.x = 12;
-    t.y = Math.round((28 - t.height) / 2);
-    b.x = x - b.width;
-    b.y = y;
+  const M = 10;
+  // A slim bar: the clock's buttons and counters and the programs. Everything below it is gates.
+  text(ctx, view, "Leila's CPU · every gate lights while its output is 1", M + 4, 12, { size: 13, font: "semibold", name: "title" });
+  const button = (parent: FrameNode, name: string, label: string, x: number, y: number, w: number, fill: string) => {
+    const b = box(ctx, parent, name, x, y, w, 26, { fill, radius: 6 });
+    text(ctx, b, label, 0, 0, { size: 11, font: "semibold", w, h: 26, align: "CENTER", valign: "CENTER", name: "label" });
     return b;
   };
-  const title = api.createText();
-  view.appendChild(title);
-  title.fontName = { family: "Inter", style: "Medium" };
-  title.fontSize = 13;
-  title.characters =
-    "Leila's CPU · 2,296 gates running in Figma · LDR/STR pointers";
-  title.fills = [{ type: "SOLID", color: hex("#E6E6E6") }];
-  title.x = inst.x;
-  title.y = 14;
+  const BY = 40;
+  const bx = M + 4;
+  const steps = chunks.map(() => button(view, CTL_STEP, "Step", bx, BY, 60, "#2F6FED"));
+  const runButtons = chunks.map(() => button(view, CTL_RUN, "Run", bx + 66, BY, 60, "#14AE5C"));
+  const stop = button(view, CTL_STOP, "Stop", bx + 132, BY, 60, "#E5484D");
+  const resets = disks.map(() => button(view, CTL_RESET, "Reset", bx + 198, BY, 60, "#4A4A4A"));
+  steps.forEach((b, k) => bindVisible(b, phaseIs(k)));
+  runButtons.forEach((b, k) => bindVisible(b, phaseIs(k)));
+  resets.forEach((b, e) => bindVisible(b, cv(`ctl/diskIs/${e}`)));
+  for (const [k, b] of steps.entries()) await react(b, `Step ${k + 1}`, tapActs(chunkEvent(k)));
+  for (const [k, b] of runButtons.entries())
+    await react(b, `Run ${k + 1}`, tapActs([set(running, true), navigateWith(runs[k].f.id, "OVERLAY")]));
+  await react(stop, "Stop", tapActs([set(running, false)]));
+  for (const [e, b] of resets.entries()) await react(b, `Reset (${disks[e].name})`, tapActs(loadClick(e)));
+  text(ctx, view, `phase (of ${K})`, bx + 270, BY - 4, { size: 9, color: L.text3 });
+  text(ctx, view, "0", bx + 270, BY + 8, { size: 16, font: "bold", name: "var/ctl/phaseText" });
+  text(ctx, view, "ticks", bx + 340, BY - 4, { size: 9, color: L.text3 });
+  text(ctx, view, "0", bx + 340, BY + 8, { size: 16, font: "bold", color: L.drive, name: "var/ctl/tickText" });
+  // the programs: one chip each (a load in Present), the loaded one marked
+  const px0 = bx + 410;
+  const chipW = 58;
+  const perRow = Math.max(1, Math.floor((vw - M - px0 + 4) / (chipW + 4)));
+  for (const [e, d] of disks.entries()) {
+    const chip = box(ctx, view, diskName(d.name), px0 + (e % perRow) * (chipW + 4), 36 + Math.floor(e / perRow) * 22, chipW, 19, { fill: L.block, radius: 5 });
+    const on = rect(ctx, chip, "on", 0, 0, chipW, 19, { fill: L.blue, fillOpacity: 0.5, radius: 5 });
+    bindVisible(on, cv(`ctl/diskIs/${e}`));
+    text(ctx, chip, d.name, 0, 0, { size: 9.5, font: "medium", w: chipW, h: 19, align: "CENTER", valign: "CENTER" });
+    await react(chip, `program ${d.name}`, tapActs(loadClick(e)));
+  }
+  const TOP = Math.max(BY + 34, 36 + Math.ceil(disks.length / perRow) * 22 + 6);
+  await breathe();
+
+  // the CPU's blocks as gates, in clipped windows like Leila's zoom views
+  const windows: FrameNode[] = [];
+  const windowOf = (name: string, title: string, x: number, y: number, w: number, h: number, blocks: Block[]) => {
+    const f = box(ctx, view, `window/${name}`, x, y, w, h, { fill: "#1E1E1E", radius: 10, stroke: "#40424D", clip: true });
+    text(ctx, f, title, 10, 7, { size: 12, font: "bold", color: "#BFC4D1" });
+    const slot = Math.floor((w - 8) / blocks.length);
+    blocks.forEach((b, i) => {
+      const main = cellOf(b.cell);
+      const mag = box(ctx, f, magName(b.prefix), 4 + i * slot, 28, slot, h - 32, { clip: true });
+      windows.push(mag);
+      if (!main) {
+        text(ctx, mag, `cell/${b.cell} is missing`, 8, 8, { size: 10, color: L.text3 });
+        return;
+      }
+      const inst = main.createInstance();
+      mag.appendChild(inst);
+      const sc = Math.min((slot - 8) / main.width, (h - 40) / main.height);
+      if ("rescale" in inst) inst.rescale(sc);
+      else (inst as SceneNode as FrameNode).resize(main.width * sc, main.height * sc); // the fake API has no rescale
+      inst.x = Math.round((slot - main.width * sc) / 2);
+      inst.y = Math.round((h - 32 - main.height * sc) / 2);
+    });
+    return f;
+  };
+  const block = (prefix: string) => need(BLOCKS.find((b) => b.prefix === prefix), `block ${prefix}`);
+  const gw = vw - 2 * M;
+  const gh = vh - TOP - M;
+  const rowA = Math.round((gh - M) * 0.56);
+  const rowB = gh - M - rowA;
+  const cols = (fr: number[]) => {
+    const w = gw - (fr.length - 1) * M;
+    const out: number[] = [];
+    let x = M;
+    for (const f of fr) {
+      out.push(x);
+      x += Math.round(w * f) + M;
+    }
+    return { xs: out, ws: fr.map((f, i) => (i === fr.length - 1 ? M + gw - out[i] : Math.round(w * f))) };
+  };
+  const a = cols([0.36, 0.26, 0.38]);
+  windowOf("registers", "Register file R0–R3 + read mux", a.xs[0], TOP, a.ws[0], rowA, [block("regs")]);
+  windowOf("control", "Control unit (opcode decoder)", a.xs[1], TOP, a.ws[1], rowA, [block("ctrl")]);
+  windowOf("bus", "Bus mux + IR", a.xs[2], TOP, a.ws[2], rowA, [block("busmux"), block("ir")]);
+  const b2 = cols([0.44, 0.3, 0.26]);
+  windowOf("alu", "ALU · adder/subtract, AND/OR/XOR, result mux", b2.xs[0], TOP + rowA + M, b2.ws[0], rowB, [block("alu")]);
+  windowOf("memory", "MAR + MDR · the pointer's way to memory", b2.xs[1], TOP + rowA + M, b2.ws[1], rowB, [block("mar"), block("mdr")]);
+  windowOf("sequencer", "PC + T-state", b2.xs[2], TOP + rowA + M, b2.ws[2], rowB, [block("pc"), block("tstate")]);
+  const report = bindDashboard(view, net, varByNet, { ctl });
+  log(`bound ${report.bound} lights${report.unbound.length ? `, ${report.unbound.length} without a variable` : ""}`);
+  if (report.missingVars.length) log(`texts without a variable: ${report.missingVars.join(", ")}`);
+  await breathe();
+
+  const toggle = (parent: FrameNode, name: string, label: string, x: number, y: number) => {
+    const b = box(ctx, parent, `${PREFIX}${name}`, 0, y, 10, 28, { fill: L.chrome, radius: 6, stroke: L.line2 });
+    const t = text(ctx, b, label, 12, 0, { size: 12, font: "medium", h: 28, valign: "CENTER" });
+    b.resize(Math.ceil(t.width) + 24, 28);
+    b.x = x - b.width;
+    return b;
+  };
   const toOs = toggle(view, "show OS chip", "OS chip ›", vw - 16, 8);
-  await react(
-    toOs,
-    "OS chip",
-    tapActs([set(cv("view/show"), false), set(cv("view/hide"), true)]),
-  );
+  await react(toOs, "OS chip", tapActs([set(cv("view/show"), false), set(cv("view/hide"), true)]));
   // Top right of the canvas, beside the OS chip page's column (the viewer may cut the frame's bottom off).
-  const back = toggle(
-    root,
-    "show Leila CPU",
-    "‹ Leila's CPU",
-    canvas.width - 16,
-    8,
-  );
+  const back = toggle(root, "show Leila CPU", "‹ Leila's CPU", canvas.width - 16, 8);
   bindVisible(back, cv("view/hide"));
-  await react(
-    back,
-    "Leila's CPU",
-    tapActs([set(cv("view/show"), true), set(cv("view/hide"), false)]),
-  );
+  await react(back, "Leila's CPU", tapActs([set(cv("view/show"), true), set(cv("view/hide"), false)]));
   remember();
 
   const worst = (acts: Action[]) => worstCase(acts);
@@ -770,7 +760,7 @@ export async function addLiveTab(
   return {
     frame,
     view,
-    dashboard: comp,
+    windows,
     variables: control.length + netVars.length,
     chunks: K,
     loadHops: loads.length,
@@ -786,12 +776,6 @@ export async function addLiveTab(
     controls: new Map([...ctl].map(([n, v]) => [n, v.id])),
     overlays: { runs: runs.map((r) => r.f), loads: loadOv.map((l) => l.f) },
   };
-}
-
-function insideInstance(n: BaseNode, top: BaseNode): boolean {
-  for (let q = n.parent; q && q !== top; q = q.parent)
-    if (q.type === "INSTANCE") return true;
-  return false;
 }
 
 function countAll(actions: readonly Action[]): number {

@@ -111,7 +111,6 @@
     "HALT"
     // stop: HALTED flip-flop set, all signals forced off
   ];
-  var BUS_DRIVERS = ["PC_OUT", "MDR_OUT", "REG_OUT_D", "REG_OUT_S", "Y_OUT"];
   var ALU_SEL = { ADD: 0, SUB: 0, AND: 1, OR: 2, XOR: 3, NOT: 4 };
   var FETCH = [
     { t: 0, signals: ["PC_OUT", "MAR_LOAD"] },
@@ -2255,11 +2254,6 @@
   var wireLitName = (net) => `${WIRE_PREFIX}${net}${LIT_SUFFIX}`;
   var pinName = (port) => `${PIN_PREFIX}${port}`;
   var portMarkerName = (p) => `${PORT_PREFIX}${p.dir}/${p.name}/${p.width}`;
-  var MARKER_RE = /^port\/(in|out)\/([A-Za-z_]\w*)\/([1-9]\d*)$/;
-  function parsePortMarker(name) {
-    const m = MARKER_RE.exec(name);
-    return m ? { name: m[2], dir: m[1], width: Number(m[3]) } : null;
-  }
   function wireLitNet(layerName) {
     return layerName.startsWith(WIRE_PREFIX) && layerName.endsWith(LIT_SUFFIX) && layerName.length > WIRE_PREFIX.length + LIT_SUFFIX.length ? layerName.slice(WIRE_PREFIX.length, -LIT_SUFFIX.length) : null;
   }
@@ -3306,20 +3300,13 @@
   var CTL_RUN = "ctl/run";
   var CTL_STOP = "ctl/stop";
   var CTL_RESET = "ctl/reset";
-  var CTL_PAD = "ctl/pad";
-  var padCellName = (i) => `${CTL_PAD}/${i}`;
   var DISK_PREFIX = "disk/";
   var diskName = (program) => `${DISK_PREFIX}${program}`;
-  var CUSTOM_DISK = "custom";
   var PAD_CELL_NAME = `${LIVE_PREFIX}Pad cell`;
-  var LISTING = "var/ctl/listing";
-  var PROGRAM_NAME = "var/ctl/program";
   var NET_KINDS = ["lamp", "seg", "arrow", "row", "col", "tag"];
   var NET_RE = new RegExp(`^(${NET_KINDS.join("|")})\\/(.+)$`);
   var VAR_RE = /^var\/(.+)$/;
   var MAG_RE = /^mag\/(.+)$/;
-  var bound = (kind, net) => `${kind}/${net}`;
-  var varBound = (variable) => `var/${variable}`;
   var magName = (prefix) => `mag/${prefix.replace(/\/+$/, "")}`;
   function parseBound(name) {
     const m = NET_RE.exec(name);
@@ -3333,7 +3320,6 @@
     const m = MAG_RE.exec(name);
     return m ? `${m[1]}/` : null;
   }
-  var isLiveNode = (n) => n.name.startsWith(LIVE_PREFIX);
 
   // src/live/style.ts
   var L = {
@@ -3454,468 +3440,17 @@
     }
     return put(parent, t, x, y);
   }
-  function header(ctx, parent, label2, x, y) {
-    return text(ctx, parent, label2.toUpperCase(), x, y, { size: 10, font: "semibold", color: L.text2, tracking: 6, name: `header/${label2}` });
-  }
-  function glow(node, hex3, radius = 8, alpha = 0.6) {
-    try {
-      const c = rgb2(hex3);
-      node.effects = [
-        { type: "DROP_SHADOW", color: __spreadProps(__spreadValues({}, c), { a: alpha }), offset: { x: 0, y: 0 }, radius, spread: 0, visible: true, blendMode: "NORMAL" }
-      ];
-    } catch (e) {
-    }
-  }
-  var num2 = (v) => String(Math.round(v * 100) / 100);
-  function vector(ctx, parent, name, lines, polys, color, weight, o = {}) {
-    var _a, _b;
-    const all = [...lines.flat(), ...polys.flat()];
-    const x0 = Math.min(...all.map((p) => p[0]));
-    const y0 = Math.min(...all.map((p) => p[1]));
-    const d = (pts, close) => pts.map((p, i) => `${i ? "L" : "M"} ${num2(p[0] - x0)} ${num2(p[1] - y0)}`).join(" ") + (close ? " Z" : "");
-    const paths = [];
-    if (lines.length) paths.push({ windingRule: "NONE", data: lines.map((l) => d(l, false)).join(" ") });
-    if (polys.length) paths.push({ windingRule: "NONZERO", data: polys.map((p) => d(p, true)).join(" ") });
-    const v = ctx.api.createVector();
-    v.name = name;
-    v.vectorPaths = paths;
-    v.strokes = solid2(color, (_a = o.opacity) != null ? _a : 1);
-    v.strokeWeight = weight;
-    v.strokeJoin = "ROUND";
-    v.strokeCap = "ROUND";
-    v.fills = polys.length ? solid2(color, (_b = o.opacity) != null ? _b : 1) : [];
-    if (o.dash) v.dashPattern = o.dash;
-    return put(parent, v, x0, y0);
-  }
-  function arrowHead(pts, size = 7) {
-    const [ax, ay] = pts[pts.length - 2];
-    const [bx, by] = pts[pts.length - 1];
-    const len = Math.hypot(bx - ax, by - ay) || 1;
-    const ux = (bx - ax) / len;
-    const uy = (by - ay) / len;
-    const base = [bx - ux * size, by - uy * size];
-    const half = size * 0.6;
-    const head = [
-      [bx, by],
-      [base[0] - uy * half, base[1] + ux * half],
-      [base[0] + uy * half, base[1] - ux * half]
-    ];
-    return { line: [...pts.slice(0, -1), base], head };
-  }
-
-  // src/live/widgets.ts
-  function lamp(ctx, parent, net, x, y, size, color, o = {}) {
-    var _a, _b, _c, _d, _e;
-    const w = (_a = o.w) != null ? _a : size;
-    const h = (_b = o.h) != null ? _b : size;
-    const radius = (_c = o.radius) != null ? _c : Math.max(1, Math.round(Math.min(w, h) / 4));
-    const f = frame(ctx, parent, bound((_d = o.kind) != null ? _d : "lamp", net), x, y, w, h, { fill: (_e = o.off) != null ? _e : L.off, radius });
-    const lit3 = rect(ctx, f, "lit", 0, 0, w, h, { fill: color, radius });
-    lit3.visible = false;
-    return f;
-  }
-  function lampRow(ctx, parent, nets, x, y, size, pitch, color, o = {}) {
-    return nets.map((n, i) => lamp(ctx, parent, n, x + i * pitch, y, size, color, o));
-  }
-  var bitsMsbFirst = (name, width) => width === 1 ? [name] : Array.from({ length: width }, (_, i) => `${name}[${width - 1 - i}]`);
-  function tag(ctx, parent, net, label2, x, y, color, o = {}) {
-    var _a, _b, _c, _d, _e;
-    const size = (_a = o.size) != null ? _a : 9;
-    const h = (_b = o.h) != null ? _b : 18;
-    const w = (_c = o.w) != null ? _c : Math.ceil(label2.length * size * 0.62) + 14;
-    const f = frame(ctx, parent, (_d = o.name) != null ? _d : bound("tag", net), x, y, w, h, __spreadValues({
-      fill: null,
-      radius: h / 2
-    }, o.outline === false ? {} : { stroke: L.line2 }));
-    text(ctx, f, label2, 0, 0, { size, font: "mono", color: L.text3, w, h, align: "CENTER", valign: "CENTER", name: "label" });
-    const lit3 = frame(ctx, f, "lit", 0, 0, w, h, { fill: color, radius: h / 2 });
-    text(ctx, lit3, label2, 0, 0, { size, font: "monoBold", color: (_e = o.litText) != null ? _e : "#111111", w, h, align: "CENTER", valign: "CENTER", name: "label" });
-    lit3.visible = false;
-    return f;
-  }
-  function arrow(ctx, parent, net, pts, color, o = {}) {
-    var _a, _b, _c;
-    const pad = 10;
-    const xs = pts.map((p) => p[0]);
-    const ys = pts.map((p) => p[1]);
-    const x0 = Math.min(...xs) - pad;
-    const y0 = Math.min(...ys) - pad;
-    const w = Math.max(...xs) - x0 + pad;
-    const h = Math.max(...ys) - y0 + pad;
-    const name = (_a = o.name) != null ? _a : net ? bound("arrow", net) : "link";
-    const f = frame(ctx, parent, name, x0, y0, w, h, { fill: null });
-    const local = pts.map(([x, y]) => [x - x0, y - y0]);
-    const { line, head } = o.head === false ? { line: local, head: [] } : arrowHead(local, 7);
-    vector(ctx, f, "line", [line], head.length ? [head] : [], net ? L.line2 : L.text3, (_b = o.weight) != null ? _b : 1.5);
-    const labelPos = () => {
-      if (o.labelAt) return [local[0][0] + o.labelAt[0], local[0][1] + o.labelAt[1]];
-      const [a, b] = [local[0], local[1]];
-      return [Math.min(a[0], b[0]) + 2, Math.min(a[1], b[1]) - 13];
-    };
-    if (o.label) {
-      const [lx, ly] = labelPos();
-      text(ctx, f, o.label, lx, ly, { size: 8, font: "mono", color: L.text3, name: "label" });
-    }
-    if (!net) return f;
-    const lit3 = frame(ctx, f, "lit", 0, 0, w, h, { fill: null });
-    const v = vector(ctx, lit3, "line", [line], head.length ? [head] : [], color, ((_c = o.weight) != null ? _c : 1.5) + 1.5);
-    glow(v, color, 6, 0.7);
-    if (o.label) {
-      const [lx, ly] = labelPos();
-      text(ctx, lit3, o.label, lx, ly, { size: 8, font: "monoBold", color, name: "label" });
-    }
-    lit3.visible = false;
-    return f;
-  }
-  function button(ctx, parent, name, label2, x, y, w, h, color, o = {}) {
-    const f = frame(ctx, parent, name, x, y, w, h, o.outline ? { fill: L.cell, radius: 6, stroke: L.line2 } : { fill: color, radius: 6 });
-    const fg = o.outline ? L.text : "#FFFFFF";
-    const chars = o.icon ? `${o.icon}  ${label2}` : label2;
-    text(ctx, f, chars, 0, 0, { size: 12, font: "semibold", color: fg, w, h, align: "CENTER", valign: "CENTER", name: "label" });
-    return f;
-  }
-  function block(ctx, parent, name, title, x, y, w, h, sub, accent) {
-    const f = frame(ctx, parent, `block/${name}`, x, y, w, h, { fill: L.block, radius: 8, stroke: L.line });
-    if (accent) rect(ctx, f, "accent", 0, 10, 3, Math.max(8, h - 20), { fill: accent, radius: 1.5 });
-    text(ctx, f, title, 12, 8, { size: 11, font: "bold", color: L.text, name: "title" });
-    if (sub) text(ctx, f, sub, 12, 23, { size: 8.5, color: L.text3, name: "subtitle" });
-    return f;
-  }
-  function bitLabels(ctx, parent, width, x, y, pitch, size) {
-    const fs = 7;
-    const chars = Array.from({ length: width }, (_, i) => String((width - 1 - i) % 10)).join("");
-    const t = text(ctx, parent, chars, x + size / 2 - fs * 0.6 / 2, y, { size: fs, font: "mono", color: L.text3, name: "bits" });
-    try {
-      t.letterSpacing = { value: pitch - fs * 0.6, unit: "PIXELS" };
-    } catch (e) {
-    }
-    return t;
-  }
-
-  // src/live/grid.ts
-  var SHORT = {
-    PC_OUT: "PC\u2192bus",
-    MDR_OUT: "MDR\u2192bus",
-    REG_OUT_D: "Rd\u2192bus",
-    REG_OUT_S: "Rs\u2192bus",
-    Y_OUT: "Y\u2192bus",
-    MAR_LOAD: "bus\u2192MAR",
-    IR_LOAD: "bus\u2192IR",
-    MDR_LOAD: "bus\u2192MDR",
-    REG_LOAD_D: "bus\u2192Rd",
-    A_LOAD: "bus\u2192A",
-    PC_LOAD: "bus\u2192PC",
-    PC_INC: "PC+1",
-    MEM_READ: "RAM\u2192MDR",
-    MEM_WRITE: "MDR\u2192RAM",
-    Y_LOAD: "ALU\u2192Y",
-    FLAGS_LOAD: "\u2192ZCN",
-    HALT: "HALT"
-  };
-  var MARKERS = ["T_RESET"];
-  var short = (s) => {
-    var _a;
-    return (_a = SHORT[s]) != null ? _a : s;
-  };
-  var tLineNet = (t) => `ctrl/T${t}`;
-  var opLineNet = (mnem) => `ctrl/op_${mnem}`;
-  var flagLineNet = (mnem, flag) => `ctrl/op_${mnem}if${flag}`;
-  var cellOf = (mnem, s) => {
-    const main = s.signals.filter((x) => !MARKERS.includes(x)).map(short);
-    const when = s.when ? { flag: s.when.flag, signals: s.when.signals, net: flagLineNet(mnem, s.when.flag) } : void 0;
-    const parts = [...main];
-    if (when) parts.push(`${when.flag}? ${when.signals.map(short).join(" ")}`);
-    return __spreadProps(__spreadValues({ t: s.t, text: parts.join("  ") || "\u2013", signals: s.signals }, when ? { when } : {}), { end: s.signals.includes("T_RESET"), halt: s.signals.includes("HALT") });
-  };
-  var sameStep = (a, b) => !!a && !!b && !a.when && !b.when && a.signals.length === b.signals.length && a.signals.every((s, i) => s === b.signals[i]);
-  function microcodeTable(tStates = 8) {
-    const ops = [...OPCODES].sort((a, b) => a.code - b.code);
-    const stepAt = ops.map((op) => new Map(microcode(op).map((s) => [s.t, s])));
-    const shared = /* @__PURE__ */ new Map();
-    for (let t = 0; t < tStates; t++) {
-      const first = stepAt[0].get(t);
-      if (first && stepAt.every((m) => sameStep(m.get(t), first))) shared.set(t, cellOf("", first));
-    }
-    const rows = ops.map((op, i) => ({
-      code: op.code,
-      mnem: op.mnem,
-      operands: op.operands.join(", "),
-      doc: op.doc,
-      opNet: opLineNet(op.mnem),
-      cells: Array.from({ length: tStates }, (_, t) => {
-        const s = stepAt[i].get(t);
-        return s && !shared.has(t) ? cellOf(op.mnem, s) : null;
-      })
-    }));
-    return { tStates, shared, rows };
-  }
-  function drawMicrocode(ctx, parent, x, y, w, rowH = 21) {
-    const table = microcodeTable();
-    const pad = 16;
-    const top = 44;
-    const headH = 22;
-    const labelW = 156;
-    const sharedW = 108;
-    const nShared = table.shared.size;
-    const nOther = table.tStates - nShared;
-    const otherW = Math.floor((w - 2 * pad - labelW - nShared * sharedW) / Math.max(1, nOther));
-    const colX = [];
-    const colW = [];
-    let cx = pad + labelW;
-    for (let t = 0; t < table.tStates; t++) {
-      colX.push(cx);
-      colW.push(table.shared.has(t) ? sharedW : otherW);
-      cx += colW[t];
-    }
-    const gridW = cx - pad;
-    const rowsY = top + headH + 4;
-    const h = rowsY + table.rows.length * rowH + pad;
-    const card = frame(ctx, parent, "microcode", x, y, w, h, { fill: L.card, radius: 12, stroke: L.line });
-    text(ctx, card, "Microcode", pad, 14, { size: 13, font: "bold", name: "title" });
-    text(ctx, card, "the instruction cycle, generated from OPCODES in src/isa/spec.ts  \xB7  lit row = the opcode in IR  \xB7  lit column = the T-state", pad + 84, 17, {
-      size: 10,
-      color: L.text3,
-      name: "subtitle"
-    });
-    const lx = w - pad - 290;
-    rect(ctx, card, "legend/end", lx, 18, 3, 11, { fill: L.ctrl, radius: 1.5 });
-    text(ctx, card, "last step (T_RESET \u2192 T0)", lx + 8, 17, { size: 9.5, color: L.text3, name: "legend/end" });
-    text(ctx, card, "F? \u2026  only if flag F", lx + 148, 17, { size: 9.5, font: "mono", color: L.drive, name: "legend/cond" });
-    table.rows.forEach((_, r) => {
-      if (r % 2 === 0) rect(ctx, card, "stripe", pad, rowsY + r * rowH, gridW, rowH, { fill: "#292929", radius: 3 });
-    });
-    table.rows.forEach(
-      (row, r) => row.cells.forEach((c, t) => {
-        if (c) rect(ctx, card, `cell/${row.mnem}/T${t}`, colX[t] + 2, rowsY + r * rowH + 2, colW[t] - 4, rowH - 4, { fill: L.block, radius: 4 });
-      })
-    );
-    for (const [t] of table.shared)
-      rect(ctx, card, `cell/FETCH/T${t}`, colX[t] + 2, rowsY + 2, colW[t] - 4, table.rows.length * rowH - 4, { fill: "#28303A", radius: 6 });
-    table.rows.forEach((row, r) => {
-      const f = frame(ctx, card, bound("row", row.opNet), pad, rowsY + r * rowH, gridW, rowH, { fill: null });
-      const lit3 = rect(ctx, f, "lit", 0, 0, gridW, rowH, { fill: L.blue, fillOpacity: 0.16, radius: 4, stroke: L.blue });
-      lit3.strokes = [{ type: "SOLID", color: { r: 13 / 255, g: 153 / 255, b: 1 }, opacity: 0.55 }];
-      lit3.visible = false;
-    });
-    for (let t = 0; t < table.tStates; t++) {
-      const colH = rowsY - top + table.rows.length * rowH;
-      const f = frame(ctx, card, bound("col", tLineNet(t)), colX[t], top, colW[t], colH, { fill: null });
-      const lit3 = frame(ctx, f, "lit", 0, 0, colW[t], colH, { fill: null });
-      const band = rect(ctx, lit3, "band", 0, 0, colW[t], colH, { fill: L.blue, fillOpacity: 0.12, radius: 5 });
-      band.strokes = [{ type: "SOLID", color: { r: 13 / 255, g: 153 / 255, b: 1 }, opacity: 0.5 }];
-      rect(ctx, lit3, "head", 2, 2, colW[t] - 4, headH - 2, { fill: L.blue, radius: 4 });
-      lit3.visible = false;
-    }
-    for (let t = 0; t < table.tStates; t++)
-      text(ctx, card, `T${t}`, colX[t], top + 1, { size: 10.5, font: "monoBold", color: L.text, w: colW[t], h: headH, align: "CENTER", valign: "CENTER", name: `head/T${t}` });
-    text(ctx, card, "opcode", pad + 8, top + 5, { size: 9.5, color: L.text3, name: "head/opcode" });
-    table.rows.forEach((row, r) => {
-      const ry = rowsY + r * rowH;
-      const mid = ry + rowH / 2;
-      text(ctx, card, row.code.toString(16).toUpperCase(), pad + 8, mid - 6, { size: 9.5, font: "mono", color: L.text3, name: `code/${row.mnem}` });
-      text(ctx, card, row.mnem, pad + 24, mid - 7, { size: 11, font: "semibold", color: L.text, name: `mnem/${row.mnem}` });
-      if (row.operands) text(ctx, card, row.operands, pad + 66, mid - 6, { size: 9.5, font: "mono", color: L.text3, name: `operands/${row.mnem}` });
-      row.cells.forEach((c, t) => {
-        if (!c) return;
-        const cw = colW[t];
-        const cx0 = colX[t];
-        text(ctx, card, c.text, cx0 + 8, mid - 6, { size: 9.5, font: "mono", color: c.halt ? L.out : c.when ? L.drive : c.signals.length === 1 && c.end ? L.text3 : L.text2, name: `step/${row.mnem}/T${t}` });
-        if (c.end) rect(ctx, card, `end/${row.mnem}`, cx0 + cw - 7, ry + 5, 3, rowH - 10, { fill: L.ctrl, radius: 1.5 });
-        if (c.when) tag(ctx, card, c.when.net, "taken", cx0 + cw - 50, ry + 3, L.drive, { w: 38, h: rowH - 6, size: 7.5 });
-      });
-    });
-    for (const [t, c] of table.shared) {
-      const cx0 = colX[t];
-      const midY = rowsY + table.rows.length * rowH / 2;
-      text(ctx, card, "FETCH", cx0, midY - 34, { size: 9, font: "semibold", color: L.text3, w: colW[t], align: "CENTER", tracking: 8, name: `fetch/T${t}` });
-      text(ctx, card, c.text.split("  ").join("\n"), cx0, midY - 14, { size: 10, font: "mono", color: L.text2, w: colW[t], align: "CENTER", lineHeight: 15, name: `step/FETCH/T${t}` });
-    }
-    return card;
-  }
 
   // src/live/datapath.ts
-  var DATAPATH_W = 1336;
-  var DATAPATH_H = 480;
-  function signalColor(s) {
-    if (BUS_DRIVERS.includes(s)) return L.drive;
-    if (s === "MEM_READ" || s === "MEM_WRITE") return L.mem;
-    if (s === "Y_LOAD" || s === "FLAGS_LOAD" || s === "PC_INC") return L.alu;
-    if (s.endsWith("_LOAD")) return L.load;
-    return L.ctrl;
-  }
-  var RAM_X = 16;
-  var RAM_W = 196;
   var LEFT_X = 280;
   var LEFT_W = 236;
   var BUS_X = 584;
   var BUS_W = 60;
   var RIGHT_X = 712;
   var RIGHT_W = 248;
-  var FAR_X = 1028;
-  var FAR_W = 292;
-  var TOP = 48;
-  var BOTTOM = 464;
-  var LAMP = 14;
-  var PITCH2 = 18;
   var L_END = LEFT_X + LEFT_W;
   var BUS_R = BUS_X + BUS_W;
   var R_MID = RIGHT_X + RIGHT_W / 2;
-  var ROW = { PC: [48, 60], MAR: [122, 60], MDR: [196, 60], IR: [270, 60], CTRL: [352, 112] };
-  var RROW = { REGS: [48, 122], A: [184, 48], ALU: [256, 76], Y: [358, 48] };
-  function transfers() {
-    const s = (net, pts, label2 = net, labelAt) => __spreadValues({ net, pts, color: signalColor(net), label: label2 }, labelAt ? { labelAt } : {});
-    const right = (y) => [
-      [L_END, y],
-      [BUS_X, y]
-    ];
-    const left = (y) => [
-      [BUS_X, y],
-      [L_END, y]
-    ];
-    const rRight = (y) => [
-      [BUS_R, y],
-      [RIGHT_X, y]
-    ];
-    const rLeft = (y) => [
-      [RIGHT_X, y],
-      [BUS_R, y]
-    ];
-    const ramR = RAM_X + RAM_W;
-    return [
-      s("PC_OUT", right(72)),
-      s("PC_LOAD", left(94)),
-      s("MAR_LOAD", left(152)),
-      s("MEM_READ", [
-        [ramR, 212],
-        [LEFT_X, 212]
-      ]),
-      s("MEM_WRITE", [
-        [LEFT_X, 234],
-        [ramR, 234]
-      ]),
-      s("MDR_OUT", right(214)),
-      s("MDR_LOAD", left(238)),
-      // OUT ← MDR on a store to address 15 (out_load = MEM_WRITE · (MAR = 15), src/cpu/cpu.ts).
-      { net: "out_load", pts: [[LEFT_X, 250], [ramR + 30, 250], [ramR + 30, 300], [ramR, 300]], color: L.out, label: "\u2192OUT", labelAt: [-34, 4] },
-      s("IR_LOAD", left(300)),
-      s("REG_OUT_D", rLeft(80)),
-      s("REG_OUT_S", rLeft(104)),
-      s("REG_LOAD_D", rRight(140)),
-      s("A_LOAD", rRight(208)),
-      // The ALU's B input is the bus; it matters when Y_LOAD captures the result.
-      s("Y_LOAD", rRight(294), "bus\u2192B"),
-      s("Y_LOAD", [
-        [R_MID, RROW.ALU[0] + RROW.ALU[1]],
-        [R_MID, RROW.Y[0]]
-      ], "Y_LOAD", [6, 4]),
-      s("Y_OUT", rLeft(382)),
-      s("FLAGS_LOAD", [
-        [RIGHT_X + RIGHT_W, 294],
-        [FAR_X, 294]
-      ])
-    ];
-  }
-  function drawDatapath(ctx, parent, x, y, w = DATAPATH_W, h = DATAPATH_H) {
-    const card = frame(ctx, parent, "datapath", x, y, w, h, { fill: L.card, radius: 12, stroke: L.line });
-    text(ctx, card, "Datapath", 16, 14, { size: 13, font: "bold", name: "title" });
-    text(ctx, card, "one 8-bit bus; an arrow lights while its control signal is 1, a lamp while its wire is 1 (all variable bindings: no extra gates)", 96, 17, {
-      size: 10,
-      color: L.text3,
-      name: "subtitle"
-    });
-    const bus = frame(ctx, card, "block/BUS", BUS_X, TOP, BUS_W, BOTTOM - TOP, { fill: "#262626", radius: 8, stroke: L.line });
-    text(ctx, bus, "BUS", 0, 8, { size: 10, font: "bold", color: L.text, w: BUS_W, align: "CENTER", name: "title" });
-    text(ctx, bus, "7 \xB7 \xB7 \xB7 \xB7 \xB7 \xB7 0", 0, 22, { size: 7, font: "mono", color: L.text3, w: BUS_W, align: "CENTER", name: "bits" });
-    bitsMsbFirst("bus", 8).forEach((n, i) => lamp(ctx, bus, n, 8 + i * 6.25, 36, 3, L.drive, { w: 3, h: BOTTOM - TOP - 48, radius: 1.5 }));
-    const reg = (name, title, sub, [by, bh], probe, width, accent) => {
-      const b = block(ctx, card, name, title, LEFT_X, by, LEFT_W, bh, sub, accent);
-      lampRow(ctx, b, bitsMsbFirst(probe, width), 12, 34, LAMP, PITCH2, L.bit);
-      return b;
-    };
-    const pc = reg("PC", "PC", "program counter \xB7 4 bits", ROW.PC, "pc", 4, L.load);
-    tag(ctx, pc, "PC_INC", "+1", LEFT_W - 46, 30, L.alu, { w: 34, h: 18, size: 9 });
-    reg("MAR", "MAR", "memory address \xB7 4 bits", ROW.MAR, "mar", 4, L.load);
-    reg("MDR", "MDR", "memory data \xB7 8 bits", ROW.MDR, "mdr", 8, L.mem);
-    const ir = reg("IR", "IR", "instruction \xB7 op | Rd | Rs", ROW.IR, "ir", 8, L.ctrl);
-    text(ctx, ir, "opcode", 12, 50, { size: 7, font: "mono", color: L.text3, name: "field/op" });
-    text(ctx, ir, "Rd", 12 + 4 * PITCH2, 50, { size: 7, font: "mono", color: L.text3, name: "field/rd" });
-    text(ctx, ir, "Rs", 12 + 6 * PITCH2, 50, { size: 7, font: "mono", color: L.text3, name: "field/rs" });
-    const st = block(ctx, card, "STATE", "T-STATE", RAM_X, ROW.PC[0], RAM_W, ROW.PC[1], "t[2:0] \xB7 clock \xB7 halted", L.ctrl);
-    lampRow(ctx, st, bitsMsbFirst("t", 3), 12, 34, LAMP, PITCH2, L.ctrl);
-    text(ctx, st, "CLK", 84, 36, { size: 8, font: "mono", color: L.text3, name: "label/CLK" });
-    lamp(ctx, st, "CLK", 106, 34, LAMP, L.drive);
-    text(ctx, st, "HLT", 132, 36, { size: 8, font: "mono", color: L.text3, name: "label/HLT" });
-    lamp(ctx, st, "halted", 156, 34, LAMP, L.out);
-    const ram = block(ctx, card, "RAM", "RAM", RAM_X, ROW.MAR[0], RAM_W, ROW.MDR[0] + ROW.MDR[1] - ROW.MAR[0], "16 \xD7 8 \xB7 D latches", L.mem);
-    text(ctx, ram, "address (decoded MAR)", 12, 40, { size: 8, color: L.text3, name: "label/addr" });
-    for (let k = 0; k < 16; k++) lamp(ctx, ram, `ram/sel[${k}]`, 12 + k * 10.5, 54, 8, L.mem, { radius: 2 });
-    text(ctx, ram, "0", 12, 64, { size: 7, font: "mono", color: L.text3, name: "addr/0" });
-    text(ctx, ram, "F", 12 + 15 * 10.5 + 2, 64, { size: 7, font: "mono", color: L.text3, name: "addr/F" });
-    text(ctx, ram, "RAM[MAR]", 12, 80, { size: 8, color: L.text3, name: "label/data" });
-    lampRow(ctx, ram, bitsMsbFirst("ram_out", 8), 12, 94, LAMP, PITCH2, L.mem);
-    bitLabels(ctx, ram, 8, 12, 111, PITCH2, LAMP);
-    const out = block(ctx, card, "OUT", "OUT", RAM_X, ROW.IR[0], RAM_W, ROW.IR[1], "port 15 \xB7 shown on the 7-segment", L.out);
-    lampRow(ctx, out, bitsMsbFirst("OUT", 8), 12, 34, LAMP, PITCH2, L.out);
-    arrow(ctx, card, null, [
-      [LEFT_X, 152],
-      [RAM_X + RAM_W, 152]
-    ], L.text3, { label: "addr", labelAt: [-34, 4], name: "link/MAR\u2192RAM" });
-    arrow(ctx, card, null, [
-      [LEFT_X + 60, ROW.IR[0] + ROW.IR[1]],
-      [LEFT_X + 60, ROW.CTRL[0]]
-    ], L.text3, { label: "opcode", labelAt: [6, 4], name: "link/IR\u2192CONTROL" });
-    arrow(ctx, card, null, [
-      [R_MID, RROW.A[0] + RROW.A[1]],
-      [R_MID, RROW.ALU[0]]
-    ], L.text3, { label: "A", labelAt: [6, 4], name: "link/A\u2192ALU" });
-    const ctrl = block(ctx, card, "CONTROL", "CONTROL", RAM_X, ROW.CTRL[0], L_END - RAM_X, ROW.CTRL[1], "PLA from the microcode: T-state decoder \xB7 opcode decoder", L.ctrl);
-    for (let t = 0; t < 8; t++) tag(ctx, ctrl, tLineNet(t), `T${t}`, 12 + t * 61, 38, L.blue, { w: 56, h: 18, size: 9, litText: "#FFFFFF" });
-    [...OPCODES].sort((a2, b) => a2.code - b.code).forEach((o, i) => tag(ctx, ctrl, opLineNet(o.mnem), o.mnem, 12 + i % 8 * 61, 62 + Math.floor(i / 8) * 22, L.blue, { w: 56, h: 18, size: 9, litText: "#FFFFFF" }));
-    const regs = block(ctx, card, "REGS", "REGISTERS", RIGHT_X, RROW.REGS[0], RIGHT_W, RROW.REGS[1], "R0\u2013R3 \xB7 W = being written", L.bit);
-    for (let k = 0; k < 4; k++) {
-      const ry = 34 + k * 21;
-      text(ctx, regs, `R${k}`, 12, ry + 2, { size: 9, font: "monoBold", color: L.text2, name: `label/R${k}` });
-      lampRow(ctx, regs, bitsMsbFirst(`r${k}`, 8), 36, ry, LAMP, PITCH2, L.bit);
-      tag(ctx, regs, `regs/load[${k}]`, "W", 36 + 8 * PITCH2 + 6, ry - 1, L.load, { w: 28, h: 16, size: 8 });
-    }
-    const a = block(ctx, card, "A", "A", RIGHT_X, RROW.A[0], RIGHT_W, RROW.A[1], "ALU input latch", L.alu);
-    lampRow(ctx, a, bitsMsbFirst("a", 8), 96, 17, LAMP, PITCH2, L.bit);
-    const alu = block(ctx, card, "ALU", "ALU", RIGHT_X, RROW.ALU[0], RIGHT_W, RROW.ALU[1], "A op bus", L.alu);
-    const fns = [
-      ["alu/sel[0]", "ADD"],
-      ["alu_sub", "SUB"],
-      ["alu/sel[1]", "AND"],
-      ["alu/sel[2]", "OR"],
-      ["alu/sel[3]", "XOR"],
-      ["alu/sel[4]", "NOT"]
-    ];
-    fns.forEach(([net, label2], i) => tag(ctx, alu, net, label2, 70 + i * 29, 8, L.alu, { w: 27, h: 16, size: 7.5 }));
-    lampRow(ctx, alu, bitsMsbFirst("alu_y", 8), 96, 38, LAMP, PITCH2, L.alu);
-    text(ctx, alu, "result", 12, 41, { size: 8, color: L.text3, name: "label/result" });
-    const yb = block(ctx, card, "Y", "Y", RIGHT_X, RROW.Y[0], RIGHT_W, RROW.Y[1], "ALU result latch", L.alu);
-    lampRow(ctx, yb, bitsMsbFirst("y", 8), 96, 17, LAMP, PITCH2, L.bit);
-    const sig = block(ctx, card, "SIGNALS", "CONTROL SIGNALS", FAR_X, TOP, FAR_W, 210, "the PLA's outputs this T-state", L.ctrl);
-    SIGNALS.forEach((s, i) => tag(ctx, sig, s, s, 12 + i % 2 * 138, 38 + Math.floor(i / 2) * 19, signalColor(s), { w: 132, h: 16, size: 8.5 }));
-    const fl = block(ctx, card, "FLAGS", "FLAGS", FAR_X, 270, FAR_W, 60, "Z C N \u2190 ALU on FLAGS_LOAD; read by the jumps", L.alu);
-    ["flag_z", "flag_c", "flag_n"].forEach((n, i) => {
-      text(ctx, fl, "ZCN"[i], 12 + i * 48, 36, { size: 9, font: "monoBold", color: L.text2, name: `label/${n}` });
-      lamp(ctx, fl, n, 24 + i * 48, 34, LAMP, L.drive);
-    });
-    const lg = block(ctx, card, "LEGEND", "ARROWS", FAR_X, 344, FAR_W, BOTTOM - 344, void 0, void 0);
-    const legend = [
-      [L.drive, "drives the bus (\u2026_OUT)"],
-      [L.load, "loads from the bus (\u2026_LOAD)"],
-      [L.mem, "memory read / write"],
-      [L.alu, "ALU, flags, PC + 1"],
-      [L.out, "output port (store to 15)"]
-    ];
-    legend.forEach(([c, label2], i) => {
-      rect(ctx, lg, `swatch/${i}`, 12, 32 + i * 16, 18, 3, { fill: c, radius: 1.5 });
-      text(ctx, lg, label2, 38, 26 + i * 16, { size: 9, color: L.text2, name: `legend/${i}` });
-    });
-    for (const t of transfers()) arrow(ctx, card, t.net, t.pts, t.color, __spreadValues({ label: t.label }, t.labelAt ? { labelAt: t.labelAt } : {}));
-    return card;
-  }
 
   // src/live/magnifier.ts
   function collectPrefixed(top, net, prefix) {
@@ -3956,67 +3491,6 @@
     const missing = [...gateAt].filter(([, i]) => !gateLit.has(i)).map(([p]) => p);
     return { gateLit, wireLit, missing, stray };
   }
-  var DEFAULT_MAGNIFIERS = [
-    { cell: "FULL_ADDER", prefix: "alu/add/fa3", title: "the adder's bit 3", caption: "cell/FULL_ADDER at alu/add/fa3 \xB7 these gates are the CPU's own, live" },
-    { cell: "DFFE", prefix: "regs/r0/b0", title: "R0, bit 0", caption: "cell/DFFE at regs/r0/b0 \xB7 a flip-flop: master + slave latch" },
-    { cell: "DLATCH", prefix: "ram/row15/b1", title: "RAM[15], bit 1", caption: "cell/DLATCH at ram/row15/b1 \xB7 one bit of memory" }
-  ];
-  function componentPorts(main) {
-    const out = [];
-    for (const c of main.children) {
-      const p = parsePortMarker(c.name);
-      if (p) out.push({ name: p.name, dir: p.dir, width: p.width });
-    }
-    return out;
-  }
-  function drawMagnifier(ctx, parent, spec, main, net, x, y, w, h) {
-    const prefix = `${spec.prefix.replace(/\/+$/, "")}/`;
-    const f = frame(ctx, parent, magName(prefix), x, y, w, h, { fill: L.block, radius: 10, stroke: L.line });
-    text(ctx, f, spec.title, 14, 10, { size: 11, font: "bold", name: "title" });
-    text(ctx, f, spec.caption, 14, 26, { size: 9, color: L.text3, name: "caption" });
-    const vpY = 44;
-    const vpH = h - vpY - 30;
-    const vp = frame(ctx, f, "viewport", 14, vpY, w - 28, vpH, { fill: "#1A1A1A", radius: 6, clip: true });
-    if (!main) {
-      text(ctx, vp, `cell/${spec.cell} is not on the canvas: run Build hardware`, 12, vpH / 2 - 7, { size: 10, color: L.text3, name: "missing" });
-      return { frame: f, instance: null, scale: 0 };
-    }
-    const inst = main.createInstance();
-    vp.appendChild(inst);
-    try {
-      const props = {};
-      const ports = new Map(componentPorts(main).map((p) => [p.name, p]));
-      for (const [key, d] of Object.entries(main.componentPropertyDefinitions)) {
-        const p = ports.get(propName(key));
-        if (d.type !== "TEXT" || !p) continue;
-        const nets = portBits(p).map((b) => {
-          const id = net.aliases.get(prefix + b);
-          return id === void 0 ? b : net.netNames[id];
-        });
-        props[key] = formatNets(nets);
-      }
-      if (Object.keys(props).length) inst.setProperties(props);
-    } catch (e) {
-    }
-    const scale = Math.min(1, (w - 44) / inst.width, (vpH - 12) / inst.height);
-    if (scale < 1 && typeof inst.rescale === "function") inst.rescale(scale);
-    const sw = typeof inst.rescale === "function" ? inst.width : inst.width * scale;
-    const sh = typeof inst.rescale === "function" ? inst.height : inst.height * scale;
-    inst.x = Math.round((w - 28 - sw) / 2);
-    inst.y = Math.round((vpH - sh) / 2);
-    let px = 14;
-    const py = h - 22;
-    for (const p of [...componentPorts(main)].sort((a, b) => a.dir === b.dir ? 0 : a.dir === "in" ? -1 : 1)) {
-      for (const b of portBits(p)) {
-        const label2 = text(ctx, f, b, px, py + 1, { size: 8.5, font: "mono", color: p.dir === "in" ? L.text2 : L.text, name: `port/${b}` });
-        px += Math.max(label2.width, b.length * 5.3) + 4;
-        lamp(ctx, f, prefix + b, px, py, 12, p.dir === "in" ? L.load : L.alu);
-        px += 22;
-      }
-      if (p.dir === "in") px += 0;
-    }
-    return { frame: f, instance: inst, scale };
-  }
 
   // src/live/panels.ts
   var hex = (n, w) => n.toString(16).toUpperCase().padStart(w, "0");
@@ -4040,353 +3514,8 @@
     });
     return out.join("\n");
   }
-  function programBlurb(source) {
-    const first = source.split(/\r?\n/).find((l) => l.trim().startsWith(";"));
-    if (!first) return "";
-    let s = first.replace(/^\s*;\s*/, "");
-    const dash = s.indexOf("\u2014");
-    if (dash >= 0) s = s.slice(dash + 1);
-    s = s.split(/[;.](\s|$)/)[0].trim();
-    return s.length > 36 ? `${s.slice(0, 35)}\u2026` : s;
-  }
-  function drawListing(ctx, parent, x, y, w, name, source) {
-    const program = text(ctx, parent, name, x, y, { size: 12, font: "semibold", color: L.text, name: PROGRAM_NAME });
-    const listing = text(ctx, parent, listingText(source), x, y + 22, { size: 10, font: "mono", color: L.text2, w, lineHeight: 15, name: LISTING });
-    return { program, listing };
-  }
-  function diskColor(name) {
-    const palette = [L.load, L.alu, L.mem, L.drive, L.ctrl, L.out, L.blue];
-    let h = 0;
-    for (const c of name) h = h * 31 + c.charCodeAt(0) >>> 0;
-    return palette[h % palette.length];
-  }
-  function drawDisks(ctx, parent, x, y, w, programs, rowH = 36, gap = 2) {
-    const disks = /* @__PURE__ */ new Map();
-    const names = [...Object.keys(programs), CUSTOM_DISK];
-    names.forEach((name, i) => {
-      const custom = name === CUSTOM_DISK && !(name in programs);
-      const f = frame(ctx, parent, diskName(name), x, y + i * (rowH + gap), w, rowH, custom ? { fill: L.chrome, radius: 6, stroke: L.line2 } : { fill: L.cell, radius: 6 });
-      if (custom) f.dashPattern = [4, 3];
-      const c = custom ? L.text3 : diskColor(name);
-      rect(ctx, f, "icon", 10, rowH / 2 - 10, 20, 20, __spreadValues({ fill: c, radius: 3 }, custom ? { fill: null, stroke: c } : {}));
-      if (!custom) {
-        rect(ctx, f, "icon/label", 14, rowH / 2 - 1, 12, 8, { fill: "#FFFFFF", fillOpacity: 0.9, radius: 1 });
-        rect(ctx, f, "icon/shutter", 15, rowH / 2 - 10, 9, 6, { fill: "#000000", fillOpacity: 0.35, radius: 1 });
-      }
-      text(ctx, f, name, 40, 4, { size: 11.5, font: "semibold", color: custom ? L.text2 : L.text, name: "name" });
-      const blurb = custom ? "the program the plugin loaded last" : programBlurb(programs[name]);
-      text(ctx, f, blurb, 40, 19, { size: 9, color: L.text3, name: "blurb" });
-      disks.set(name, f);
-    });
-    return disks;
-  }
-  function drawPad(ctx, parent, x, y, cols, rows, cell = 30, gap = 3, cellComponent) {
-    const inset = 6;
-    const w = 2 * inset + cols * cell + (cols - 1) * gap;
-    const h = 2 * inset + rows * cell + (rows - 1) * gap;
-    const pad = frame(ctx, parent, CTL_PAD, x, y, w, h, { fill: "#232323", radius: 10, stroke: L.line });
-    const cells = [];
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) {
-        const i = r * cols + c;
-        const t = (r + c) / (rows + cols - 2 || 1);
-        const shade = Math.round(52 + t * 16).toString(16).padStart(2, "0");
-        const fill = `#${shade}${shade}${shade}`;
-        const [cx, cy] = [inset + c * (cell + gap), inset + r * (cell + gap)];
-        if (cellComponent) {
-          const inst = cellComponent.createInstance();
-          inst.name = padCellName(i);
-          put(pad, inst, cx, cy);
-          inst.fills = solid2(fill);
-          cells.push(inst);
-        } else cells.push(frame(ctx, pad, padCellName(i), cx, cy, cell, cell, { fill, radius: 6 }));
-      }
-    return { pad, cells };
-  }
-  var SEGS = [
-    [9, 0, 38, 8],
-    [48, 8, 8, 38],
-    [48, 54, 8, 38],
-    [9, 92, 38, 8],
-    [0, 54, 8, 38],
-    [0, 8, 8, 38],
-    [9, 46, 38, 8]
-  ];
-  function drawSevenSeg(ctx, parent, x, y, w, h) {
-    const win = frame(ctx, parent, "display", x, y, w, h, { fill: L.display, radius: 10, stroke: L.line });
-    const dw = 56;
-    const gap = 28;
-    const x0 = Math.round((w - 2 * dw - gap) / 2);
-    const y0 = Math.round((h - 100) / 2);
-    ["SEG_HI", "SEG_LO"].forEach(
-      (port, d) => SEGS.forEach(([sx, sy, sw, sh], s) => {
-        const seg = lamp(ctx, win, `${port}[${s}]`, x0 + d * (dw + gap) + sx, y0 + sy, Math.min(sw, sh), L.out, { kind: "seg", w: sw, h: sh, radius: 3, off: L.segOff });
-        const lit3 = seg.children.find((c) => c.name === "lit");
-        if (lit3) glow(lit3, L.out, 10, 0.8);
-      })
-    );
-    return win;
-  }
-  function drawRamMatrix(ctx, parent, x, y, w, lampSize = 13, pitch = 17) {
-    const h = 18 + RAM_BYTES * pitch + 4;
-    const f = frame(ctx, parent, "memory", x, y, w, h, { fill: null });
-    const lx = 22;
-    bitLabels(ctx, f, 8, lx, 2, pitch, lampSize);
-    for (let a = 0; a < RAM_BYTES; a++) {
-      const ry = 16 + a * pitch;
-      const band = frame(ctx, f, bound("row", `ram/sel[${a}]`), 0, ry - 2, w, pitch, { fill: null });
-      const lit3 = frame(ctx, band, "lit", 0, 0, w, pitch, { fill: L.mem, fillOpacity: 0.16, radius: 4 });
-      lit3.strokes = [{ type: "SOLID", color: solid2(L.mem)[0].color, opacity: 0.6 }];
-      text(ctx, lit3, "\u2190 MAR", w - 46, 2, { size: 8.5, font: "monoBold", color: L.mem, name: "label" });
-      lit3.visible = false;
-      text(ctx, f, hex(a, 1), 4, ry, { size: 9, font: "mono", color: L.text3, name: `addr/${a}` });
-      for (let i = 0; i < 8; i++) lamp(ctx, f, ramBit(a, 7 - i), lx + i * pitch, ry, lampSize, L.mem, { radius: 3 });
-    }
-    return f;
-  }
 
   // src/live/dashboard.ts
-  var DASHBOARD_W = 1920;
-  var DASHBOARD_H = 1200;
-  var TOPBAR = 48;
-  var SIDE_L = 256;
-  var SIDE_R = 296;
-  function findDashboard(page) {
-    var _a;
-    return (_a = page.children.find((n) => n.type === "COMPONENT" && n.name === DASHBOARD_NAME)) != null ? _a : null;
-  }
-  var PAD_CELL = 38;
-  function drawPadCell(ctx, page, x, y) {
-    const c = ctx.api.createComponent();
-    page.appendChild(c);
-    c.name = PAD_CELL_NAME;
-    c.resize(PAD_CELL, PAD_CELL);
-    c.x = x;
-    c.y = y;
-    c.cornerRadius = 8;
-    c.fills = [{ type: "SOLID", color: { r: 58 / 255, g: 58 / 255, b: 58 / 255 } }];
-    c.description = "One cell of the Live clock pad: entering it with the mouse runs one chunk of the CPU's tick (lane L2 stores that reaction here once).";
-    rect(ctx, c, "dot", PAD_CELL / 2 - 2, PAD_CELL / 2 - 2, 4, 4, { fill: "#FFFFFF", fillOpacity: 0.12, radius: 2 });
-    return c;
-  }
-  function freeSpot(page, gap = 800) {
-    const others = page.children.filter((n) => !isLiveNode(n));
-    if (!others.length) return { x: 0, y: 0 };
-    return {
-      x: Math.round(Math.max(...others.map((n) => n.x + n.width)) + gap),
-      y: Math.round(Math.min(...others.map((n) => n.y)))
-    };
-  }
-  function findCellComponent(pages, name) {
-    const full = `cell/${name}`;
-    for (const p of pages) {
-      const top = p.children.find((n) => n.type === "COMPONENT" && n.name === full);
-      if (top) return top;
-    }
-    for (const p of pages) {
-      const deep = p.findAllWithCriteria({ types: ["COMPONENT"] }).find((n) => n.name === full);
-      if (deep) return deep;
-    }
-    return null;
-  }
-  async function buildDashboard(api, page, net, opts = {}) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
-    const log = (_a = opts.log) != null ? _a : (() => {
-    });
-    await page.loadAsync();
-    await api.setCurrentPageAsync(page);
-    const fonts2 = await loadLiveFonts(api);
-    const ctx = { api, fonts: fonts2 };
-    const programs = (_b = opts.programs) != null ? _b : PROGRAMS;
-    const source = (_e = (_d = (_c = opts.source) != null ? _c : programs.mul) != null ? _d : Object.values(programs)[0]) != null ? _e : "";
-    const programName = (_g = opts.programName) != null ? _g : (_f = Object.keys(programs).find((k) => programs[k] === source)) != null ? _f : "custom";
-    const old = findDashboard(page);
-    const at = (_h = opts.at) != null ? _h : old ? { x: old.x, y: old.y } : freeSpot(page);
-    if (old) {
-      old.remove();
-      log(`replaced the old ${DASHBOARD_NAME}`);
-    }
-    for (const n of [...page.children]) if (n.type === "COMPONENT" && n.name === PAD_CELL_NAME) n.remove();
-    const padCell = drawPadCell(ctx, page, at.x, at.y - PAD_CELL - 40);
-    const comp = api.createComponent();
-    page.appendChild(comp);
-    comp.name = DASHBOARD_NAME;
-    comp.resize(DASHBOARD_W, DASHBOARD_H);
-    comp.x = at.x;
-    comp.y = at.y;
-    comp.fills = [{ type: "SOLID", color: { r: 30 / 255, g: 30 / 255, b: 30 / 255 } }];
-    comp.clipsContent = true;
-    comp.description = "FigmaCPU Live: the gate-level CPU at every layer \u2014 program, microcode, datapath, gates \u2014 lit by variable bindings only. Built by the plugin (Live view); lane L2 wires ctl/step, ctl/run, ctl/stop, ctl/reset, ctl/pad/<i> and disk/<program>.";
-    rect(ctx, comp, "chrome/top", 0, 0, DASHBOARD_W, TOPBAR, { fill: L.chrome });
-    rect(ctx, comp, "chrome/top/edge", 0, TOPBAR - 1, DASHBOARD_W, 1, { fill: L.line });
-    rect(ctx, comp, "chrome/left", 0, TOPBAR, SIDE_L, DASHBOARD_H - TOPBAR, { fill: L.chrome });
-    rect(ctx, comp, "chrome/left/edge", SIDE_L - 1, TOPBAR, 1, DASHBOARD_H - TOPBAR, { fill: L.line });
-    const rx = DASHBOARD_W - SIDE_R;
-    rect(ctx, comp, "chrome/right", rx, TOPBAR, SIDE_R, DASHBOARD_H - TOPBAR, { fill: L.chrome });
-    rect(ctx, comp, "chrome/right/edge", rx, TOPBAR, 1, DASHBOARD_H - TOPBAR, { fill: L.line });
-    const chip = frame(ctx, comp, "logo", 16, 12, 24, 24, { fill: null, radius: 6, stroke: L.text2, strokeWeight: 1.5 });
-    rect(ctx, chip, "core", 7, 7, 10, 10, { fill: L.blue, radius: 2 });
-    text(ctx, comp, "FigmaCPU", 50, 15, { size: 14, font: "bold", name: "title" });
-    text(ctx, comp, "Live", 128, 15, { size: 14, color: L.text2, name: "title/live" });
-    const pill = frame(ctx, comp, "chip/stats", 172, 13, 392, 22, { fill: L.cell, radius: 11 });
-    text(ctx, pill, `${thousands(net.gates.length)} gates \xB7 ${thousands(net.netNames.length - 2)} wires \xB7 computed by Figma's prototype engine`, 0, 0, {
-      size: 9.5,
-      font: "mono",
-      color: L.text2,
-      w: 392,
-      h: 22,
-      align: "CENTER",
-      valign: "CENTER",
-      name: "label"
-    });
-    const bw = 92;
-    const bx = Math.round(DASHBOARD_W / 2 - (4 * bw + 3 * 8) / 2);
-    const step = button(ctx, comp, CTL_STEP, "Step", bx, 8, bw, 32, L.blue);
-    const run = button(ctx, comp, CTL_RUN, "Run", bx + (bw + 8), 8, bw, 32, "#14AE5C");
-    const stop = button(ctx, comp, CTL_STOP, "Stop", bx + 2 * (bw + 8), 8, bw, 32, "#F24822");
-    const reset = button(ctx, comp, CTL_RESET, "Reset", bx + 3 * (bw + 8), 8, bw, 32, L.cell, { outline: true });
-    vector(ctx, step, "icon", [[[22, 10], [22, 22]]], [[[12, 10], [20, 16], [12, 22]]], "#FFFFFF", 2);
-    vector(ctx, run, "icon", [], [[[14, 10], [23, 16], [14, 22]]], "#FFFFFF", 1);
-    rect(ctx, stop, "icon", 13, 11, 10, 10, { fill: "#FFFFFF", radius: 2 });
-    for (const b of [step, run, stop]) {
-      const label2 = b.children.find((c) => c.name === "label");
-      if (label2) {
-        label2.x = 16;
-        label2.resize(bw - 20, 32);
-      }
-    }
-    const ro = DASHBOARD_W - 380;
-    text(ctx, comp, "TICK", ro, 8, { size: 8.5, font: "semibold", color: L.text3, tracking: 8, name: "label/tick" });
-    const tickText = text(ctx, comp, "0", ro, 20, { size: 17, font: "monoBold", color: L.drive, name: varBound("ctl/tickText") });
-    text(ctx, comp, "PHASE", ro + 100, 8, { size: 8.5, font: "semibold", color: L.text3, tracking: 8, name: "label/phase" });
-    const phaseText = text(ctx, comp, "0", ro + 100, 20, { size: 17, font: "monoBold", color: L.text, name: varBound("ctl/phaseText") });
-    const running = frame(ctx, comp, varBound("ctl/running"), DASHBOARD_W - 156, 12, 140, 24, { fill: null, radius: 12, stroke: L.line2 });
-    text(ctx, running, "\u25CF  stopped", 0, 0, { size: 10, font: "semibold", color: L.text3, w: 140, h: 24, align: "CENTER", valign: "CENTER", name: "label" });
-    const runLit = frame(ctx, running, "lit", 0, 0, 140, 24, { fill: "#14AE5C", fillOpacity: 0.22, radius: 12, stroke: "#14AE5C" });
-    text(ctx, runLit, "\u25CF  RUNNING", 0, 0, { size: 10, font: "bold", color: "#3DDC84", w: 140, h: 24, align: "CENTER", valign: "CENTER", name: "label" });
-    runLit.visible = false;
-    const lx = 16;
-    const lw = SIDE_L - 32;
-    header(ctx, comp, "Disks", lx, 64);
-    text(ctx, comp, "click one to load it, in Present mode", lx + 52, 64, { size: 9, color: L.text3, name: "hint/disks" });
-    const disks = drawDisks(ctx, comp, lx, 84, lw, programs);
-    const loading = frame(ctx, comp, varBound("ctl/loading"), lx, 58, lw, 22, { fill: null });
-    const loadLit = frame(ctx, loading, "lit", 0, 0, lw, 22, { fill: L.mem, radius: 11 });
-    text(ctx, loadLit, "loading disk\u2026  (one chunk per hop)", 0, 0, { size: 10, font: "semibold", color: "#FFFFFF", w: lw, h: 22, align: "CENTER", valign: "CENTER", name: "label" });
-    loadLit.visible = false;
-    const listY = 84 + disks.size * 38 + 18;
-    header(ctx, comp, "Listing", lx, listY);
-    const { listing, program } = drawListing(ctx, comp, lx, listY + 20, lw, programName, source);
-    header(ctx, comp, "How it works", lx, DASHBOARD_H - 196);
-    text(
-      ctx,
-      comp,
-      `Every wire of the CPU is a BOOLEAN variable (${thousands(net.netNames.length - 2)} of them) and every one of its ${thousands(net.gates.length)} gates is a SET_VARIABLE action, run by Figma's prototype engine on each Step. Everything on this page is a visibility binding to those variables: it adds no gate and no action.`,
-      lx,
-      DASHBOARD_H - 176,
-      { size: 10, color: L.text3, w: lw, lineHeight: 15, name: "about" }
-    );
-    const px = rx + 16;
-    const pw = SIDE_R - 32;
-    header(ctx, comp, "Clock pad", px, 64);
-    text(ctx, comp, "sweep the mouse across the pad: every cell you enter runs one chunk of the tick", px, 80, { size: 9.5, color: L.text3, w: pw, lineHeight: 13, name: "hint/pad" });
-    const cols = (_i = opts.padCols) != null ? _i : 6;
-    const rows = (_j = opts.padRows) != null ? _j : 5;
-    const gapP = Math.max(2, Math.floor((pw - 12 - cols * PAD_CELL) / Math.max(1, cols - 1)));
-    const { pad, cells: padCells } = drawPad(ctx, comp, px, 112, cols, rows, PAD_CELL, gapP, padCell);
-    const outY = 112 + pad.height + 20;
-    header(ctx, comp, "Output", px, outY);
-    drawSevenSeg(ctx, comp, px, outY + 20, pw, 128);
-    text(ctx, comp, "OUT", px, outY + 160, { size: 9, font: "monoBold", color: L.text2, name: "label/out" });
-    lampRow(ctx, comp, bitsMsbFirst("OUT", 8), px + 32, outY + 158, 13, 17, L.out);
-    text(ctx, comp, "HALT", px + 32 + 8 * 17 + 14, outY + 160, { size: 9, font: "monoBold", color: L.text2, name: "label/halt" });
-    lamp(ctx, comp, "halted", px + 32 + 8 * 17 + 48, outY + 158, 13, L.out);
-    const memY = outY + 196;
-    header(ctx, comp, "Memory", px, memY);
-    text(ctx, comp, "16 bytes \xB7 code and data share it", px + 70, memY, { size: 9, color: L.text3, name: "hint/memory" });
-    const mem = drawRamMatrix(ctx, comp, px, memY + 20, pw, 15, 19);
-    const legY = memY + 20 + mem.height + 16;
-    header(ctx, comp, "Highlights", px, legY);
-    const legend = [
-      [L.blue, "microcode: row = opcode in IR, column = T-state; the cell where they cross is executing"],
-      [L.mem, "memory: the row MAR addresses"]
-    ];
-    let ly = legY + 20;
-    for (const [c, s] of legend) {
-      rect(ctx, comp, "legend/swatch", px, ly + 2, 10, 10, { fill: c, fillOpacity: 0.5, radius: 2, stroke: c });
-      const t = text(ctx, comp, s, px + 18, ly, { size: 9.5, color: L.text3, w: pw - 18, lineHeight: 13, name: "legend/text" });
-      ly += Math.max(18, t.height + 6);
-    }
-    header(ctx, comp, "Controls", px, DASHBOARD_H - 150);
-    text(
-      ctx,
-      comp,
-      "Step runs one chunk of a tick (a tick is several chunks: the viewer allows ~400 actions per event). Run loops by itself (~1 chunk/s). The pad clocks at mouse speed. Reset reloads the current disk; a disk loads its program in a few hops.",
-      px,
-      DASHBOARD_H - 130,
-      { size: 9.5, color: L.text3, w: pw, lineHeight: 14, name: "hint/controls" }
-    );
-    const cx = SIDE_L + 16;
-    const cw = DASHBOARD_W - SIDE_L - SIDE_R - 32;
-    drawDatapath(ctx, comp, cx, TOPBAR + 16, Math.max(cw, DATAPATH_W), DATAPATH_H);
-    const mc = drawMicrocode(ctx, comp, cx, TOPBAR + 16 + DATAPATH_H + 16, cw, 18);
-    const magY = mc.y + mc.height + 16;
-    const magH = DASHBOARD_H - 16 - magY;
-    const specs = (_k = opts.magnifiers) != null ? _k : DEFAULT_MAGNIFIERS;
-    const cellPages = (_l = opts.cellPages) != null ? _l : [page];
-    const mains = specs.map((s) => findCellComponent(cellPages, s.cell));
-    const magCard = frame(ctx, comp, "magnifiers", cx, magY, cw, magH, { fill: L.card, radius: 12, stroke: L.line });
-    text(ctx, magCard, "Magnifiers", 16, 12, { size: 13, font: "bold", name: "title" });
-    text(ctx, magCard, "instances of the real cell components from the canvas, each bound to one copy inside the CPU: its gates glow with the CPU's own wires", 112, 15, {
-      size: 10,
-      color: L.text3,
-      name: "subtitle"
-    });
-    const gapM = 16;
-    const avail = cw - 32 - gapM * (specs.length - 1);
-    const weights = mains.map((m) => Math.pow(m ? m.width : 500, 0.7));
-    const wsum = weights.reduce((a, b) => a + b, 0) || 1;
-    let mx = 16;
-    const magnifiers = [];
-    specs.forEach((s, i) => {
-      const w = Math.floor(avail * weights[i] / wsum);
-      magnifiers.push(drawMagnifier(ctx, magCard, s, mains[i], net, mx, 38, w, magH - 38 - 14));
-      mx += w + gapM;
-    });
-    const missingCells = specs.filter((_, i) => !mains[i]).map((s) => `cell/${s.cell}`);
-    if (missingCells.length) log(`magnifiers: ${missingCells.join(", ")} not found (Build hardware first)`);
-    const containers = Object.fromEntries(NET_KINDS.map((k) => [k, 0]));
-    const all = comp.findAll();
-    for (const n of all) {
-      const b = parseBound(n.name);
-      if (b && "children" in n && n.children.some((c) => c.name === "lit")) containers[b.kind]++;
-    }
-    const stats = {
-      w: DASHBOARD_W,
-      h: DASHBOARD_H,
-      layers: all.length,
-      containers,
-      padCells: padCells.length,
-      disks: disks.size,
-      magnifiers: magnifiers.map((m, i) => ({
-        cell: specs[i].cell,
-        prefix: specs[i].prefix,
-        found: !!m.instance,
-        scale: Math.round(m.scale * 1e3) / 1e3,
-        layers: m.instance ? m.instance.findAll().length + 1 : 0
-      })),
-      missingCells
-    };
-    log(`${DASHBOARD_NAME}: ${stats.layers} layers, ${Object.values(containers).reduce((a, b) => a + b, 0)} lit containers, ${magnifiers.filter((m) => m.instance).length} magnifier(s)`);
-    return {
-      component: comp,
-      nodes: { step, run, stop, reset, pad, padCells, padCell, disks, listing, program, tickText, phaseText, running, loading, magnifiers },
-      stats
-    };
-  }
-  function thousands(n) {
-    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  }
   function bindDashboard(root, net, varByNet, opts = {}) {
     const report = {
       bound: 0,
@@ -5160,6 +4289,17 @@
   var AROUND = 10;
   var DEFAULT_PROGRAM = "ptrout";
   var CUSTOM = "custom";
+  var BLOCKS = [
+    { cell: "REGFILE", prefix: "regs" },
+    { cell: "CONTROL", prefix: "ctrl" },
+    { cell: "BUSMUX", prefix: "busmux" },
+    { cell: "REG_W8", prefix: "ir" },
+    { cell: "ALU", prefix: "alu" },
+    { cell: "REG_W4", prefix: "mar" },
+    { cell: "REG_W8", prefix: "mdr" },
+    { cell: "PC4", prefix: "pc" },
+    { cell: "TSTATE", prefix: "tstate" }
+  ];
   var CLOSE = { type: "CLOSE" };
   var child = (n, pred) => {
     var _a;
@@ -5425,68 +4565,65 @@
         { trigger: onClick(), actions: acts }
       ];
     };
+    const fonts2 = await loadLiveFonts(api);
     await loadFonts2(api);
+    const ctx = { api, fonts: fonts2 };
     const at = { x: frame2.x, y: frame2.y + frame2.height + 400 };
-    log("drawing the magnified cells\u2026");
+    log("drawing the register file, ALU, bus mux, IR and control unit as gates\u2026");
     const before = new Set(page.children.map((n) => n.id));
-    const mags = DEFAULT_MAGNIFIERS.map((m) => m.cell);
-    await drawLibrary(
+    const drawn = await drawLibrary(
       cpuLibrary(),
       { gates: page, cells: page, cpu: page },
-      { only: mags, gateLabels: false }
+      { only: [...new Set(BLOCKS.map((b) => b.cell))], gateLabels: false }
     );
     const libNodes = page.children.filter((n) => !before.has(n.id));
     let lx = at.x;
-    const ly = at.y + 1200 + 200;
+    let ly = at.y;
+    let rowH = 0;
     for (const n of libNodes) {
+      if (lx > at.x + 12e3) {
+        lx = at.x;
+        ly += rowH + 200;
+        rowH = 0;
+      }
       n.x = lx;
       n.y = ly;
-      lx += n.width + 80;
+      lx += n.width + 120;
+      rowH = Math.max(rowH, n.height);
       keep(n);
     }
     remember();
-    await breathe2();
-    log("drawing the dashboard\u2026");
-    const dash = await buildDashboard(api, page, net, {
-      at,
-      source: PROGRAMS[bootName],
-      programName: bootName,
-      programs: PROGRAMS,
-      cellPages: [page],
-      log
-    });
-    const comp = keep(dash.component);
-    comp.name = `${PREFIX}Dashboard`;
-    keep(dash.nodes.padCell);
-    remember();
-    const report = bindDashboard(comp, net, varByNet, { ctl });
-    log(
-      `bound ${report.bound} lights${report.unbound.length ? `, ${report.unbound.length} without a variable` : ""}`
-    );
-    if (report.missingVars.length)
-      log(`texts without a variable: ${report.missingVars.join(", ")}`);
-    const pad = comp.findOne((n) => n.name === CTL_PAD);
-    if (pad) pad.visible = false;
-    for (const t of comp.findAll(
-      (n) => n.type === "TEXT" && (n.name === "hint/pad" || n.characters === "Clock pad")
-    ))
-      t.visible = false;
+    for (const g of drawn.gates.values()) {
+      if (before.has(g.id)) continue;
+      const l = g.children.find((c) => c.name === "lit");
+      if (!l) continue;
+      try {
+        l.fills = [{ type: "SOLID", color: { r: 1, g: 0.86, b: 0.2 }, opacity: 0.85 }];
+        l.strokes = [{ type: "SOLID", color: { r: 1, g: 0.92, b: 0.35 } }];
+        l.strokeWeight = 4;
+      } catch (e) {
+      }
+    }
+    const cellOf = (name) => {
+      var _a2, _b2;
+      return (_b2 = (_a2 = drawn.cells.get(name)) != null ? _a2 : page.children.find((n) => n.type === "COMPONENT" && n.name === `cell/${name}`)) != null ? _b2 : null;
+    };
     await breathe2();
     const W = frame2.width;
     const H = frame2.height;
-    const overlay = (name, label2, stop, i) => {
+    const overlay = (name, label2, stop2, i) => {
       const f = keep(api.createFrame());
       page.appendChild(f);
       f.name = `${PREFIX}${name}`;
       f.resize(W, H);
-      f.x = at.x + 2e3 + i % 4 * (W + 80);
-      f.y = at.y + Math.floor(i / 4) * (H + 80);
+      f.x = at.x + i % 4 * (W + 80);
+      f.y = ly + rowH + 400 + Math.floor(i / 4) * (H + 80);
       f.fills = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 0.01 }];
       f.clipsContent = true;
       const pill = api.createFrame();
       f.appendChild(pill);
       pill.name = "pill";
-      pill.resize(stop ? 320 : 260, 44);
+      pill.resize(stop2 ? 320 : 260, 44);
       pill.x = Math.round((W - pill.width) / 2);
       pill.y = H - 44 - 28;
       pill.cornerRadius = 10;
@@ -5511,26 +4648,26 @@
       t.fills = [{ type: "SOLID", color: hex2("#E6E6E6") }];
       t.x = 16;
       t.y = Math.round((44 - t.height) / 2);
-      let button2 = null;
-      if (stop) {
-        button2 = api.createFrame();
-        pill.appendChild(button2);
-        button2.name = "stop";
-        button2.resize(72, 28);
-        button2.x = pill.width - 72 - 8;
-        button2.y = 8;
-        button2.cornerRadius = 6;
-        button2.fills = [{ type: "SOLID", color: hex2("#E5484D") }];
-        const s2 = api.createText();
-        button2.appendChild(s2);
-        s2.fontName = { family: "Inter", style: "Medium" };
-        s2.fontSize = 12;
-        s2.characters = "Stop";
-        s2.fills = [{ type: "SOLID", color: hex2("#FFFFFF") }];
-        s2.x = Math.round((72 - s2.width) / 2);
-        s2.y = Math.round((28 - s2.height) / 2);
+      let button3 = null;
+      if (stop2) {
+        button3 = api.createFrame();
+        pill.appendChild(button3);
+        button3.name = "stop";
+        button3.resize(72, 28);
+        button3.x = pill.width - 72 - 8;
+        button3.y = 8;
+        button3.cornerRadius = 6;
+        button3.fills = [{ type: "SOLID", color: hex2("#E5484D") }];
+        const s = api.createText();
+        button3.appendChild(s);
+        s.fontName = { family: "Inter", style: "Medium" };
+        s.fontSize = 12;
+        s.characters = "Stop";
+        s.fills = [{ type: "SOLID", color: hex2("#FFFFFF") }];
+        s.x = Math.round((72 - s.width) / 2);
+        s.y = Math.round((28 - s.height) / 2);
       }
-      return { f, button: button2 };
+      return { f, button: button3 };
     };
     const runs = chunks.map(
       (_, k) => overlay(`Run ${k + 1}`, `Running \xB7 chunk ${k + 1} of ${K}`, true, k)
@@ -5579,120 +4716,114 @@
       ...startLoad(e),
       navigateWith(loadOv[0].f.id, "OVERLAY")
     ];
-    const named = (name) => comp.findAll(
-      (n) => n.name === name && !insideInstance(n, comp)
-    );
-    const stackOf = (name, count, visibleBy) => {
-      const base = need(named(name)[0], `dashboard layer ${name}`);
-      const out = [base];
-      const parent = base.parent;
-      for (let i = 1; i < count; i++) {
-        const c = base.clone();
-        parent.appendChild(c);
-        c.x = base.x;
-        c.y = base.y;
-        out.push(c);
-      }
-      out.forEach((b, i) => bindVisible(b, visibleBy(i)));
-      return out;
-    };
-    const steps = stackOf(CTL_STEP, K, phaseIs);
-    for (const [k, b] of steps.entries())
-      await react(b, `Step ${k + 1}`, tapActs(chunkEvent(k)));
-    const runButtons = stackOf(CTL_RUN, K, phaseIs);
-    for (const [k, b] of runButtons.entries())
-      await react(
-        b,
-        `Run ${k + 1}`,
-        tapActs([set(running, true), navigateWith(runs[k].f.id, "OVERLAY")])
-      );
-    for (const b of named(CTL_STOP))
-      await react(b, "Stop", tapActs([set(running, false)]));
-    const resets = stackOf(CTL_RESET, disks.length, (e) => cv(`ctl/diskIs/${e}`));
-    for (const [e, b] of resets.entries())
-      await react(b, `Reset (${disks[e].name})`, tapActs(loadClick(e)));
-    for (const [e, d] of disks.entries())
-      for (const b of named(diskName(d.name)))
-        await react(b, `disk ${d.name}`, tapActs(loadClick(e)));
-    await breathe2();
     const x0 = canvas.x;
     const y0 = canvas.y;
     const vw = right.x + right.width - x0;
     const vh = frame2.height - y0;
-    const root = keep(api.createFrame());
-    app.appendChild(root);
-    root.name = `${PREFIX}tab`;
-    root.resize(vw, vh);
-    root.x = x0;
-    root.y = y0;
-    root.fills = [];
-    root.clipsContent = true;
+    const root = keep(frame(ctx, app, `${PREFIX}tab`, x0, y0, vw, vh, { clip: true }));
     bindVisible(root, tabVar);
-    const view = api.createFrame();
-    root.appendChild(view);
-    view.name = `${PREFIX}view`;
-    view.resize(vw, vh);
-    view.x = 0;
-    view.y = 0;
-    view.fills = [{ type: "SOLID", color: hex2("#1E1E1E") }];
+    const view = frame(ctx, root, `${PREFIX}view`, 0, 0, vw, vh, { fill: L.bg, clip: true });
     bindVisible(view, cv("view/show"));
     await react(view, "view", blockAll());
-    const inst = comp.createInstance();
-    view.appendChild(inst);
-    inst.name = `${PREFIX}Live`;
-    const s = Math.min((vw - 24) / comp.width, (vh - 56) / comp.height);
-    if ("rescale" in inst) inst.rescale(s);
-    else inst.resize(comp.width * s, comp.height * s);
-    inst.x = Math.round((vw - comp.width * s) / 2);
-    inst.y = 44;
-    const toggle = (parent, name, label2, x, y) => {
-      const b = api.createFrame();
-      parent.appendChild(b);
-      b.name = `${PREFIX}${name}`;
-      b.resize(10, 28);
-      b.cornerRadius = 6;
-      b.fills = [{ type: "SOLID", color: hex2("#2C2C2C") }];
-      b.strokes = [{ type: "SOLID", color: hex2("#444444") }];
-      const t = api.createText();
-      b.appendChild(t);
-      t.fontName = { family: "Inter", style: "Medium" };
-      t.fontSize = 12;
-      t.characters = label2;
-      t.fills = [{ type: "SOLID", color: hex2("#E6E6E6") }];
-      b.resize(Math.ceil(t.width) + 24, 28);
-      t.x = 12;
-      t.y = Math.round((28 - t.height) / 2);
-      b.x = x - b.width;
-      b.y = y;
+    const M = 10;
+    text(ctx, view, "Leila's CPU \xB7 every gate lights while its output is 1", M + 4, 12, { size: 13, font: "semibold", name: "title" });
+    const button2 = (parent, name, label2, x, y, w, fill) => {
+      const b = frame(ctx, parent, name, x, y, w, 26, { fill, radius: 6 });
+      text(ctx, b, label2, 0, 0, { size: 11, font: "semibold", w, h: 26, align: "CENTER", valign: "CENTER", name: "label" });
       return b;
     };
-    const title = api.createText();
-    view.appendChild(title);
-    title.fontName = { family: "Inter", style: "Medium" };
-    title.fontSize = 13;
-    title.characters = "Leila's CPU \xB7 2,296 gates running in Figma \xB7 LDR/STR pointers";
-    title.fills = [{ type: "SOLID", color: hex2("#E6E6E6") }];
-    title.x = inst.x;
-    title.y = 14;
+    const BY = 40;
+    const bx = M + 4;
+    const steps = chunks.map(() => button2(view, CTL_STEP, "Step", bx, BY, 60, "#2F6FED"));
+    const runButtons = chunks.map(() => button2(view, CTL_RUN, "Run", bx + 66, BY, 60, "#14AE5C"));
+    const stop = button2(view, CTL_STOP, "Stop", bx + 132, BY, 60, "#E5484D");
+    const resets = disks.map(() => button2(view, CTL_RESET, "Reset", bx + 198, BY, 60, "#4A4A4A"));
+    steps.forEach((b, k) => bindVisible(b, phaseIs(k)));
+    runButtons.forEach((b, k) => bindVisible(b, phaseIs(k)));
+    resets.forEach((b, e) => bindVisible(b, cv(`ctl/diskIs/${e}`)));
+    for (const [k, b] of steps.entries()) await react(b, `Step ${k + 1}`, tapActs(chunkEvent(k)));
+    for (const [k, b] of runButtons.entries())
+      await react(b, `Run ${k + 1}`, tapActs([set(running, true), navigateWith(runs[k].f.id, "OVERLAY")]));
+    await react(stop, "Stop", tapActs([set(running, false)]));
+    for (const [e, b] of resets.entries()) await react(b, `Reset (${disks[e].name})`, tapActs(loadClick(e)));
+    text(ctx, view, `phase (of ${K})`, bx + 270, BY - 4, { size: 9, color: L.text3 });
+    text(ctx, view, "0", bx + 270, BY + 8, { size: 16, font: "bold", name: "var/ctl/phaseText" });
+    text(ctx, view, "ticks", bx + 340, BY - 4, { size: 9, color: L.text3 });
+    text(ctx, view, "0", bx + 340, BY + 8, { size: 16, font: "bold", color: L.drive, name: "var/ctl/tickText" });
+    const px0 = bx + 410;
+    const chipW = 58;
+    const perRow = Math.max(1, Math.floor((vw - M - px0 + 4) / (chipW + 4)));
+    for (const [e, d] of disks.entries()) {
+      const chip = frame(ctx, view, diskName(d.name), px0 + e % perRow * (chipW + 4), 36 + Math.floor(e / perRow) * 22, chipW, 19, { fill: L.block, radius: 5 });
+      const on = rect(ctx, chip, "on", 0, 0, chipW, 19, { fill: L.blue, fillOpacity: 0.5, radius: 5 });
+      bindVisible(on, cv(`ctl/diskIs/${e}`));
+      text(ctx, chip, d.name, 0, 0, { size: 9.5, font: "medium", w: chipW, h: 19, align: "CENTER", valign: "CENTER" });
+      await react(chip, `program ${d.name}`, tapActs(loadClick(e)));
+    }
+    const TOP = Math.max(BY + 34, 36 + Math.ceil(disks.length / perRow) * 22 + 6);
+    await breathe2();
+    const windows = [];
+    const windowOf = (name, title, x, y, w, h, blocks) => {
+      const f = frame(ctx, view, `window/${name}`, x, y, w, h, { fill: "#1E1E1E", radius: 10, stroke: "#40424D", clip: true });
+      text(ctx, f, title, 10, 7, { size: 12, font: "bold", color: "#BFC4D1" });
+      const slot = Math.floor((w - 8) / blocks.length);
+      blocks.forEach((b, i) => {
+        const main = cellOf(b.cell);
+        const mag = frame(ctx, f, magName(b.prefix), 4 + i * slot, 28, slot, h - 32, { clip: true });
+        windows.push(mag);
+        if (!main) {
+          text(ctx, mag, `cell/${b.cell} is missing`, 8, 8, { size: 10, color: L.text3 });
+          return;
+        }
+        const inst = main.createInstance();
+        mag.appendChild(inst);
+        const sc = Math.min((slot - 8) / main.width, (h - 40) / main.height);
+        if ("rescale" in inst) inst.rescale(sc);
+        else inst.resize(main.width * sc, main.height * sc);
+        inst.x = Math.round((slot - main.width * sc) / 2);
+        inst.y = Math.round((h - 32 - main.height * sc) / 2);
+      });
+      return f;
+    };
+    const block2 = (prefix) => need(BLOCKS.find((b) => b.prefix === prefix), `block ${prefix}`);
+    const gw = vw - 2 * M;
+    const gh = vh - TOP - M;
+    const rowA = Math.round((gh - M) * 0.56);
+    const rowB = gh - M - rowA;
+    const cols = (fr) => {
+      const w = gw - (fr.length - 1) * M;
+      const out = [];
+      let x = M;
+      for (const f of fr) {
+        out.push(x);
+        x += Math.round(w * f) + M;
+      }
+      return { xs: out, ws: fr.map((f, i) => i === fr.length - 1 ? M + gw - out[i] : Math.round(w * f)) };
+    };
+    const a = cols([0.36, 0.26, 0.38]);
+    windowOf("registers", "Register file R0\u2013R3 + read mux", a.xs[0], TOP, a.ws[0], rowA, [block2("regs")]);
+    windowOf("control", "Control unit (opcode decoder)", a.xs[1], TOP, a.ws[1], rowA, [block2("ctrl")]);
+    windowOf("bus", "Bus mux + IR", a.xs[2], TOP, a.ws[2], rowA, [block2("busmux"), block2("ir")]);
+    const b2 = cols([0.44, 0.3, 0.26]);
+    windowOf("alu", "ALU \xB7 adder/subtract, AND/OR/XOR, result mux", b2.xs[0], TOP + rowA + M, b2.ws[0], rowB, [block2("alu")]);
+    windowOf("memory", "MAR + MDR \xB7 the pointer's way to memory", b2.xs[1], TOP + rowA + M, b2.ws[1], rowB, [block2("mar"), block2("mdr")]);
+    windowOf("sequencer", "PC + T-state", b2.xs[2], TOP + rowA + M, b2.ws[2], rowB, [block2("pc"), block2("tstate")]);
+    const report = bindDashboard(view, net, varByNet, { ctl });
+    log(`bound ${report.bound} lights${report.unbound.length ? `, ${report.unbound.length} without a variable` : ""}`);
+    if (report.missingVars.length) log(`texts without a variable: ${report.missingVars.join(", ")}`);
+    await breathe2();
+    const toggle = (parent, name, label2, x, y) => {
+      const b = frame(ctx, parent, `${PREFIX}${name}`, 0, y, 10, 28, { fill: L.chrome, radius: 6, stroke: L.line2 });
+      const t = text(ctx, b, label2, 12, 0, { size: 12, font: "medium", h: 28, valign: "CENTER" });
+      b.resize(Math.ceil(t.width) + 24, 28);
+      b.x = x - b.width;
+      return b;
+    };
     const toOs = toggle(view, "show OS chip", "OS chip \u203A", vw - 16, 8);
-    await react(
-      toOs,
-      "OS chip",
-      tapActs([set(cv("view/show"), false), set(cv("view/hide"), true)])
-    );
-    const back = toggle(
-      root,
-      "show Leila CPU",
-      "\u2039 Leila's CPU",
-      canvas.width - 16,
-      8
-    );
+    await react(toOs, "OS chip", tapActs([set(cv("view/show"), false), set(cv("view/hide"), true)]));
+    const back = toggle(root, "show Leila CPU", "\u2039 Leila's CPU", canvas.width - 16, 8);
     bindVisible(back, cv("view/hide"));
-    await react(
-      back,
-      "Leila's CPU",
-      tapActs([set(cv("view/show"), true), set(cv("view/hide"), false)])
-    );
+    await react(back, "Leila's CPU", tapActs([set(cv("view/show"), true), set(cv("view/hide"), false)]));
     remember();
     const worst = (acts) => worstCase(acts);
     const perEvent = {
@@ -5732,7 +4863,7 @@
     return {
       frame: frame2,
       view,
-      dashboard: comp,
+      windows,
       variables: control.length + netVars.length,
       chunks: K,
       loadHops: loads.length,
@@ -5748,11 +4879,6 @@
       controls: new Map([...ctl].map(([n, v]) => [n, v.id])),
       overlays: { runs: runs.map((r) => r.f), loads: loadOv.map((l) => l.f) }
     };
-  }
-  function insideInstance(n, top) {
-    for (let q = n.parent; q && q !== top; q = q.parent)
-      if (q.type === "INSTANCE") return true;
-    return false;
   }
   function countAll(actions) {
     let n = 0;
