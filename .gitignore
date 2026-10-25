@@ -12,3 +12,4 @@ osflow/spike/dist/
 silicon/release/
 silicon/spike/dist/
 silicon/tools/connector/out/
+silicon/livetab/plugin/dist/page.js
