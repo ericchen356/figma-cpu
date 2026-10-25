@@ -1,6 +1,6 @@
-// Builds silicon's general-purpose 8-bit CPU (silicon/src/cpu: 2,285 gates, 16 bytes of latch
-// RAM, programs count / mul / fib) into a Figma file, with no plugin, in a form that runs whole
-// programs in Present mode.
+// Builds silicon's general-purpose 8-bit CPU (silicon/src/cpu: 4,803 gates, 64 bytes of latch
+// RAM, programs count / mul / fib / perceptron) into a Figma file, with no plugin, in a form that
+// runs whole programs in Present mode.
 //
 // The architecture is the gate netlist itself; what is optimized is how a clock tick reaches
 // Figma. A full tick evaluates about 4,200 gates, past what one event survives (the viewer runs a
@@ -23,7 +23,7 @@
 // into the expressions that read them, a flip-flop is written once (its slave), and a heavy tick is
 // split by the bits of the mux it spends its writes on; and Step's large reaction names none of the
 // variables a run changes (it works on shadow copies, which small reactions copy in and back).
-import { assemble, PROGRAMS, RAM_BYTES } from "../../silicon/src/isa";
+import { assemble, OUT_ADDR, PROGRAMS, RAM_BYTES } from "../../silicon/src/isa";
 import { cpuNetlist, PROBES, ramBit } from "../../silicon/src/cpu";
 import { powerOn } from "../../silicon/src/compile";
 import { NET0, NET1, type FlatNetlist } from "../../silicon/src/netlist/types";
@@ -78,6 +78,8 @@ export interface CpuGenerated {
     overlays: string[];
     /** The link of Step's chain that runs the tick's body. */
     stepBody: string;
+    /** Step's body in pieces, one overlay event each (the first is stepBody). */
+    stepBodies: string[];
     programs: Record<string, string>;
   };
   /** The variables holding the tick counter. */
@@ -110,7 +112,7 @@ const PIECE = 64;
 /** The most actions one event may run (the viewer runs them recursively; see deploy/README.md). */
 export const EVENT_BUDGET = 600;
 const TIMEOUT = 0.001;
-const LOADS = ["count", "mul", "fib"] as const;
+const LOADS = ["count", "mul", "fib", "perceptron"] as const;
 const COLORS: Record<string, string> = {
   A: "#3DDC84",
   O: "#29ADFF",
@@ -194,7 +196,7 @@ export function generateCpu(
   );
   // ... and Run's ticks keep the gates they cannot fold in temporaries of their own, not in the
   // gates' wires, which Step's large reaction names
-  const TEMPS = 64;
+  const TEMPS = 256;
   const tmp0 = net.netNames.length + shadowed.length;
   for (let k = 0; k < TEMPS; k++)
     wireOf.set(tmp0 + k, ids.length + panel.length + shadowed.length + k);
@@ -437,6 +439,7 @@ export function generateCpu(
   const COUNT = "@inc:cpu/ticks";
   let worstTick = 0;
   let sumTick = 0;
+  const stepLists: Array<{ c: Case; list: PlanAction[] }> = [];
   let worstFast = 0;
   const worstAt = new Array<number>(8).fill(0);
   const ticks: CpuGenerated["ticks"] = [];
@@ -453,6 +456,7 @@ export function generateCpu(
       worstTick = Math.max(worstTick, list.length);
       sumTick += list.length;
       addBody(full, c, acts(list));
+      stepLists.push({ c, list });
       const skip = halts ? undefined : new Set(tMasters);
       let best = [{ c, list: plan(c, true, skip) }];
       for (const bits of [marBits, irLow]) {
@@ -589,17 +593,34 @@ export function generateCpu(
         .map((s): [number, number] => [s.q, s.master!.q]),
     ),
   ];
+  // The body runs in pieces, one event each: every tick's gates in evaluation order, cut every
+  // `size` actions, so a piece reads only wires an earlier one wrote, and its IFs are judged on
+  // the shadows, which no piece changes. One piece holds most ticks; a read of the 64-byte RAM
+  // evaluates the whole read plane, more than one event may run. The last piece sets RAN.
+  const bodyPieces = (size: number) => {
+    const n = Math.max(1, Math.ceil(worstTick / size));
+    return Array.from({ length: n }, (_, m) => {
+      const bodies = new Map<string, Case[]>();
+      let longest = 0;
+      for (const { c, list } of stepLists) {
+        const piece = list.slice(m * size, (m + 1) * size);
+        longest = Math.max(longest, piece.length);
+        if (piece.length || m === n - 1) addBody(bodies, c, acts(piece));
+      }
+      const ifs = ifsOf(bodies, not(ref(RAN)), m === n - 1, (id) => shadowOf.get(id) ?? id);
+      // executed: RAN's reset (the first), every IF, the longest piece, RAN (the last), the swap
+      return { ...ifs, cost: (m === 0 ? 1 : 0) + ifs.count + longest + (m === n - 1 ? 1 : 0) + 1 };
+    });
+  };
+  let stepIfs = bodyPieces(Math.max(1, worstTick));
+  for (let n = 2; Math.max(...stepIfs.map((p) => p.cost)) > EVENT_BUDGET && n <= worstTick; n++)
+    stepIfs = bodyPieces(Math.ceil(worstTick / n));
   const stepChain = Array.from(
-    { length: stepSync.length + 1 + stepFinish.length },
+    { length: stepSync.length + stepIfs.length + stepFinish.length },
     (_, i) => `${STEP} ${i + 1}`,
   );
-  const stepBody = stepChain[stepSync.length];
-  const stepIfs = ifsOf(
-    full,
-    not(ref(RAN)),
-    true,
-    (id) => shadowOf.get(id) ?? id,
-  );
+  const stepBodies = stepChain.slice(stepSync.length, stepSync.length + stepIfs.length);
+  const stepBody = stepBodies[0];
   const stepMoves = tNext
     .map(
       (list, j) =>
@@ -610,7 +631,7 @@ export function generateCpu(
   // the moves (one of them taken), the counter, the text, the close
   const stepCost = Math.max(
     PIECE + 1,
-    1 + stepIfs.count + worstTick + 1 + 1,
+    ...stepIfs.map((p) => p.cost),
     stepFinish[stepFinish.length - 1].length +
       tNext.length +
       Math.max(...tNext.map((l) => l.length)) +
@@ -662,7 +683,7 @@ export function generateCpu(
   ).join(";");
   const fastGroups = copy(0).reduce((n, s) => n + s.count, 0);
   const groups = [...full.keys()];
-  const dispatchStored = stepIfs.stored;
+  const dispatchStored = stepIfs.reduce((n, p) => n + p.stored, 0);
 
   // ---------- reset and program loading: every latch to its power-on value ----------
   // only latch outputs hold state (each tick recomputes the gates it reads, the latches' own inner
@@ -844,8 +865,11 @@ export function generateCpu(
     ["N", "N"],
     ["HALTED", "HALTED"],
   ];
+  // RAM rows: two columns of RAM_BYTES / 2 to the right of the registers
+  const RAM_PER_COL = Math.ceil(RAM_BYTES / 2);
+  const RAM_PITCH = 21;
   const W = 1180;
-  const H = 640;
+  const H = Math.max(640, 160 + RAM_PER_COL * RAM_PITCH + 20);
   const root = {
     t: "f",
     n: ROOT,
@@ -856,7 +880,7 @@ export function generateCpu(
     ch: [
       text(
         "title",
-        "An 8-bit CPU of 2,285 gates. Every lamp is a register bit; each clock tick runs through the gates.",
+        `An 8-bit CPU of ${net.gates.length.toLocaleString("en-US")} gates. Every lamp is a register bit; each clock tick runs through the gates.`,
         24,
         18,
         15,
@@ -875,12 +899,12 @@ export function generateCpu(
       button("instruction", "Instruction  ▸▸", 176, 76, 160, "#2F6FED"),
       button("run", "Run  ▸▸▸", 348, 76, 116, "#1E9E5A"),
       ...LOADS.map((p, i) =>
-        button(`load/${p}`, `Load ${p}`, 488 + i * 116, 76, 106, "#555B66"),
+        button(`load/${p}`, `Load ${p}`, 488 + i * 122, 76, 116, "#555B66"),
       ),
       {
         t: "x",
         n: "ticks",
-        x: 860,
+        x: 984,
         y: 84,
         tx: ["ticks 0", 18, 1, "#FFB000"],
         vs: "cpu/ticks" + "Text",
@@ -888,7 +912,7 @@ export function generateCpu(
       {
         t: "x",
         n: "program",
-        x: 1010,
+        x: 1090,
         y: 86,
         tx: ["mul", 14, 1, "#8A8F98"],
         vs: "cpu/program",
@@ -907,7 +931,7 @@ export function generateCpu(
       ),
       text(
         "ramLabel",
-        "RAM: 16 bytes of latches (address 15 is the OUT port)",
+        `RAM: ${RAM_BYTES} bytes of latches (address ${OUT_ADDR} is the OUT port)`,
         700,
         140,
         12,
@@ -918,8 +942,8 @@ export function generateCpu(
         ...row(
           `${a.toString(16).toUpperCase()}`,
           { name: `__ram${a}`, width: 8 },
-          700,
-          160 + a * 26,
+          700 + Math.floor(a / RAM_PER_COL) * 240,
+          160 + (a % RAM_PER_COL) * RAM_PITCH,
           "#29ADFF",
         ),
         n: `ram/${a.toString(16).toUpperCase()}`,
@@ -931,7 +955,7 @@ export function generateCpu(
     n: string;
     ch?: Array<{ n: string; v?: number }>;
   }>) {
-    const m = /^ram\/([0-9A-F])$/.exec(r.n);
+    const m = /^ram\/([0-9A-F]+)$/.exec(r.n);
     if (!m || !r.ch) continue;
     const a = parseInt(m[1], 16);
     for (const lit of r.ch.filter((c) => /^bit\d$/.test(c.n)))
@@ -1090,7 +1114,7 @@ export function generateCpu(
   const show = "@show:cpu/ticksText:cpu/ticks:ticks ";
   const stepCodes = [
     ...stepSync.map((p) => acts(p)),
-    `${w(RAN)}:F;${stepIfs.code}`,
+    ...stepIfs.map((p, m) => (m === 0 ? `${w(RAN)}:F;${p.code}` : p.code)),
     ...stepFinish.map((p, i) =>
       i < stepFinish.length - 1
         ? acts(p)
@@ -1229,6 +1253,7 @@ export function generateCpu(
       run: "/run",
       overlays: [...RUN, ...stepChain, ...loadChain],
       stepBody,
+      stepBodies,
       programs: Object.fromEntries(LOADS.map((p) => [p, `/load/${p}`])),
     },
     counters: { ticks: "cpu/ticks", text: "cpu/ticksText" },
