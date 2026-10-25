@@ -20,11 +20,14 @@ import { CELL_PREFIX } from "../../src/figma/names";
 import { PROGRAMS } from "../../src/isa";
 import { flatten } from "../../src/netlist/flatten";
 import { type FlatNetlist, GATE_PREFIX, NET1 } from "../../src/netlist/types";
-import { apply, type ApplyOptions, bindVisible, plan, type PlanOptions, type PrototypePlan } from "../../src/prototype";
+import { apply, type ApplyOptions, type ApplyResult, bindVisible, plan, type PlanOptions, type PrototypePlan } from "../../src/prototype";
 import { loadFonts } from "../../src/prototype/draw";
 import { buildStepFrame, child, dismantleStepFrame, findCell, liftCells, restore, setFlow, STEP_FRAME } from "./canvas";
 import { type ClockSession, PluginClock, type VarRef } from "./clock";
+import { DeviceBus, IN_ADDR } from "./devices";
 import type { BuildStats, CompileStats, DocStatus, LogLevel, ToMain, ToUi } from "./messages";
+import { buildOsDemo, figmaLayerPort, type LayerPort, OsHost, selectedNames } from "./os-host";
+import { buildLiveView, type LiveCardResult } from "./live-card";
 import { ensureFrontPanel, findFrontPanel, panelLits } from "./panel";
 import { AsmFailed, assembleOrThrow, powerOnWith, programName, verifyAgainstModel, type VerifyResult } from "./program";
 import {
@@ -42,7 +45,7 @@ import {
   type Where,
 } from "./where";
 
-/** Plan name: variable collection "CPU" (+ "CPU · 2" …), frames "CPU · Control", "CPU · Run A/B". */
+/** Plan name: variable collection "CPU" (+ "CPU · 2" …), frames "CPU · Control", "CPU · Run A/B" (+ "CPU · Reset A/B" when the reset is chunked). */
 export const NAME = "CPU";
 const CPU_MODULE = "CPU";
 const DOC_PROGRAM = "silicon.program";
@@ -67,6 +70,8 @@ interface Session {
   source: string;
   /** The plan options of the compile (Load program re-plans with them). */
   planOpts: Partial<PlanOptions>;
+  /** apply()'s result, when this session compiled (the Live view's controls reuse its runtime). */
+  applied?: ApplyResult;
 }
 
 export interface AppOptions {
@@ -75,6 +80,8 @@ export interface AppOptions {
   now?: () => number;
   /** Plugin clock frame pause, ms (tests use 0). */
   clockFrameMs?: number;
+  /** Where the OS card writes layer properties (default: figmaLayerPort on the current page). */
+  layers?: LayerPort;
 }
 
 export interface BuildOptions {
@@ -108,6 +115,10 @@ export class SiliconApp {
   private busy: string | null = null;
   private session: Session | null = null;
   readonly clock: PluginClock;
+  /** Input byte at RAM[IN_ADDR], poked by the plugin clock at the next tick boundary. */
+  readonly devices = new DeviceBus();
+  /** The OS card (os-host.ts): RAM → layers after each frame, keymap events → RAM[14]. */
+  readonly os: OsHost;
   private readonly now: () => number;
   private readonly breathe: () => Promise<void>;
 
@@ -118,11 +129,28 @@ export class SiliconApp {
   ) {
     this.now = opts.now ?? (() => Date.now());
     this.breathe = opts.yield ?? (() => new Promise((r) => setTimeout(r, 0)));
+    this.os = new OsHost({
+      bus: this.devices,
+      port: opts.layers ?? figmaLayerPort(api),
+      log: (level, text) => this.log(level, text),
+      post: (m) => this.post(m),
+      loadProgram: (source) => this.loadProgram(source),
+    });
     this.clock = new PluginClock(
       () => this.clockSession(),
-      (status) => this.post({ type: "clock", status }),
-      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`) },
+      (status) => {
+        this.post({ type: "clock", status });
+        this.os.frame();
+      },
+      { frameMs: opts.clockFrameMs, now: this.now, onError: (e) => this.log("error", `plugin clock stopped: ${errText(e)}`), devices: this.os },
     );
+    // Selecting a layer the OS keymap names counts as a click on it (Figma has no canvas click event for plugins).
+    if (typeof (api as Partial<PluginAPI>).on === "function")
+      api.on("selectionchange", () => {
+        if (!this.os.isActive) return;
+        const node = selectedNames(api).find((n) => n in (this.os.keymap.click ?? {}));
+        if (node) this.os.send({ type: "click", node });
+      });
   }
 
   // ---------- messages ----------
@@ -150,6 +178,30 @@ export class SiliconApp {
           return;
         case "verify":
           await this.task("Verify", () => this.verify(msg.source, msg.maxTicks));
+          return;
+        case "input": {
+          this.devices.input(msg.value);
+          const h = msg.value.toString(16).toUpperCase().padStart(2, "0");
+          this.log("info", `input ${h} → RAM[${IN_ADDR}]${this.clock.isRunning ? "" : " (applied at the next Step / Run)"}`);
+          return;
+        }
+        case "os-load":
+          await this.task("Load OS", () => this.loadOs(msg.manifest, msg.source, msg.bindings));
+          return;
+        case "os-run":
+          if (!this.os.isActive && msg.load) await this.task("Load OS", () => this.loadOs(msg.load!.manifest, msg.load!.source, msg.load!.bindings));
+          if (!this.os.isActive) return this.log("error", "Run OS: no OS loaded (Load OS first)");
+          if (this.busy) return this.log("error", `busy: ${this.busy} is still running`);
+          void this.clock.run(msg.tps ?? 0);
+          return;
+        case "os-event":
+          this.os.send(msg.event);
+          return;
+        case "os-demo":
+          await this.task("Build OS demo", () => this.osDemo());
+          return;
+        case "live":
+          await this.task("Build Live view", () => this.liveView());
           return;
         case "clock":
           if (msg.action === "pause") {
@@ -440,7 +492,12 @@ export class SiliconApp {
     this.progress("compile", 5, steps, "CPU · Step frame");
     await this.breathe();
     const sf = await this.phase("Step frame", () =>
-      buildStepFrame(this.api, page, cpu, res.frames.control, { title: TITLE, subtitle: subtitle(p, source), log: (m) => this.log("info", m) }),
+      buildStepFrame(this.api, page, cpu, res.frames.control, {
+        title: TITLE,
+        subtitle: subtitle(p, source),
+        ...(res.frames.resetA && res.frames.resetB ? { resetFrames: { a: res.frames.resetA, b: res.frames.resetB } } : {}),
+        log: (m) => this.log("info", m),
+      }),
     );
     try {
       setFlow(page, STEP_FRAME, sf.frame);
@@ -450,6 +507,7 @@ export class SiliconApp {
     if (where.single) await this.phase("labels", () => labelRegions(this.api, page, STEP_FRAME));
 
     this.session = await this.phase("variables", () => this.bindSession(net, schedule, p, source, planOpts));
+    this.session.applied = res;
     this.api.root.setPluginData(DOC_PROGRAM, source);
     remember(this.api, where);
 
@@ -493,6 +551,7 @@ export class SiliconApp {
     const bytes = assembleOrThrow(source);
     this.post({ type: "asm", errors: [] });
     this.clock.invalidate();
+    this.os.programLoaded(source);
     const s = await this.ensureSession(source);
     const old = new Map(s.plan.variables.map((v) => [v.net, v.init]));
     const p = this.plan(s.net, s.schedule, bytes, s.planOpts);
@@ -558,7 +617,7 @@ export class SiliconApp {
       for (const c of n.children) walk(c, true);
     };
     for (const c of page.children) {
-      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`].includes(c.name)) walk(c, true);
+      if ([`${NAME} · Control`, `${NAME} · Run A`, `${NAME} · Run B`, `${NAME} · Reset A`, `${NAME} · Reset B`, `${NAME} · Reset A (Step)`, `${NAME} · Reset B (Step)`].includes(c.name)) walk(c, true); // Reset A/B: the chunked reset's hops carry the power-on literals
       if (c.name === STEP_FRAME) {
         walk(c, false);
         const h = child(c as FrameNode, "header");
@@ -566,6 +625,59 @@ export class SiliconApp {
       }
     }
     return out;
+  }
+
+  // ---------- OS card (logic in os-host.ts) ----------
+
+  /** Load OS: validate, load the bytes like Load program, then sync the bound layers once. */
+  async loadOs(manifest: unknown, source: string, bindings: unknown) {
+    const r = await this.os.load(manifest, source, bindings);
+    if (r.loaded) {
+      await this.clock.step(0); // attaches the simulator: the first frame writes every bound property
+      await this.os.flush();
+    }
+    return r;
+  }
+
+  /** Build OS demo: the layers the OS names, in a frame "OS demo" beside the CPU (idempotent). */
+  async osDemo() {
+    if (!this.os.isActive) throw new Error("no OS loaded (Load OS first): the layer names come from its bindings");
+    const where = await locate(this.api, { build: true });
+    const page = where!.pages.cpu;
+    await this.api.setCurrentPageAsync(page);
+    const anchor = child(page, STEP_FRAME) ?? findCell(page, CPU_MODULE);
+    const r = await buildOsDemo(this.api, page, this.os.neededLayers(), anchor);
+    this.os.resync();
+    this.os.frame();
+    await this.os.flush();
+    this.log("ok", `OS demo: ${r.created.length ? `created ${r.created.join(", ")}` : "nothing to create"}${r.skipped.length ? `; already there: ${r.skipped.join(", ")}` : ""}`);
+    return r;
+  }
+
+  // ---------- Live view card (logic in live-card.ts) ----------
+
+  /** Build Live view: the Live dashboard on the CPU's page, bound to the compiled variables and
+   * wired for Present mode (needs a Compile; the controls need one in this session). */
+  async liveView(): Promise<LiveCardResult> {
+    const s = await this.ensureSession();
+    const where = await locate(this.api);
+    if (!where) throw new Error("no hardware found (no cell/CPU): Build hardware first");
+    const r = await buildLiveView({
+      api: this.api,
+      where,
+      net: s.net,
+      plan: s.plan,
+      vars: s.vars,
+      source: s.source,
+      ...(s.applied ? { applied: s.applied } : {}),
+      isOurCollection,
+      log: (level, text) => this.log(level, text),
+      progress: (done, total, label) => this.progress("live", done, total, label),
+      breathe: this.breathe,
+      now: this.now,
+    });
+    this.post({ type: "live", stats: r.stats });
+    return r;
   }
 
   // ---------- 5. plugin clock: see PluginClock; the session it runs on ----------

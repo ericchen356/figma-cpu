@@ -11,3 +11,4 @@ osflow/spike/dist/
 .scratch/
 silicon/release/
 silicon/spike/dist/
+silicon/tools/connector/out/

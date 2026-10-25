@@ -8,6 +8,9 @@
 // chunk through the dispatcher described at `Chunking` (types.ts): Step = one chunk, and
 // optionally "Step ×3" (MOUSE_DOWN + MOUSE_UP + ON_CLICK on one button) and ON_KEY_DOWN keys
 // on the frames. A tick completes when the phase wraps to 0.
+// Reset is chunked the same way: a Reset that restores every variable is one event of ~2,300 actions
+// for the whole CPU, past the 2001 at which the viewer died, so a big reset runs as a hop chain
+// through two extra frames (Reset A ⇄ Reset B, one dispatched chunk per hop) and returns to Control.
 // Plugin code only builds this; at run time Figma's prototype engine does all the work.
 import {
   COLORS,
@@ -33,6 +36,8 @@ import {
   type FigmaActionOptions,
   figmaActions,
   floatData,
+  guardReactions,
+  nestedConditional,
   increment,
   keyDown,
   mouseDown,
@@ -93,7 +98,9 @@ export interface ApplyResult {
   running: Variable;
   /** Chunked only: the phase (next chunk, FLOAT 0…chunks−1) and its text. */
   phase?: Variable;
-  frames: { control: FrameNode; runA: FrameNode; runB: FrameNode };
+  /** Chunked Reset only: its phase (next reset chunk, FLOAT 0…resetChunks−1). */
+  resetPhase?: Variable;
+  frames: { control: FrameNode; runA: FrameNode; runB: FrameNode; resetA?: FrameNode; resetB?: FrameNode };
   buttons: { step: FrameNode; run: FrameNode; reset: FrameNode; stopA: FrameNode; stopB: FrameNode; stepMulti?: FrameNode };
   /** Lit nodes bound to variables, and those skipped because their net has no variable. */
   bound: number;
@@ -103,6 +110,27 @@ export interface ApplyResult {
   /** Events per tick (1 unchunked) and the chunking used, if any. */
   chunks: number;
   chunking?: Chunking;
+  /** Events per Reset (1: one click, no extra frames). */
+  resetChunks: number;
+  resetChunking?: Chunking;
+  /** The event logic wired above, for runtimes that put the same machine behind more controls
+   * (src/prototype/live.ts). The exact action objects apply used; not stored in the file. */
+  runtime: ApplyRuntime;
+}
+
+export interface ApplyRuntime {
+  /** One Step: `ctl/phaseNow = phase`, then the dispatch blocks (chunked), or the whole tick. */
+  step: Action[];
+  /** Chunked only: the dispatch blocks, one top-level CONDITIONAL per chunk on `ctl/phaseNow`
+   * (AND-ed with `gate` if given). The event must set `ctl/phaseNow` first, as `step[0]` does. */
+  dispatch?: (gate?: VariableData) => Action[];
+  /** One Run-loop hop: one chunk (or tick) if running ∧ (¬halt ∨ mid-tick), then NAVIGATE to
+   * `next`; otherwise running = false and NAVIGATE to `home`. Flat (no nested conditional). */
+  hop: (next: string, home: string) => Action[];
+  /** What Reset does besides the nets: ticks, tick text, phase, running back to power-on. */
+  resetTail: Action[];
+  /** Every `ctl/*` variable apply created, by name. */
+  controls: Map<string, Variable>;
 }
 
 const DIGITS = 4;
@@ -111,14 +139,22 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const log = opts.log ?? (() => {});
   const page = opts.page ?? api.currentPage;
   const name = plan.name;
-  const frameNames = [`${name} · Control`, `${name} · Run A`, `${name} · Run B`];
+  const frameNames = [`${name} · Control`, `${name} · Run A`, `${name} · Run B`, `${name} · Reset A`, `${name} · Reset B`];
   const display = opts.tickDisplay ?? "concat";
-  const tickExtra = display === "digits" ? worstCase(digitsIncrement(range(DIGITS, "d"), range(DIGITS, "s"))) + 1 : display === "concat" ? 2 : 1;
+  // + 2: the flattened Run hop (see `loop`) spends one more action (the "go" snapshot) and a three-action tail conditional.
+  const tickExtra = (display === "digits" ? worstCase(digitsIncrement(range(DIGITS, "d"), range(DIGITS, "s"))) + 1 : display === "concat" ? 2 : 1) + 2;
   const cap = opts.maxActionsPerEvent ?? plan.maxActionsPerEvent ?? DEFAULT_MAX_ACTIONS_PER_EVENT;
   const chunking: Chunking | undefined = needsChunks(worstActions(plan.tick), cap, tickExtra)
     ? plan.chunking && plan.chunking.maxActionsPerEvent === cap && plan.chunking.tickExtra >= tickExtra
       ? plan.chunking
       : chunkTick(plan.tick, { maxActionsPerEvent: cap, tickExtra })
+    : undefined;
+
+  // Reset restores every variable (plan.reset) plus the control variables (the "tail"). Too big for one
+  // event under the cap → run it as chunks over a hop chain, like the Run loop.
+  const resetTailMax = 2 + (display === "concat" ? 1 : 0) + (display === "digits" ? 2 * DIGITS : 0) + (chunking ? 3 : 0) + 1; // + the reset dispatcher's own scratch variable
+  const resetChunking: Chunking | undefined = needsChunks(worstActions(plan.reset), cap, resetTailMax)
+    ? chunkTick(plan.reset, { maxActionsPerEvent: cap, tickExtra: resetTailMax })
     : undefined;
 
   if (opts.replace !== false) {
@@ -138,11 +174,19 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
           { name: `ctl/digitText/${i}`, type: "STRING", init: "0" },
         ]).flat()
       : []),
+    ...(resetChunking
+      ? [
+          { name: "ctl/resetPhase", type: "FLOAT" as const, init: 0 },
+          { name: "ctl/resetNow", type: "FLOAT" as const, init: 0 },
+        ]
+      : []),
     ...(chunking
       ? [
           { name: "ctl/phase", type: "FLOAT" as const, init: 0 },
           { name: "ctl/phaseNow", type: "FLOAT" as const, init: 0 },
           { name: "ctl/phaseText", type: "STRING" as const, init: "0" },
+          // The Run hop's keep-going decision, snapshotted once so the flattened dispatcher cannot change its mind mid-event.
+          { name: "ctl/go", type: "BOOLEAN" as const, init: false },
         ]
       : []),
   ];
@@ -155,6 +199,7 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const running = ctl.get("ctl/running")!;
   const tickText = ctl.get("ctl/tickText");
   const phase = ctl.get("ctl/phase");
+  const resetPhase = ctl.get("ctl/resetPhase");
   const variables = new Map<number, Variable>();
   const varIds = new Map<number, string>();
   netVars.forEach((v, i) => {
@@ -189,30 +234,52 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
       ),
     );
   let event: Action[];
+  // One dispatch block per chunk. All of them sit at the TOP level of the event: Figma rejects a CONDITIONAL nested in
+  // another conditional's block ("Unrecognized key conditionalBlocks"), which the emulator never noticed.
+  let dispatch: (gate?: ReturnType<typeof exprData>) => Action[] = () => [];
   if (chunking) {
     const ph = phase!.id;
     const now = ctl.get("ctl/phaseNow")!.id;
     const phText = ctl.get("ctl/phaseText")!.id;
     const K = chunking.chunks.length;
-    event = [
-      setVariable(now, exprData("ADDITION", [aliasData(ph, "FLOAT"), floatData(0)], "FLOAT")),
-      ...chunking.chunks.map((c, k) =>
-        conditional(compareData("EQUALS", now, k), [
+    dispatch = (gate) =>
+      chunking.chunks.map((c, k) =>
+        conditional(gate ? exprData("AND", [gate, compareData("EQUALS", now, k)]) : compareData("EQUALS", now, k), [
           ...figmaActions(c, varIds, opts.actions),
           setVariable(ph, floatData((k + 1) % K)),
           concatText(phText, ph),
           ...(k === K - 1 ? tickDone : []),
         ]),
-      ),
-    ];
+      );
+    event = [setVariable(now, exprData("ADDITION", [aliasData(ph, "FLOAT"), floatData(0)], "FLOAT")), ...dispatch()];
   } else event = [...figmaActions(plan.tick, varIds, opts.actions), ...tickDone];
-  const resetActs: Action[] = [
-    ...figmaActions(plan.reset, varIds, opts.actions),
+  // What Reset does besides restoring the circuit: counters, phase and the running flag back to 0.
+  const resetTail: Action[] = [
     setVariable(ticks.id, floatData(0)),
     setVariable(running.id, boolData(false)),
     ...(tickText ? [setVariable(tickText.id, strData("0"))] : []),
     ...[...ctl.entries()].filter(([n]) => n.startsWith("ctl/digit") || n.startsWith("ctl/phase")).map(([n, v]) => setVariable(v.id, n.includes("Text") ? strData("0") : floatData(0))),
   ];
+  if (resetTail.length > resetTailMax) throw new Error(`reset tail is ${resetTail.length} actions, more than the ${resetTailMax} budgeted`);
+  // Unchunked: the whole reset in one click. Chunked: the click only starts the hop chain; each hop (an
+  // AFTER_TIMEOUT on Reset A / B) runs one chunk, the last one the tail, then returns to Control.
+  const resetActs: Action[] = resetChunking ? [] : [...figmaActions(plan.reset, varIds, opts.actions), ...resetTail];
+  const resetEvent: Action[] = (() => {
+    if (!resetChunking) return [];
+    const rp = resetPhase!.id;
+    const now = ctl.get("ctl/resetNow")!.id;
+    const K = resetChunking.chunks.length;
+    return [
+      setVariable(now, exprData("ADDITION", [aliasData(rp, "FLOAT"), floatData(0)], "FLOAT")),
+      ...resetChunking.chunks.map((c, k) =>
+        conditional(compareData("EQUALS", now, k), [
+          ...figmaActions(c, varIds, opts.actions),
+          setVariable(rp, floatData((k + 1) % K)),
+          ...(k === K - 1 ? [...resetTail, setVariable(now, floatData(0))] : []),
+        ]),
+      ),
+    ];
+  })();
   const isRunning = exprData("EQUALS", [aliasData(running.id), boolData(true)]);
   // Stop on HALTED only at a tick boundary: a chunked tick must finish all its chunks,
   // otherwise the machine is left half-way through a clock cycle.
@@ -228,7 +295,8 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const perEvent = chunking
     ? 1 + event.length - 1 + Math.max(...event.slice(1).map((c) => worstCase([c]) - 1))
     : worstCase(event);
-  if (perEvent + 2 > cap) throw new Error(`one event can execute ${perEvent + 2} actions, more than maxActionsPerEvent ${cap}`);
+  const hopExtra = chunking ? 4 : 2;
+  if (perEvent + hopExtra > cap) throw new Error(`one event can execute ${perEvent + hopExtra} actions, more than maxActionsPerEvent ${cap}`);
 
   // 4. Frames.
   await loadFonts(api);
@@ -273,30 +341,71 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
   const run = put(controlFrame, button(api, "Run", COLORS.run), 172, 84);
   const reset = put(controlFrame, button(api, "Reset", COLORS.reset), 320, 84);
   const stepMulti = chunking && opts.multiTrigger ? put(controlFrame, button(api, "Step ×3", COLORS.step), 468, 84) : undefined;
+  const resetA = resetChunking ? frame(`${name} · resetting (A)`, 3) : undefined;
+  const resetB = resetChunking ? frame(`${name} · resetting (B)`, 4) : undefined;
   const stopA = put(runA, button(api, "Stop", COLORS.stop), 24, 84);
   const stopB = put(runB, button(api, "Stop", COLORS.stop), 24, 84);
+  for (const [g, label] of [[controlFrame, "Control"], [runA, "Run A frame"], [runB, "Run B frame"], [run, "Run button"], [reset, "Reset button"], [stopA, "Stop A"], [stopB, "Stop B"], [stepMulti, "Step x3"], [resetA, "Reset A frame"], [resetB, "Reset B frame"]] as const) guardReactions(g, label, log);
 
   // 5. Reactions.
   const delay = opts.runDelayMs ?? 1;
   const keys = (opts.keys ?? []).length ? [{ trigger: keyDown(opts.keys!), actions: event }] : [];
-  const loop = (to: FrameNode): Reaction[] => [
-    { trigger: afterTimeout(delay), actions: [conditional(keepGoing, [...event, navigate(to.id)], [setVariable(running.id, boolData(false)), navigate(controlFrame.id)])] },
-    ...keys,
-  ];
-  log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""})…`);
-  await step.setReactionsAsync([{ trigger: onClick(), actions: event }]);
+  // Unchunked: the whole tick sits in the keep-going conditional's block. Chunked: that would nest one dispatch conditional inside
+  // another (rejected by Figma), so the hop is flat: snapshot the keep-going decision into ctl/go, run the one matching chunk
+  // gated by it, then a final conditional on the snapshot navigates on (or stops and returns to Control).
+  const goVar = ctl.get("ctl/go");
+  const goNow = goVar ? exprData("EQUALS", [aliasData(goVar.id), boolData(true)]) : undefined;
+  const hop = (next: string, home: string): Action[] =>
+    chunking
+      ? [
+          event[0],
+          setVariable(goVar!.id, keepGoing),
+          ...dispatch(goNow),
+          conditional(goNow!, [navigate(next)], [setVariable(running.id, boolData(false)), navigate(home)]),
+        ]
+      : [conditional(keepGoing, [...event, navigate(next)], [setVariable(running.id, boolData(false)), navigate(home)])];
+  const loop = (to: FrameNode): Reaction[] => [{ trigger: afterTimeout(delay), actions: hop(to.id, controlFrame.id) }, ...keys];
+  log(`wiring reactions (${perEvent} actions per event${chunking ? `, ${chunking.chunks.length} events per tick` : ""}${resetChunking ? `, ${resetChunking.chunks.length} events per reset` : ""})…`);
+  const setR = async (n: { setReactionsAsync(r: Reaction[]): Promise<void> }, label: string, r: Reaction[]) => {
+    for (const reaction of r) {
+      const bad = nestedConditional((reaction.actions ?? []) as Action[]);
+      if (bad) throw new Error(`reactions on "${label}": a CONDITIONAL nested inside a conditional block at ${bad} (Figma rejects this)`);
+    }
+    try {
+      await n.setReactionsAsync(r);
+    } catch (e) {
+      const first = r[0]?.actions?.[0] as unknown as Record<string, unknown> | undefined;
+      log(`FAILED setReactions on "${label}": ${String((e as Error)?.message ?? e).slice(0, 400)} | trigger=${JSON.stringify(r[0]?.trigger)}, actions[0] type=${String(first?.type)}, keys=${first ? Object.keys(first).join(",") : "none"}`);
+      throw e;
+    }
+  };
+  await setR(step, "Step", [{ trigger: onClick(), actions: event }]);
   if (stepMulti)
-    await stepMulti.setReactionsAsync([
+    await setR(stepMulti, "Step x3", [
       { trigger: mouseDown(), actions: event },
       { trigger: mouseUp(), actions: event },
       { trigger: onClick(), actions: event },
     ]);
-  await reset.setReactionsAsync([{ trigger: onClick(), actions: resetActs }]);
-  await run.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(true)), navigate(runA.id)] }]);
-  for (const stop of [stopA, stopB]) await stop.setReactionsAsync([{ trigger: onClick(), actions: [setVariable(running.id, boolData(false))] }]);
-  if (keys.length) await controlFrame.setReactionsAsync(keys);
-  await runA.setReactionsAsync(loop(runB));
-  await runB.setReactionsAsync(loop(runA));
+  if (resetChunking) {
+    const hop = (self: FrameNode, other: FrameNode) =>
+      setR(self, self.name, [
+        {
+          trigger: afterTimeout(delay),
+          // phase wrapped to 0 = the last chunk ran: back to Control; else hop to the other frame
+          actions: [...resetEvent, conditional(compareData("EQUALS", resetPhase!.id, 0), [navigate(controlFrame.id)], [navigate(other.id)])],
+        },
+      ]);
+    await setR(reset, "Reset button", [
+      { trigger: onClick(), actions: [setVariable(running.id, boolData(false)), setVariable(resetPhase!.id, floatData(0)), navigate(resetA!.id)] },
+    ]);
+    await hop(resetA!, resetB!);
+    await hop(resetB!, resetA!);
+  } else await setR(reset, "Reset button", [{ trigger: onClick(), actions: resetActs }]);
+  await setR(run, "Run button", [{ trigger: onClick(), actions: [setVariable(running.id, boolData(true)), navigate(runA.id)] }]);
+  for (const stop of [stopA, stopB]) await setR(stop, "Stop button", [{ trigger: onClick(), actions: [setVariable(running.id, boolData(false))] }]);
+  if (keys.length) await setR(controlFrame, "Control keys", keys);
+  await setR(runA, "Run A", loop(runB));
+  await setR(runB, "Run B", loop(runA));
 
   // 6. A flow starting point so ▶ Present opens the Control frame.
   try {
@@ -313,13 +422,23 @@ export async function apply(api: PluginAPI, plan: PrototypePlan, opts: ApplyOpti
     ...(tickText ? { tickText } : {}),
     running,
     ...(phase ? { phase } : {}),
-    frames: { control: controlFrame, runA, runB },
+    ...(resetPhase ? { resetPhase } : {}),
+    frames: { control: controlFrame, runA, runB, ...(resetA ? { resetA, resetB } : {}) },
     buttons: { step, run, reset, stopA, stopB, ...(stepMulti ? { stepMulti } : {}) },
     bound,
     unbound,
     actionsPerStep: perEvent,
     chunks: chunking?.chunks.length ?? 1,
     ...(chunking ? { chunking } : {}),
+    resetChunks: resetChunking?.chunks.length ?? 1,
+    ...(resetChunking ? { resetChunking } : {}),
+    runtime: {
+      step: event,
+      ...(chunking ? { dispatch } : {}),
+      hop,
+      resetTail,
+      controls: ctl,
+    },
   };
 }
 

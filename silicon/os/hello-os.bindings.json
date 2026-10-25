@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    { "ram": { "addr": 15, "bit": 7 }, "node": "window", "prop": "visible" },
+    { "ram": { "addr": 12, "bits": [0, 6] }, "node": "window", "prop": "x", "map": { "scale": 24, "offset": 40 } },
+    { "ram": { "addr": 15, "bit": 7 }, "node": "taskbar-button", "prop": "fill", "map": { "table": ["#3a3a3a", "#2f80ed"] } },
+    { "ram": { "addr": 15, "bit": 7 }, "node": "status", "prop": "text", "map": { "table": ["closed", "open"] } },
+    { "ram": { "addr": 12, "bits": [0, 6] }, "node": "window-x-label", "prop": "text" }
+  ],
+  "keymap": {
+    "click": { "taskbar-button": 128, "window-move": 1 },
+    "key": { "o": 128, "ArrowRight": 1 }
+  }
+}

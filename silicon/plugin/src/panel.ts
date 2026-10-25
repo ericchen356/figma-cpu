@@ -7,7 +7,8 @@
 //   a frame named `lamp/<net>` or `seg/<net>` with a child `lit` → `lit`.visible is bound to
 //   the net's variable on every compile. <net> is a flat net name of the CPU ("pc[2]",
 //   "flag_z", "SEG_LO[0]"). Rename a lamp to point it at another net.
-import { PROBES } from "../../src/cpu/probes";
+import { PROBES, ramBit } from "../../src/cpu/probes";
+import { RAM_BYTES } from "../../src/isa/spec";
 import { COLORS, box, lamp, loadFonts, put, solid, text } from "../../src/prototype/draw";
 import type { FlatNetlist } from "../../src/netlist/types";
 
@@ -38,6 +39,20 @@ export function panelRows(): Row[][] {
     [probe("OUT", COLORS.amber), probe("BUS", "#f59e0b"), probe("IR"), probe("PC"), probe("T", "#5aa9ff")],
     [probe("R0"), probe("R1"), probe("R2"), probe("R3")],
   ];
+}
+
+// MEM screen: the 16 bytes of RAM as a 16 × 8 lamp matrix (address down, bit 7 on the left), each lamp
+// bound to its RAM latch output. It needs no hardware: the bits already are variables, so it works in
+// Present mode and with the plugin clock, and a program "draws" by storing bytes (code shows up too:
+// the RAM is shared).
+const MEM_LAMP = 8;
+const MEM_PITCH = 11;
+const MEM_LABEL_W = 14;
+export const MEM_LAMPS = RAM_BYTES * 8;
+
+/** The RAM matrix rows: `nets[addr][i]` is the latch output of bit (7 - i) of RAM[addr]. */
+export function memRows(): string[][] {
+  return Array.from({ length: RAM_BYTES }, (_, a) => Array.from({ length: 8 }, (_, i) => ramBit(a, 7 - i)));
 }
 
 /** Segment rectangles of one digit (a..g = SEG[0..6]), relative to the digit's corner. */
@@ -109,6 +124,23 @@ export async function drawFrontPanel(api: PluginAPI): Promise<ComponentNode> {
   h.lit.visible = false;
   put(comp, h.node, fx + LABEL_W + 3 * PITCH + 14 + 40, fy);
   bottom = Math.max(bottom, fy + ROW);
+
+
+  // MEM screen to the right of the lamp columns.
+  const memX = x;
+  put(comp, text(api, "MEM", { size: 11, bold: true, color: COLORS.dim }), memX, 16);
+  memRows().forEach((nets, a) => {
+    const y = 34 + a * MEM_PITCH;
+    put(comp, text(api, a.toString(16).toUpperCase(), { size: 8, color: COLORS.dim }), memX, y - 1);
+    nets.forEach((net, i) => {
+      const l = lamp(api, MEM_LAMP, COLORS.lampOn, `lamp/${net}`);
+      l.lit.visible = false;
+      put(comp, l.node, memX + MEM_LABEL_W + i * MEM_PITCH, y);
+    });
+  });
+  const memBottom = 34 + RAM_BYTES * MEM_PITCH;
+  x = memX + MEM_LABEL_W + 8 * MEM_PITCH + 24;
+  bottom = Math.max(bottom, memBottom);
 
   comp.resize(x - 24 + 16, Math.max(bottom + 12, 168));
   return comp;

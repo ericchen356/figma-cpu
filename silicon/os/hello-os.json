@@ -1,0 +1,13 @@
+{
+  "name": "hello-os",
+  "entry": "loop",
+  "ram": 16,
+  "regions": [
+    { "name": "code", "start": 0, "end": 11, "kind": "code" },
+    { "name": "state", "start": 12, "end": 13, "kind": "data" },
+    { "name": "input", "start": 14, "end": 14, "kind": "input" },
+    { "name": "flag", "start": 15, "end": 15, "kind": "output" }
+  ],
+  "source": "hello-os.asm",
+  "bindings": "hello-os.bindings.json"
+}

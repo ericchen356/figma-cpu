@@ -5,6 +5,7 @@
 // Machine: 8-bit data, ONE shared 8-bit bus, 16 bytes of RAM (4-bit addresses),
 // registers R0–R3, flags Z C N, 3-bit T-state counter (T0–T7).
 // Instruction byte: [7:4] opcode · [3:2] Rd · [1:0] Rs. LDI/LD/ST/JMP/Jcc add a 2nd byte.
+// LDR and STR address memory through a register (a pointer), so programs can walk arrays.
 
 export const RAM_ADDR_BITS = 4;
 export const RAM_BYTES = 1 << RAM_ADDR_BITS;
@@ -56,8 +57,9 @@ export type OperandKind = "none" | "imm" | "addr";
 export interface OpcodeSpec {
   code: number;
   mnem: string;
-  /** Assembly operands, e.g. ["Rd", "imm"]: Rd → bits 3:2, Rs → bits 1:0, imm/addr → 2nd byte. */
-  operands: ("Rd" | "Rs" | "imm" | "addr")[];
+  /** Assembly operands, e.g. ["Rd", "imm"]: Rd → bits 3:2, Rs → bits 1:0, imm/addr → 2nd byte.
+   * "[Rd]" / "[Rs]" are the same register fields written as a pointer: `LDR R0, [R1]`. */
+  operands: ("Rd" | "Rs" | "[Rd]" | "[Rs]" | "imm" | "addr")[];
   /** ALU behaviour (for ALU ops). */
   alu?: { sel: number; sub: boolean };
   /** T3 onward; T0–T2 are FETCH. The last step must contain T_RESET (or HALT). */
@@ -151,20 +153,29 @@ export const OPCODES: OpcodeSpec[] = [
   aluOp(0x9, "XOR", "Rd ← Rd XOR Rs (Z N, C = 0)"),
   {
     code: 0xa,
-    mnem: "NOT",
-    operands: ["Rd"],
-    alu: { sel: ALU_SEL.NOT, sub: false },
+    mnem: "LDR",
+    operands: ["Rd", "[Rs]"],
     steps: [
-      { t: 3, signals: ["REG_OUT_D", "A_LOAD"] },
-      { t: 4, signals: ["Y_LOAD", "FLAGS_LOAD"] },
-      { t: 5, signals: ["Y_OUT", "REG_LOAD_D", "T_RESET"] },
+      { t: 3, signals: ["REG_OUT_S", "MAR_LOAD"] },
+      { t: 4, signals: ["MEM_READ"] },
+      { t: 5, signals: ["MDR_OUT", "REG_LOAD_D", "T_RESET"] },
     ],
-    doc: "Rd ← NOT Rd (Z N, C = 0)",
+    doc: "Rd ← mem[Rs] (load through a pointer; flags unchanged)",
   },
   jump(0xb, "JMP", null, "PC ← a"),
   jump(0xc, "JZ", "Z", "if Z: PC ← a"),
   jump(0xd, "JC", "C", "if C: PC ← a"),
-  jump(0xe, "JN", "N", "if N: PC ← a"),
+  {
+    code: 0xe,
+    mnem: "STR",
+    operands: ["Rs", "[Rd]"],
+    steps: [
+      { t: 3, signals: ["REG_OUT_D", "MAR_LOAD"] },
+      { t: 4, signals: ["REG_OUT_S", "MDR_LOAD"] },
+      { t: 5, signals: ["MEM_WRITE", "T_RESET"] },
+    ],
+    doc: "mem[Rd] ← Rs (store through a pointer; Rd = 15 also shows it on the OUT display)",
+  },
   { code: 0xf, mnem: "HLT", operands: [], steps: [{ t: 3, signals: ["HALT", "T_RESET"] }], doc: "stop the clock" },
 ];
 

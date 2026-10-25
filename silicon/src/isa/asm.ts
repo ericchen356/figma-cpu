@@ -8,6 +8,7 @@
 //   .db expr, ...        raw bytes
 // Operands, by kind (OpcodeSpec.operands):
 //   Rd, Rs   R0–R3; Rd → bits 3:2, Rs → bits 1:0 of the instruction byte
+//   [Rd], [Rs]  the same fields written as a pointer, e.g. LDR R0, [R1] (brackets required)
 //   imm      expr, −128…255 (negatives stored as two's complement) → 2nd byte
 //   addr     [expr] or expr, 0–15 → 2nd byte
 // Expressions: numbers 42 0x2A 0b101010 'c', symbols (labels; OUT = 15 is predefined),
@@ -209,6 +210,11 @@ function encode(op: OpcodeSpec, args: string[], symbols: ReadonlyMap<string, num
       const r = regIndex(arg);
       if (r < 0) throw new AsmFail(`${usage(op)}: expected a register (${REGISTERS.join(" ")}), got "${arg}"`);
       first |= kind === "Rd" ? r << 2 : r;
+    } else if (kind === "[Rd]" || kind === "[Rs]") {
+      const inner = /^\[(.*)\]$/.exec(arg.trim());
+      const r = inner ? regIndex(inner[1]) : -1;
+      if (r < 0) throw new AsmFail(`${usage(op)}: expected a register in brackets, like [R1], got "${arg}"`);
+      first |= kind === "[Rd]" ? r << 2 : r;
     } else if (kind === "imm") {
       if (/^\[.*\]$/.test(arg)) throw new AsmFail(`${usage(op)}: ${arg} is a memory operand, ${op.mnem} takes a value`);
       rest.push(byte(arg, symbols));
@@ -364,6 +370,10 @@ export function disassemble(ram: ArrayLike<number>, addr = 0): { text: string; s
         return REGISTERS[(b >> 2) & 3];
       case "Rs":
         return REGISTERS[b & 3];
+      case "[Rd]":
+        return `[${REGISTERS[(b >> 2) & 3]}]`;
+      case "[Rs]":
+        return `[${REGISTERS[b & 3]}]`;
       case "imm":
         return String(at(next++));
       case "addr": {
